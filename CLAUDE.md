@@ -8,6 +8,7 @@ Expense tracker web application. Requirements are in `docs/BRIEF.md`.
 - Front-end: Vue.
 - Back-end: vanilla PHP, no framework. This is a standing non-functional requirement.
 - Deployed on AWS; AWS-specific infrastructure is welcome in the architecture.
+- Development process: use ECC's workflow (its commands, agents and skills) wherever it applies.
 - Infrastructure is defined as code.
 
 Everything else (architecture, API design, data model, libraries, testing strategy, project layout, security approach, CI/CD, conventions, how to organize your own plans and notes) is your decision. Record significant decisions and their rationale in the repo.
