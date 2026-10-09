@@ -13,8 +13,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$HERE/../.."
-# The image reference, as Compose resolves it (tolerates any indentation or quoting in the YAML).
-IMAGE="$(cd "$REPO" && docker compose -p expense-tracker config --images | grep '^nginxinc/nginx-unprivileged:' | head -n 1)"
+# The image reference, as Compose resolves it (tolerates any indentation or quoting in the YAML). Always read with
+# .env.example: this lookup only needs image refs, and CI has no .env (the compose file requires secrets via ${VAR:?}).
+IMAGE="$(cd "$REPO" && docker compose --env-file .env.example -p expense-tracker config --images | grep '^nginxinc/nginx-unprivileged:' | head -n 1)"
 [ -n "$IMAGE" ] || { echo "no nginx image found in docker-compose.yml" >&2; exit 1; }
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
