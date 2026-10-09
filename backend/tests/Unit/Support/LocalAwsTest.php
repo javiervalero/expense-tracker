@@ -135,6 +135,11 @@ final class LocalAwsTest extends TestCase
         yield 'no scheme' => ['localhost:8000'];
         yield 'no host' => ['http://:8000'];
         yield 'single label with underscore' => ['http://my_host:8000'];
+        yield 'decimal IPv4 literal' => ['http://2130706433:8000'];
+        yield 'hex IPv4 literal' => ['http://0x7f000001:8000'];
+        yield 'all-digit single label' => ['http://874000000:8000'];
+        yield 'short dotted IPv4 form' => ['http://127.1:8000'];
+        yield 'label starting with a digit' => ['http://1abc:8000'];
     }
 
     #[DataProvider('allowedLocalEndpoints')]
@@ -151,6 +156,7 @@ final class LocalAwsTest extends TestCase
     public static function allowedLocalEndpoints(): iterable
     {
         yield 'compose service' => ['http://dynamodb:8000'];
+        yield 'compose relay service' => ['http://s3-events-relay:8080'];
         yield 'localhost' => ['http://localhost:8000'];
         yield 'loopback v4' => ['http://127.0.0.1:9324'];
         yield 'loopback v6' => ['http://[::1]:8000'];

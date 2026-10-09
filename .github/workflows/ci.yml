@@ -128,7 +128,7 @@ jobs:
         run: make check-platform
 
   # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
-  # including its presigned POST policy enforcement, CORS and presigned GET).
+  # including its presigned POST policy enforcement, CORS and presigned GET), then the pipeline integration tests.
   integration:
     name: integration
     runs-on: ubuntu-24.04
@@ -149,6 +149,10 @@ jobs:
 
       - name: Conformance tests (DynamoDB, SQS, S3) in the php container on the Compose network
         run: make test-conformance
+
+      # S3 emulator -> webhook -> s3-events-relay -> ElasticMQ. Reads the receipts queue, so nothing else may consume it.
+      - name: Pipeline integration tests (upload -> one queue message)
+        run: make test-integration
 
       - name: Dump the service logs
         if: failure()

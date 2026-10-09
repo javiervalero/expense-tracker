@@ -49,6 +49,19 @@ final class JsonLoggerTest extends TestCase
         self::assertSame('error', $decoded['level']);
     }
 
+    public function testWarningUsesTheWarningLevel(): void
+    {
+        $lines = [];
+
+        self::loggerWritingTo($lines)->warning('request refused', ['status' => 401]);
+
+        self::assertCount(1, $lines);
+        $entry = json_decode($lines[0], true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($entry);
+        self::assertSame('warning', $entry['level']);
+        self::assertSame(401, $entry['status']);
+    }
+
     public function testContextCannotOverrideTheReservedFields(): void
     {
         $lines = [];

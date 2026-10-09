@@ -43,6 +43,14 @@ final readonly class JsonLogger
     /**
      * @param array<string, mixed> $context
      */
+    public function warning(string $message, array $context = []): void
+    {
+        $this->log('warning', $message, $context);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
     public function error(string $message, array $context = []): void
     {
         $this->log('error', $message, $context);

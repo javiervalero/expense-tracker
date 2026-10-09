@@ -52,7 +52,7 @@ services:
       MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
       MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
       MINIO_BROWSER: "off"
-      # Webhook target RELAY: where "object created" events go (the s3-events-relay service, added in WP9). The ARN
+      # Webhook target RELAY: where "object created" events go (the s3-events-relay service, below). The ARN
       # to use in a bucket rule is arn:minio:sqs::RELAY:webhook (S3_NOTIFICATION_ARN). Silo starts and reports
       # healthy while the target is unreachable; events wait in queue_dir and are replayed once it answers.
       MINIO_NOTIFY_WEBHOOK_ENABLE_RELAY: "on"
@@ -80,6 +80,55 @@ services:
       timeout: 5s
       retries: 20
       start_period: 3s
+
+  # Webhook receiver for the S3 emulator: puts each "object created" event on the receipts queue as an AWS-shaped
+  # message (docker/local-aws/src/Relay, ADR 0007). Listens on container port 8080 and is NOT published to the host:
+  # only the emulator, on the Compose network, can reach it (and it also needs the bearer token).
+  # `s3` does not depend on it on purpose: silo starts without it and queues events in its queue_dir until it answers.
+  s3-events-relay:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    # The image's entrypoint is `php`: this is `php -S 0.0.0.0:8080 bin/relay.php`, with explicit limits:
+    #   memory_limit 32M: a request body is capped at 256 KiB (MAX_BODY_BYTES in bin/relay.php), so this is plenty;
+    #   post_max_size / upload_max_filesize 1M: above the cap on purpose, so that PHP never empties a body that the
+    #     relay itself would answer with 413 (a Content-Length over the cap is refused by the relay before any read).
+    command: ["-d", "memory_limit=32M", "-d", "post_max_size=1M", "-d", "upload_max_filesize=1M", "-S", "0.0.0.0:8080", "bin/relay.php"]
+    expose: ["8080"]
+    # Only what the relay needs (no env_file). The values are checked at the first request and the service reports
+    # unhealthy if one is missing, or if an endpoint is not a local stand-in.
+    environment:
+      # Eight workers, so that the healthcheck and other requests still answer while a few wait for the queue (at most
+      # 3 s each, see SqsClientFactory).
+      PHP_CLI_SERVER_WORKERS: "8"
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      SQS_ENDPOINT: ${SQS_ENDPOINT:-}
+      SQS_RECEIPTS_QUEUE_URL: ${SQS_RECEIPTS_QUEUE_URL:?not set - copy the SQS_ lines of .env.example into .env}
+      S3_WEBHOOK_AUTH_TOKEN: ${S3_WEBHOOK_AUTH_TOKEN:?not set - copy the S3_ lines of .env.example into .env}
+    # Same hardening as `s3`: not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The one writable place is a small tmpfs /tmp: `php -S` buffers request bodies above about 64 KiB in a temporary
+    # file, and without it those requests fail ("Unable to create temporary file", empty body, 400). Its size bounds
+    # what concurrent big requests can hold (8 workers x the 256 KiB cap fits easily); mode 1777 is the usual /tmp.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=8m
+    healthcheck:
+      # The image has PHP and nothing else (no curl or wget). A non-2xx answer or no answer makes this exit 1.
+      test: ["CMD", "php", "-d", "default_socket_timeout=2", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/health') === false ? 1 : 0);"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+    depends_on:
+      sqs:
+        condition: service_healthy
 
   # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
@@ -118,6 +167,7 @@ services:
     working_dir: /app/backend
     volumes:
       - ./:/app
+    # .env includes S3_WEBHOOK_AUTH_TOKEN, which the relay HTTP tests (RelayHttpTest) send as the bearer token.
     env_file: .env
     depends_on:
       dynamodb:
@@ -125,6 +175,9 @@ services:
       sqs:
         condition: service_healthy
       s3:
+        condition: service_healthy
+      # The pipeline integration tests need events to reach the queue.
+      s3-events-relay:
         condition: service_healthy
       # The CORS and notification rules the conformance tests check are set by the bootstrap.
       local-aws-init:

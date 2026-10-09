@@ -23,7 +23,11 @@ final readonly class LocalAws
 {
     private const ENDPOINT_VARIABLES = ['SQS_ENDPOINT', 'DYNAMODB_ENDPOINT', 'S3_ENDPOINT', 'S3_PUBLIC_ENDPOINT'];
     private const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]', 'host.docker.internal'];
-    private const COMPOSE_SERVICE_NAME = '/^[a-z0-9-]+$/';
+    /**
+     * Must start with a letter: an all-digit or hex single label (`2130706433`, `0x7f000001`) is an IPv4 literal to
+     * the resolver, not a Compose service name, and would slip through as one.
+     */
+    private const COMPOSE_SERVICE_NAME = '/^[a-z][a-z0-9-]*\z/';
     private const SETTING_VARIABLES = ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
 
     /**

@@ -1,5 +1,5 @@
-# Local-only tooling image (never deployed): runs bin/bootstrap.php for the `local-aws-init` service, and later
-# the S3 events relay and the worker runner (WP9, WP11). Base images are pinned by digest, the same ones as
+# Local-only tooling image (never deployed): runs bin/bootstrap.php for the `local-aws-init` service and bin/relay.php
+# (`php -S`) for the `s3-events-relay` service; the worker runner joins in WP11. Base images are pinned by digest, the same ones as
 # docker/php/Dockerfile. Build context: the repository root (see docker-compose.yml).
 
 # Resolves the production dependencies from composer.lock. Composer and its cache stay in this stage.
