@@ -1,0 +1,6 @@
+# Build context allow-list for docker/worker/Dockerfile (context = repository root): only what it COPYs.
+*
+!backend/composer.json
+!backend/composer.lock
+!backend/src
+!backend/entrypoints/lambda/worker.php

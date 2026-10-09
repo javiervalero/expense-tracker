@@ -18,7 +18,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration
+.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -63,18 +63,14 @@ audit-local-aws: $(PHP_IMAGE_DEP) ## docker/local-aws: composer audit (known vul
 test-shell: ## Tests of the shell guards (scripts/tests/*.test.sh)
 	@set -e; for t in scripts/tests/*.test.sh; do echo "== $$t"; bash "$$t"; done
 
-# The worker Dockerfile arrives in WP10. Until it exists there is nothing real to check, so the target says so
-# and succeeds; from the moment docker/worker/Dockerfile exists the check runs for real (nothing to edit).
-# The guard itself is covered by `make test-shell`, against fixtures.
+# Builds the tools image, then checks the real worker Dockerfile: the PHP in its pinned bref/php-85 layer must equal
+# composer.json config.platform.php, and the --no-dev vendor/ must load on that PHP. A missing Dockerfile is an error
+# (the check used to skip until WP10 added it). The guard itself is covered by `make test-shell`, against fixtures.
 WORKER_DOCKERFILE = docker/worker/Dockerfile
 
 check-platform: ## composer.json config.platform.php equals the PHP in the pinned bref/php-85 layer
-	@if [ -f $(WORKER_DOCKERFILE) ]; then \
-		$(MAKE) --no-print-directory php-image && \
-		PHP_IMAGE=$(PHP_IMAGE) scripts/check-php-platform.sh --with-vendor $(WORKER_DOCKERFILE); \
-	else \
-		echo "check-platform: SKIPPED, $(WORKER_DOCKERFILE) does not exist yet (added in WP10); the guard is tested by 'make test-shell'"; \
-	fi
+	$(MAKE) --no-print-directory php-image
+	PHP_IMAGE=$(PHP_IMAGE) scripts/check-php-platform.sh --with-vendor $(WORKER_DOCKERFILE)
 
 .env:
 	cp .env.example .env
@@ -123,3 +119,11 @@ test-conformance: .env php-image ## Conformance tests (DynamoDB Local, ElasticMQ
 
 test-integration: .env php-image ## Pipeline integration tests (S3 emulator -> relay -> ElasticMQ) in the php container; run `make up` first
 	$(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
+
+# The S3 event fixtures exist twice (backend/ and docker/local-aws/ are separate Composer projects). They must stay
+# byte-identical, or the parser and the relay would be tested against different "real" events.
+FIXTURES_A ?= backend/tests/Fixtures/s3-events
+FIXTURES_B ?= docker/local-aws/tests/Fixtures/s3-events
+
+check-fixtures: ## The two copies of the S3 event JSON fixtures are identical
+	@scripts/check-fixtures.sh $(FIXTURES_A) $(FIXTURES_B)

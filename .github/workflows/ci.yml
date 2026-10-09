@@ -123,9 +123,13 @@ jobs:
       - name: Tests of the shell guards
         run: make test-shell
 
-      # Skips with a clear message until docker/worker/Dockerfile exists (WP10), then checks the real one.
+      # Reads the real docker/worker/Dockerfile: the PHP of its pinned bref/php-85 layer, and its --no-dev vendor/.
       - name: composer.json platform equals the PHP of the pinned bref/php-85 layer
         run: make check-platform
+
+      # backend/ and docker/local-aws/ each keep a copy of the S3 event fixtures; they must stay identical.
+      - name: S3 event fixtures are identical in both copies
+        run: make check-fixtures
 
   # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
   # including its presigned POST policy enforcement, CORS and presigned GET), then the pipeline integration tests.

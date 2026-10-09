@@ -130,6 +130,37 @@ services:
       sqs:
         condition: service_healthy
 
+  # The receipt worker (WP10): the Bref PHP 8.5 image in function mode, with the Runtime Interface Emulator that ships
+  # in it. RIE answers on container port 8080 at POST /2015-03-31/functions/function/invocations; `worker-runner`
+  # (WP11) posts SQS-shaped events there, the way the Lambda event source mapping would. Internal only: nothing is
+  # published to the host, and the worker has no AWS access or credentials (Phase 0 only logs what it receives).
+  worker:
+    image: expense-tracker-worker:dev
+    build:
+      context: .
+      dockerfile: docker/worker/Dockerfile
+      target: runtime
+    expose: ["8080"]
+    # No env_file and no secrets. BREF_RUNTIME=function and BREF_PING_DISABLE=1 come from the image (ENV).
+    # Same hardening as the other services: not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The Lambda base image itself runs as root (Lambda swaps in its own user), so 10001 is set here. The one
+    # writable place is a small tmpfs /tmp, which is also where Lambda allows writes (the later image handling goes there).
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=64m
+    healthcheck:
+      # RIE has no health endpoint, so this only proves that it accepts connections: curl succeeds on ANY HTTP answer
+      # (the root path answers 404) and fails only when it cannot connect. It does not start an invocation. That PHP
+      # and the handler really work is proven by tests/Integration/Worker/RieInvocationTest.php.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "--max-time", "2", "http://127.0.0.1:8080/"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
   # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
   local-aws-init:
@@ -182,3 +213,6 @@ services:
       # The CORS and notification rules the conformance tests check are set by the bootstrap.
       local-aws-init:
         condition: service_completed_successfully
+      # The worker integration tests (RieInvocationTest) call it at http://worker:8080.
+      worker:
+        condition: service_healthy

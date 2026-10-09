@@ -12,6 +12,8 @@ namespace LocalAws\Logging;
  *
  * Defensive redaction: the values of the secrets given to the constructor, and the value of any `Authorization`
  * header (a context key of that name, or `Authorization: ...` inside a text), never reach the log.
+ *
+ * Keep in sync with backend/src/Infrastructure/Logging/JsonLogger.php (separate Composer projects, so a copy).
  */
 final readonly class JsonLogger
 {
