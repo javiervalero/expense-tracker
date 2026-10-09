@@ -3,7 +3,7 @@
 #
 # In CI the tools are installed on the runner, so the workflow calls the same targets with `RUN_PHP=`
 # (empty): the commands are identical, only the wrapper disappears. Node tools (contract/) work the same way with
-# `RUN_NODE`, a pinned node image run as the host user.
+# `RUN_NODE`, a pinned node image run as the host user (contract/ and frontend/).
 
 PHP_IMAGE ?= expense-tracker-php:dev
 RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
@@ -14,10 +14,12 @@ LOCAL_AWS_COMPOSER = $(RUN_PHP) composer --working-dir=docker/local-aws
 # The Compose project name (`expense-tracker`) is also set in docker-compose.yml; repeated here so that a
 # stray COMPOSE_PROJECT_NAME in the environment can never point these commands at another project.
 # Node tools (contract/): the pinned node:24.21.0-alpine (index digest, multi-arch), as the host user. HOME and the npm
-# cache live in /tmp inside the container, so nothing is written outside the repository.
+# cache live in /tmp inside the container, so nothing is written outside the repository. `-e ORIGIN_VERIFY_LOCAL` (no
+# value) passes the variable through from make's environment only when it is set (see frontend-build).
 NODE_IMAGE ?= node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
-RUN_NODE ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app -e HOME=/tmp -e npm_config_cache=/tmp/.npm $(NODE_IMAGE)
+RUN_NODE ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app -e HOME=/tmp -e npm_config_cache=/tmp/.npm -e ORIGIN_VERIFY_LOCAL $(NODE_IMAGE)
 NPM_CONTRACT = $(RUN_NODE) npm --prefix contract
+NPM_FRONTEND = $(RUN_NODE) npm --prefix frontend
 GENERATED_TYPES = frontend/src/api/schema.gen.ts
 
 COMPOSE = docker compose -p expense-tracker
@@ -26,7 +28,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract
+.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -90,9 +92,11 @@ check-platform: ## composer.json config.platform.php equals the PHP in the pinne
 #   2. ONE_SHOT_SERVICES: run in the foreground. They exit on purpose, and `up --wait` counts "exited (0)" as a
 #      failure, so they cannot be in step 1. Their log is shown and a non-zero exit code fails `make up`;
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
-# LATE_SERVICES is empty for now: nothing yet depends on the bootstrap. `worker-runner` and the API (`api`, `api-php`)
-# are in step 1 on purpose: the runner needs only sqs and worker (queues come from elasticmq.conf), and Phase 0's API
-# serves only /api/v1/health. When the API needs DynamoDB tables or buckets, set `LATE_SERVICES = api` (api-php follows).
+# LATE_SERVICES is empty for now: nothing yet depends on the bootstrap. `worker-runner`, the API (`api`, `api-php`) and
+# `frontend` are in step 1 on purpose: the runner needs only sqs and worker (queues come from elasticmq.conf), Phase 0's
+# API serves only /api/v1/health, and `frontend` (Vite) needs only `api` healthy (Compose orders them with depends_on).
+# When the API needs DynamoDB tables or buckets, set `LATE_SERVICES = api frontend` (api-php follows api).
+# `make frontend-install` must have run (like `make php-install` for the API): Vite runs from frontend/node_modules.
 ONE_SHOT_SERVICES = local-aws-init
 LATE_SERVICES =
 
@@ -101,7 +105,7 @@ LATE_SERVICES =
 # `up` with an empty list, which would silently start EVERY service (including the one-shot ones, out of order).
 # --build: the local-aws-init image is built from this repository, so a code change must reach it (an unchanged
 # build is instant, from the layer cache). Running the bootstrap again is safe: it logs "no changes".
-up: .env ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
+up: .env frontend-ready ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
 	@set -e; \
 	all=$$($(COMPOSE) config --services) || { echo "make up: 'docker compose config --services' failed (see above); not starting anything." >&2; exit 1; }; \
 	first=$$(printf '%s\n' "$$all" | awk -v skip="$(ONE_SHOT_SERVICES) $(LATE_SERVICES)" 'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) s[a[i]] = 1 } NF && !($$0 in s)'); \
@@ -215,3 +219,41 @@ contract-audit: ## contract/: npm audit, high severity and above (needs contract
 	$(NPM_CONTRACT) audit --audit-level=high
 
 contract: contract-lint contract-bundle contract-check-types ## Lint + bundle + check the committed types (needs contract-install)
+
+# The front-end (ADR 0008). `make frontend-install` first (once, and after a lockfile change). Lint = ESLint, Prettier
+# --check and vue-tsc (type check of the app, the tests and the Node-side config). Test = Vitest with the 80% bar on
+# frontend/src and frontend/vite (see vite.config.ts for what is excluded and why). Scripts of dependencies never run.
+frontend-install: ## frontend/: install npm dependencies from package-lock.json (no install scripts)
+	$(NPM_FRONTEND) ci --ignore-scripts --no-audit --no-fund
+
+frontend-ready:
+	@test -d frontend/node_modules || { echo "make: frontend/node_modules is missing; run 'make frontend-install' first." >&2; exit 1; }
+
+frontend-lint: frontend-ready ## frontend/: ESLint, Prettier --check and vue-tsc (needs frontend-install)
+	$(NPM_FRONTEND) run lint
+	$(NPM_FRONTEND) run format:check
+	$(NPM_FRONTEND) run type-check
+
+frontend-test: frontend-ready ## frontend/: Vitest with coverage, 80% bar (needs frontend-install)
+	$(NPM_FRONTEND) run test:coverage
+
+# The build runs WITH the origin-verify value in its environment, so that `check-bundle-secrets` is a real check: if the
+# configuration ever starts to copy it into the bundle, the value is there to be found. The value travels in the
+# ENVIRONMENT only (`-e NAME` in RUN_NODE takes it from make's environment): never in an argument list, where `ps` and
+# make's own echo of the recipe would show it. The recipe lines start with `@` for the same reason.
+ORIGIN_VERIFY_VALUE = $(shell grep -h '^ORIGIN_VERIFY_LOCAL=' .env .env.example 2>/dev/null | head -n 1 | cut -d= -f2-)
+
+frontend-build: export ORIGIN_VERIFY_LOCAL = $(ORIGIN_VERIFY_VALUE)
+frontend-build: frontend-ready ## frontend/: type check and production build into frontend/dist (needs frontend-install)
+	@echo "frontend-build: building with ORIGIN_VERIFY_LOCAL in the environment (value not shown)"
+	@$(RUN_NODE) npm --prefix frontend run build
+
+# The script normalises the value (quotes, CR), refuses one shorter than 8 characters, and also searches base64 and hex.
+check-bundle-secrets: export BUNDLE_SECRET_VALUE = $(ORIGIN_VERIFY_VALUE)
+check-bundle-secrets: ## The ORIGIN_VERIFY_LOCAL value (.env, else .env.example) is not in frontend/dist (needs frontend-build)
+	@scripts/check-bundle-secrets.sh frontend/dist
+
+# Full gate: production and dev dependencies, high and above. (Until 2026-10-09 the dev tools pulled in `braces`
+# through @vue/eslint-config-typescript -> fast-glob; ESLint now uses typescript-eslint directly and the tree is clean.)
+frontend-audit: frontend-ready ## frontend/: npm audit of all packages (dev tools too), high and above (needs frontend-install)
+	$(NPM_FRONTEND) audit --audit-level=high

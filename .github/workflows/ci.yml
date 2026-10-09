@@ -159,6 +159,45 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_NODE= contract-audit
 
+  # The front-end (ADR 0008): ESLint, Prettier --check, vue-tsc, Vitest with the 80% coverage bar, the production build,
+  # a check that the origin-verify value is not in the bundle, and npm audit. Node is installed here, so RUN_NODE is
+  # empty (same make targets as locally).
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies from package-lock.json
+        run: make RUN_NODE= frontend-install
+
+      - name: ESLint, Prettier (check) and vue-tsc
+        run: make RUN_NODE= frontend-lint
+
+      - name: Unit and component tests with coverage (80% bar)
+        run: make RUN_NODE= frontend-test
+
+      - name: Production build
+        run: make RUN_NODE= frontend-build
+
+      # The Vite proxy sends ORIGIN_VERIFY_LOCAL; it must never be part of what the browser downloads.
+      - name: The origin-verify value is not in the bundle
+        run: make RUN_NODE= check-bundle-secrets
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_NODE= frontend-audit
+
   # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
   # including its presigned POST policy enforcement, CORS and presigned GET), then the pipeline integration tests.
   integration:
@@ -174,6 +213,10 @@ jobs:
       # Runs in the pinned tools container, as the runner user. `make up` writes .env from .env.example.
       - name: Install dependencies from composer.lock
         run: make php-install
+
+      # The `frontend` service runs Vite from frontend/node_modules (in the pinned node container, like php-install).
+      - name: Install front-end dependencies from package-lock.json
+        run: make frontend-install
 
       # Also builds the local-aws image and runs the idempotent S3 bootstrap (buckets, CORS, notification rule).
       - name: Start the local stack, bootstrap it and wait until it is healthy
