@@ -6,22 +6,21 @@ supersedes the old one, so the history of *why* stays readable.
 
 **Statuses:** `Proposed` → `Accepted` | `Rejected`; later possibly `Superseded by NNNN`.
 
-All ADRs below are currently **Proposed**: they belong to the draft plan in [`../PLAN.md`](../PLAN.md), which is
-under review.
+All ADRs below were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`](../PLAN.md) was approved after review on PR #1.
 
 | # | Title | Status |
 |---|---|---|
-| [0001](0001-serverless-aws-php-on-lambda-with-bref.md) | Serverless AWS architecture, PHP on Lambda with Bref | Proposed |
-| [0002](0002-dynamodb-single-table-data-model.md) | DynamoDB single-table data model | Proposed |
-| [0003](0003-vanilla-php-backend-structure.md) | Vanilla PHP back-end structure | Proposed |
-| [0004](0004-server-side-sessions-with-cookies.md) | Server-side sessions with secure cookies | Proposed |
-| [0005](0005-single-origin-through-cloudfront.md) | Single origin for app and API through CloudFront | Proposed |
-| [0006](0006-direct-to-s3-receipt-uploads-and-async-processing.md) | Direct-to-S3 receipt uploads and asynchronous processing | Proposed |
-| [0007](0007-local-development-with-docker-compose.md) | Local development with Docker Compose and emulators | Proposed |
-| [0008](0008-frontend-stack.md) | Front-end stack | Proposed |
-| [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Proposed |
-| [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Proposed |
-| [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Proposed |
+| [0001](0001-serverless-aws-php-on-lambda-with-bref.md) | Serverless AWS architecture, PHP on Lambda with Bref | Accepted |
+| [0002](0002-dynamodb-single-table-data-model.md) | DynamoDB single-table data model | Accepted |
+| [0003](0003-vanilla-php-backend-structure.md) | Vanilla PHP back-end structure | Accepted |
+| [0004](0004-server-side-sessions-with-cookies.md) | Server-side sessions with secure cookies | Accepted |
+| [0005](0005-single-origin-through-cloudfront.md) | Single origin for app and API through CloudFront | Accepted |
+| [0006](0006-direct-to-s3-receipt-uploads-and-async-processing.md) | Direct-to-S3 receipt uploads and asynchronous processing | Accepted |
+| [0007](0007-local-development-with-docker-compose.md) | Local development with Docker Compose and emulators | Accepted |
+| [0008](0008-frontend-stack.md) | Front-end stack | Accepted |
+| [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Accepted |
+| [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Accepted |
+| [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Accepted |
 
 ## Template
 

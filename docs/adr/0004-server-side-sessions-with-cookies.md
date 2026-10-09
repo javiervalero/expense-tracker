@@ -1,6 +1,6 @@
 # 0004. Server-side sessions with secure cookies
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 
 ## Context

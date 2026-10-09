@@ -1,6 +1,6 @@
 # 0010. GitHub Actions CI/CD with OIDC
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comment #9: phasing)
 

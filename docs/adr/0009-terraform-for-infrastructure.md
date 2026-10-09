@@ -1,6 +1,6 @@
 # 0009. Terraform for infrastructure as code
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 
 ## Context

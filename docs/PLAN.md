@@ -1,16 +1,16 @@
 # Implementation Plan — Expense Tracker
 
-> **Status: DRAFT — under review. Not approved.**
-> This plan must be reviewed and approved before any implementation starts.
-> The architectural decisions it relies on are recorded as ADRs in [`docs/adr/`](adr/README.md), all currently
-> with status **Proposed**. See [Review](#14-review) for how to give feedback.
+> **Status: APPROVED — 2026-10-09.**
+> Approved by the owner after review round 1 on PR #1. The architectural decisions are recorded as ADRs in
+> [`docs/adr/`](adr/README.md), all **Accepted**. Changes from now on follow [Review](#14-review): a changed
+> decision gets a new ADR that supersedes the old one.
 
 | | |
 |---|---|
 | Requirements | [`docs/BRIEF.md`](BRIEF.md) |
 | Constraints | [`CLAUDE.md`](../CLAUDE.md) |
 | Drafted | 2026-10-07 |
-| Last updated | 2026-10-09 (PR #1 review round 1) |
+| Last updated | 2026-10-09 (approved) |
 
 ---
 
@@ -320,7 +320,7 @@ Playwright arrives in L1. The owner approved this on 2026-10-09.
 
 ## 14. Review
 
-This plan is a **draft**. Before implementation starts:
+This plan was approved on 2026-10-09. The review process used, and still used for later changes:
 
 1. Reviewers read this document and the ADRs in [`docs/adr/`](adr/README.md).
 2. Feedback goes in the pull request that introduces these documents, or as edits to them.
@@ -342,4 +342,4 @@ AWS worker path (ADR 0007), API contract (ADR 0011), essential vs later scope (�
 
 | Date | Reviewer | Outcome |
 |---|---|---|
-| — | — | — |
+| 2026-10-09 | Javier Valero (owner) | Approved after review round 1 (PR #1, 9 comments addressed in 64e78fc) |

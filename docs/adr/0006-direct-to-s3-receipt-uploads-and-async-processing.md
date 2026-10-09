@@ -1,6 +1,6 @@
 # 0006. Direct-to-S3 receipt uploads and asynchronous processing
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comments #1, #4)
 

@@ -1,6 +1,6 @@
 # 0003. Vanilla PHP back-end structure
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comments #5, #7)
 

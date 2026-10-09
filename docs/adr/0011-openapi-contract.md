@@ -1,6 +1,6 @@
 # 0011. OpenAPI 3.1 contract as the source of truth for the API
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-09 (PR #1 review comment #7)
 
 ## Context

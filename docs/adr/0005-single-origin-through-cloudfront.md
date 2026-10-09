@@ -1,6 +1,6 @@
 # 0005. Single origin for app and API through CloudFront
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 
 ## Context

@@ -1,6 +1,6 @@
 # 0001. Serverless AWS architecture, PHP on Lambda with Bref
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comment #5; Bref 3.0)
 

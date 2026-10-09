@@ -1,6 +1,6 @@
 # 0007. Local development with Docker Compose and emulators
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comment #6; MinIO maintenance status)
 
