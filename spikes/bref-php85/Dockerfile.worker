@@ -1,0 +1,13 @@
+# Spike A worker image: bref/php-85 + GD layer + production (--no-dev) vendor/.
+FROM composer:2.10.3 AS vendor
+WORKDIR /app
+COPY composer.json composer.lock ./
+RUN composer install --no-dev --no-scripts --no-interaction --classmap-authoritative
+
+FROM bref/php-85:3 AS runtime
+# Same copy a Lambda layer would give us: extension .so plus its ini file under /opt.
+COPY --from=bref/extra-gd-php-85:3 /opt /opt
+COPY --from=vendor /app/vendor /var/task/vendor
+COPY worker.php /var/task/worker.php
+COPY public /var/task/public
+CMD ["worker.php"]

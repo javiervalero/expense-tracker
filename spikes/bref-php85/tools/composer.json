@@ -1,0 +1,21 @@
+{
+    "name": "spikes/bref-php85-tools",
+    "description": "Spike A9: dev tooling pins checked on PHP 8.5 (not part of the product)",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.5",
+        "aws/aws-sdk-php": "^3.400",
+        "opis/json-schema": "2.6.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "3.95.27",
+        "phpstan/phpstan": "2.3.1",
+        "phpstan/phpstan-phpunit": "^2.0",
+        "phpstan/phpstan-strict-rules": "^2.0",
+        "phpunit/phpunit": "^13.0"
+    },
+    "autoload": {"psr-4": {"Spike\\": "src/"}},
+    "autoload-dev": {"psr-4": {"Spike\\Tests\\": "tests/"}},
+    "config": {"sort-packages": true}
+}

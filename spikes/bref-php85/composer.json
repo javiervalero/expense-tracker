@@ -1,0 +1,17 @@
+{
+    "name": "spikes/bref-php85",
+    "description": "Spike A harness: Bref 3 runtime on PHP 8.5 (not part of the product)",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "^8.5",
+        "bref/bref": "3.0.12"
+    },
+    "config": {
+        "platform": {
+            "php": "8.5.11"
+        },
+        "sort-packages": true,
+        "optimize-autoloader": true
+    }
+}

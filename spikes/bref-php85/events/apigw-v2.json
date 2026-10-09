@@ -1,0 +1,25 @@
+{
+  "version": "2.0",
+  "routeKey": "$default",
+  "rawPath": "/api/v1/ping",
+  "rawQueryString": "",
+  "headers": {
+    "accept": "application/json",
+    "host": "abc123.execute-api.eu-west-1.amazonaws.com",
+    "cloudfront-viewer-address": "203.0.113.7:51234",
+    "x-forwarded-for": "130.176.0.1"
+  },
+  "requestContext": {
+    "accountId": "000000000000",
+    "apiId": "abc123",
+    "domainName": "abc123.execute-api.eu-west-1.amazonaws.com",
+    "domainPrefix": "abc123",
+    "http": {"method": "GET", "path": "/api/v1/ping", "protocol": "HTTP/1.1", "sourceIp": "130.176.0.1", "userAgent": "Amazon CloudFront"},
+    "requestId": "req-1",
+    "routeKey": "$default",
+    "stage": "$default",
+    "time": "09/Oct/2026:12:00:00 +0000",
+    "timeEpoch": 1791547200000
+  },
+  "isBase64Encoded": false
+}
