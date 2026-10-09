@@ -1,6 +1,7 @@
 # 0007. Local development with Docker Compose and emulators
 
 - Status: Accepted (2026-10-09)
+- Amended by: [0012](0012-runtime-platform.md) (worker image bref/php-85:3 + GD; RIE confirmed, in-process fallback dropped; local IP/origin headers)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comment #6; MinIO maintenance status)
 

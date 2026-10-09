@@ -1,6 +1,7 @@
 # 0003. Vanilla PHP back-end structure
 
 - Status: Accepted (2026-10-09)
+- Amended by: [0012](0012-runtime-platform.md) (PHP 8.5, Composer platform pin, origin-verify middleware, client IP)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comments #5, #7)
 
