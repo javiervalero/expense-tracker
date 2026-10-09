@@ -82,7 +82,9 @@ check-platform: ## composer.json config.platform.php equals the PHP in the pinne
 #   2. ONE_SHOT_SERVICES: run in the foreground. They exit on purpose, and `up --wait` counts "exited (0)" as a
 #      failure, so they cannot be in step 1. Their log is shown and a non-zero exit code fails `make up`;
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
-# LATE_SERVICES is empty for now. WP12 adds `api` here (`LATE_SERVICES = api`) and nothing else needs to change. `worker-runner` is in step 1 on purpose: it needs only sqs and worker (queues come from elasticmq.conf), not the bootstrap.
+# LATE_SERVICES is empty for now: nothing yet depends on the bootstrap. `worker-runner` and the API (`api`, `api-php`)
+# are in step 1 on purpose: the runner needs only sqs and worker (queues come from elasticmq.conf), and Phase 0's API
+# serves only /api/v1/health. When the API needs DynamoDB tables or buckets, set `LATE_SERVICES = api` (api-php follows).
 ONE_SHOT_SERVICES = local-aws-init
 LATE_SERVICES =
 

@@ -203,6 +203,86 @@ services:
       worker:
         condition: service_healthy
 
+  # The local API (WP12), in two containers like production's one handler: `api` (nginx) forwards /api/ to `api-php`
+  # (php-fpm), which runs backend/public/index.php. See ADR 0007 and 0012. Both start in step 1 of `make up`: neither
+  # needs anything the `local-aws-init` bootstrap creates (Phase 0 serves only /api/v1/health), so LATE_SERVICES stays
+  # empty. When the API starts to use DynamoDB or S3, move `api` there.
+  #
+  # php-fpm, from the `fpm` stage of docker/php/Dockerfile. The code is MOUNTED, read-only, at /var/task (the path
+  # Lambda uses, so SCRIPT_FILENAME is the same everywhere): an edit shows up at the next request without a rebuild.
+  # Only public/, src/ and vendor/ are mounted (not tests/ or composer files); `make php-install` must have run.
+  # Not published, and ONLY on the internal network `api-internal`: FastCGI has no authentication, so anything that can
+  # connect to port 9000 can run code. Only `api` (on both networks) reaches it.
+  #
+  # NO SECRETS, NO env_file, NEVER AWS CREDENTIALS here: the pool has clear_env = no, so every variable of this
+  # container is visible to the PHP code of every request. The environment is what the API needs, listed below
+  # (nothing yet; APP_ENV is the first placeholder).
+  api-php:
+    image: expense-tracker-php:fpm
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: fpm
+    volumes:
+      - ./backend/public:/var/task/public:ro
+      - ./backend/src:/var/task/src:ro
+      - ./backend/vendor:/var/task/vendor:ro
+    networks: [api-internal]
+    environment:
+      APP_ENV: local
+    # Same hardening as the other services. Not root, so php-fpm runs its workers as that user (the pool `user` and
+    # `group` of the image are only for a root master). The one writable place is /tmp.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=16m
+    healthcheck:
+      # Healthy = php-fpm accepts connections on 9000 AND the mounted code is there (a missing `make php-install`
+      # or an empty mount would otherwise look healthy until the first request). The image has no FastCGI client;
+      # `api`'s own healthcheck runs a real request through both. A connection with no request is dropped by php-fpm
+      # without a log line. Cheap: one short php process.
+      test:
+        - CMD
+        - php
+        - -r
+        - "exit(is_file('/var/task/vendor/autoload.php') && is_file('/var/task/public/index.php') && @fsockopen('127.0.0.1', 9000) !== false ? 0 : 1);"
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
+  # nginx 1.30.5, the unprivileged build (nginxinc/nginx-unprivileged): runs as uid 101 and listens on 8080, so it
+  # needs neither root nor capabilities (cap_drop ALL) to start, and the stock image is not run with its root-start,
+  # privilege-drop entrypoint. Only docker/api/nginx.conf (a complete configuration) is mounted, plus the map.
+  api:
+    # nginxinc/nginx-unprivileged:1.30.5-alpine (multi-arch index digest, taken with `docker buildx imagetools inspect`)
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    volumes:
+      - ./docker/api/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/api/viewer-address.conf:/etc/nginx/viewer-address.conf:ro
+    # On the default network (the host port and the php tools container reach it) and on api-internal (to reach php-fpm).
+    networks: [default, api-internal]
+    ports:
+      - "127.0.0.1:8080:8080"
+    user: "101:101"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=1777,size=16m
+    healthcheck:
+      # A real request through nginx AND php-fpm: wget fails on a non-2xx answer or no answer.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+    depends_on:
+      api-php:
+        condition: service_healthy
+
   # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
   local-aws-init:
@@ -258,5 +338,13 @@ services:
       # The worker integration tests (RieInvocationTest) call it at http://worker:8080.
       worker:
         condition: service_healthy
+      # The API integration tests (HealthOverNginxTest) call it at http://api:8080.
+      api:
+        condition: service_healthy
       # `worker-runner` is deliberately NOT listed: two of the suites need it stopped (see the Makefile), and
       # `docker compose run` would start a dependency again.
+
+networks:
+  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Only `api-php` and `api`.
+  api-internal:
+    internal: true

@@ -6,6 +6,8 @@
 
 FROM php:8.5-fpm-alpine@sha256:fa01fb1645cd0fc566a5f146b099adace33b906571f972f71f2182a7c12d1cd7 AS fpm
 COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/zz-app.ini
+# Pool settings (clear_env = no, small pm). The PHP code is not in the image: Compose mounts it read-only at /var/task.
+COPY docker/php/php-fpm.d/zz-app.conf /usr/local/etc/php-fpm.d/zz-app.conf
 
 FROM php:8.5-cli-alpine@sha256:93684051146ec037620855feb77f278090bde45ddc030801cd3f2a7685bc4deb AS dev
 COPY --from=composer:2.10.3@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac /usr/bin/composer /usr/bin/composer
