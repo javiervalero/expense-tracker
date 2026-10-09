@@ -85,7 +85,7 @@ Browser ──signed POST──► S3 receipts bucket (originals) ──ObjectCr
 | CloudFront + S3 site | Vite dev server (proxies `/api` to the API, adding the same origin-verify and `CloudFront-Viewer-Address` headers as CloudFront) |
 | API Gateway + Lambda (API) | nginx + php-fpm (`php:8.5-fpm-alpine`), running the same PHP code |
 | DynamoDB | `amazon/dynamodb-local` |
-| S3 | S3-compatible emulator, chosen in a Phase 0 spike (MinIO is no longer maintained; see ADR 0007) |
+| S3 | pgsty/silo (maintained MinIO fork, pinned by digest; chosen in the Phase 0 spike, see ADR 0007) |
 | SQS + DLQ | ElasticMQ (same redrive settings) |
 | S3 event → SQS → worker Lambda | Emulator webhook → small relay → ElasticMQ → local runner → worker in the `bref/php-85:3` image (plus GD) under the Lambda Runtime Interface Emulator. The worker receives the same SQS event as on AWS. |
 
@@ -320,14 +320,14 @@ Playwright arrives in L1. The owner approved this on 2026-10-09.
 | DynamoDB access patterns turn out wrong once built | Medium | Patterns settled up front in ADR 0002 (including lookup by id, date changes and filtered pagination); integration tests run against DynamoDB Local from Phase 1 |
 | `LSI1` can't be added or removed after the table is created | Low | Access patterns fixed in ADR 0002 before Phase 1; tables are created from a script/Terraform; on AWS, migrate via PITR export if ever needed |
 | Local and AWS behave differently (emulators, php-fpm vs Lambda, IAM, S3 notifications) | **Medium** | Worker receives the same SQS event shape locally (ElasticMQ + runner that behaves like the event source mapping, with DLQ redrive); handler fixtures from both AWS and the emulator; Terraform plan tests for the notification filter, event source mapping and redrive; post-deploy smoke test (valid and invalid upload, DLQ empty) |
-| The local S3 emulator is unmaintained (MinIO community edition archived) | Medium | Phase 0 spike picks a maintained emulator that enforces POST policy conditions; MinIO pinned by digest only as a fallback |
+| Local S3 emulator (pgsty/silo) depends mainly on one maintainer | Low | Pinned by digest; permanent conformance suite (POST policy, notifications, CORS) catches regressions on every bump; Floci then pinned MinIO as fallbacks (ADR 0007) |
 | Large or crafted images exhaust worker memory (Lambda limit differs from local) | Low | Check dimensions before decoding (reject > ~40 MP); size the worker's memory; DLQ alarm |
 | PHP Lambda cold start after idle (~0.3–0.5 s) | Low | Acceptable for a proof of concept; recorded in ADR 0001 |
 | AWS resources left running or costs creeping | Low | Serverless pricing, budget alarm, destroy → re-create tested in Phase 8 |
 | Bref / Lambda layer versions change, or Composer locks packages the layer's PHP can't run | Low | Terraform reads layer versions from the locked `bref/bref`; `config.platform.php` equals the layer's PHP, checked in CI; Bref confined to entry points (ADR 0012) |
 | Per-IP throttling bypassed by calling API Gateway directly or forging the client-IP header | Medium | Secret origin header checked first in PHP; IP read only from `CloudFront-Viewer-Address`; both checked by the Phase 8 smoke test (ADR 0012) |
 | Direct calls to the public API Gateway URL use Lambda invocations and the shared API rate limit | Low | Rejected in the first middleware within milliseconds; API Gateway throttling; budget alarm |
-| PHP 8.5 is newer, so a tool may lag in support | Low | Phase 0 verifies every pinned tool on 8.5; fall back to 8.4 if needed (ADR 0012) |
+| PHP 8.5 is newer, so a tool may lag in support | Low | Verified in Phase 0: every pinned tool runs on 8.5.11 with deprecations as errors; CI keeps checking on each bump; fall back to 8.4 if a later bump breaks (ADR 0012) |
 | x86_64 Lambdas cost more than arm64 (arm64 is about 20% cheaper) | Low | Negligible at this volume; revisit if Bref ships arm64 extra layers |
 
 ## 14. Review
