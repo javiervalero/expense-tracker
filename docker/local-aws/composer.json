@@ -1,0 +1,50 @@
+{
+    "name": "expense-tracker/local-aws",
+    "description": "Local-only tooling for the Compose stack: idempotent bootstrap of the AWS stand-ins (and, later, the S3 events relay and worker runner). Never deployed to AWS.",
+    "type": "project",
+    "license": "proprietary",
+    "require": {
+        "php": "~8.5.11",
+        "aws/aws-sdk-php": "^3.400"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "~3.95.27",
+        "phpstan/phpstan": "~2.3.1",
+        "phpstan/phpstan-phpunit": "~2.1.1",
+        "phpstan/phpstan-strict-rules": "~2.1.0",
+        "phpunit/phpunit": "^13.4"
+    },
+    "autoload": {
+        "psr-4": {
+            "LocalAws\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "LocalAws\\Tests\\": "tests/"
+        }
+    },
+    "config": {
+        "platform": {
+            "php": "8.5.11"
+        },
+        "sort-packages": true,
+        "optimize-autoloader": true
+    },
+    "scripts": {
+        "test": "phpunit --testsuite unit",
+        "stan": "phpstan analyse --memory-limit=512M",
+        "cs": "php-cs-fixer fix --dry-run --diff --show-progress=none",
+        "cs:fix": "php-cs-fixer fix",
+        "test:coverage": "mkdir -p build/coverage && rm -f build/coverage/clover.xml && phpunit --testsuite unit --coverage-clover build/coverage/clover.xml --coverage-text",
+        "coverage:check": "php ../../scripts/check-coverage.php build/coverage/clover.xml 80"
+    },
+    "scripts-descriptions": {
+        "test": "Run the unit suite",
+        "stan": "PHPStan at level max with strict rules",
+        "cs": "PHP-CS-Fixer in dry-run mode (fails on any difference)",
+        "cs:fix": "PHP-CS-Fixer, rewriting files",
+        "test:coverage": "Run the unit suite and write a Clover report to build/coverage/",
+        "coverage:check": "Fail if line coverage of src/ is below 80%; an empty report fails too (src/ is never empty here)"
+    }
+}

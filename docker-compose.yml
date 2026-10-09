@@ -37,6 +37,75 @@ services:
       retries: 20
       start_period: 3s
 
+  # S3 emulator: pgsty/silo (a maintained fork of MinIO), chosen in the Phase 0 spike (ADR 0007, docs/spikes/s3-emulator.md).
+  # The buckets, the CORS rule and the notification rule are not created here but by `local-aws-init` (below).
+  s3:
+    # pgsty/silo RELEASE.2026-09-16T00-00-00Z (linux/amd64 image digest from the spike). AGPL-3.0: used unmodified,
+    # only as a local development and CI service; never ship it.
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+    command: ["server", "/data"]
+    ports:
+      # 127.0.0.1 only, and on the host's 9000 on purpose: presigned URLs are signed for http://localhost:9000.
+      - "127.0.0.1:9000:9000"
+    environment:
+      # The emulator's root user is the project's fake AWS key pair (.env), so one pair works everywhere.
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
+      MINIO_BROWSER: "off"
+      # Webhook target RELAY: where "object created" events go (the s3-events-relay service, added in WP9). The ARN
+      # to use in a bucket rule is arn:minio:sqs::RELAY:webhook (S3_NOTIFICATION_ARN). Silo starts and reports
+      # healthy while the target is unreachable; events wait in queue_dir and are replayed once it answers.
+      MINIO_NOTIFY_WEBHOOK_ENABLE_RELAY: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_RELAY: ${S3_WEBHOOK_ENDPOINT:?not set - copy the S3_ lines of .env.example into .env}
+      MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_RELAY: ${S3_WEBHOOK_AUTH_TOKEN:?not set - copy the S3_ lines of .env.example into .env}
+      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_RELAY: /queue
+      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_RELAY: "10000"
+    # Objects and the pending-event queue live in memory and vanish with the container, like DynamoDB Local's data.
+    # One lifecycle for both on purpose: no events for objects that no longer exist, no objects without their events.
+    # Explicit tmpfs for /data also stops the image's own `VOLUME /data` from creating an anonymous volume that
+    # `make down` (which never uses -v) would leave behind.
+    # Hardening (WP8 security review): not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The two tmpfs are the only writable places and belong to the unprivileged user (uid/gid 10001).
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /data:uid=10001,gid=10001,mode=0770
+      - /queue:uid=10001,gid=10001,mode=0770
+    healthcheck:
+      # The image is ubi-micro (no curl or wget): the binary ships its own probe.
+      test: ["CMD", "silo", "healthcheck", "live"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
+  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
+  # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
+  local-aws-init:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    restart: "no"
+    # Only what the bootstrap needs (no env_file: it must not receive the webhook token or other unrelated values).
+    # Interpolated from .env or from the shell (a value given on the command line wins over .env).
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_CORS_ALLOWED_ORIGIN: ${S3_CORS_ALLOWED_ORIGIN:-}
+      S3_NOTIFICATION_ARN: ${S3_NOTIFICATION_ARN:-}
+      S3_WEBHOOK_ENDPOINT: ${S3_WEBHOOK_ENDPOINT:-}
+      BOOTSTRAP_WAIT_SECONDS: ${BOOTSTRAP_WAIT_SECONDS:-}
+    command: ["bin/bootstrap.php"]
+    depends_on:
+      s3:
+        condition: service_healthy
+
   # PHP tools container on the Compose network: runs the conformance suite against the services above.
   # Not started by `make up` (profile `tools`); `make test-conformance` runs it with `docker compose run`.
   php:
@@ -55,3 +124,8 @@ services:
         condition: service_healthy
       sqs:
         condition: service_healthy
+      s3:
+        condition: service_healthy
+      # The CORS and notification rules the conformance tests check are set by the bootstrap.
+      local-aws-init:
+        condition: service_completed_successfully
