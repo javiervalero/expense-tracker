@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the jobs only read the repository. No secrets are used anywhere.
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR replaces the run in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Runs on main are never cancelled, so every merged commit keeps a complete result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP 8.5 with pcov
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: pcov
+          tools: composer
+        env:
+          # Avoids GitHub API rate limits when the action downloads tools.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Find the Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer --working-dir=backend config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('backend/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      # The same make targets as on a developer machine; RUN_PHP is empty because PHP is installed here.
+      - name: Install dependencies from composer.lock
+        run: make RUN_PHP= php-install
+
+      - name: Check composer.json, code style (dry run) and static analysis
+        run: make RUN_PHP= lint-php
+
+      - name: Unit and architecture tests with coverage (80% bar on src/)
+        run: make RUN_PHP= test-unit
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_PHP= audit
