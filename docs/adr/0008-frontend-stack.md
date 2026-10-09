@@ -17,7 +17,8 @@ and one chart.
 - **A thin `fetch` wrapper** that adds the CSRF header and turns problem-details errors into form errors. No HTTP
   library.
 - **Plain CSS** (custom properties) and a handful of shared components. No UI kit.
-- **Chart.js** (via `vue-chartjs`) for the monthly summary.
+- **Chart.js** (via `vue-chartjs`) for the monthly summary chart, added in phase L5. Until then the summary is a
+  table ([`../PLAN.md`](../PLAN.md) §12).
 - **Quality tools:**
   - Vitest + Vue Test Utils for unit and component tests;
   - ESLint + Prettier;

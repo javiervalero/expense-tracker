@@ -2,6 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-07
+- Revised: 2026-10-09 (PR #1 review comment #9: phasing)
 
 ## Context
 
@@ -11,7 +12,7 @@ creates billable resources, so deployments must be deliberate, and AWS credentia
 ## Decision
 
 - **CI (`.github/workflows/ci.yml`) on every pull request and push to `main`:**
-  - PHP: PHP-CS-Fixer, PHPStan, PHPUnit (with DynamoDB Local and MinIO as service containers);
+  - PHP: PHP-CS-Fixer, PHPStan, PHPUnit (with DynamoDB Local, the S3 emulator and ElasticMQ as service containers);
   - front-end: ESLint, Prettier, `vue-tsc`, Vitest, build;
   - end-to-end: Playwright against the Docker Compose stack;
   - Terraform: `fmt -check`, `validate`, tflint, checkov.
@@ -41,3 +42,7 @@ creates billable resources, so deployments must be deliberate, and AWS credentia
 - Every change is checked the same way; the main branch stays green.
 - Deploys are deliberate and auditable in the Actions history.
 - The OIDC role and its trust policy have to be created once, by Terraform, and kept least-privilege.
+- **Phased delivery** ([`../PLAN.md`](../PLAN.md) §12). The essential track delivers CI with PHP, front-end,
+  contract and `terraform fmt`/`validate` checks. Playwright (L1), the OIDC deploy workflow (L2) and tflint/checkov
+  (L3) follow after the first deployment. Until L2, the owner deploys with `make deploy` and short-lived AWS SSO
+  credentials; the workflow later calls the same script, so no work is wasted.

@@ -2,6 +2,7 @@
 
 - Status: Proposed
 - Date: 2026-10-07
+- Revised: 2026-10-09 (PR #1 review comments #2, #3, #8)
 
 ## Context
 
@@ -12,30 +13,64 @@ without an AWS account.
 
 ## Decision
 
-Use **Amazon DynamoDB** with a **single table**: on-demand billing, point-in-time recovery and TTL enabled.
+Use **Amazon DynamoDB** with a **single table**: on-demand billing, point-in-time recovery and TTL (on `expiresAt`)
+enabled, and one **local secondary index, `LSI1`**, for listing expenses by date.
 
-| Item | PK | SK |
-|---|---|---|
-| User | `USER#<userId>` | `PROFILE` |
-| Email lock | `EMAIL#<normalisedEmail>` | `EMAIL` |
-| Category | `USER#<userId>` | `CAT#<categoryId>` |
-| Expense | `USER#<userId>` | `EXP#<yyyy-mm-dd>#<expenseId>` |
-| Receipt | `USER#<userId>` | `RCPT#<expenseId>` |
-| Session | `SESSION#<tokenHash>` | `SESSION` (expires by TTL) |
-| Login throttle | `THROTTLE#<email or ip>` | `THROTTLE` (expires by TTL) |
+| Item | PK | SK | LSI1SK |
+|---|---|---|---|
+| User | `USER#<userId>` | `PROFILE` | — |
+| Email lock | `EMAIL#<normalisedEmail>` | `EMAIL` | — |
+| Category | `USER#<userId>` | `CAT#<categoryId>` | — |
+| Expense | `USER#<userId>` | `EXP#<expenseId>` | `EXP#<yyyy-mm-dd>#<expenseId>` |
+| Receipt | `USER#<userId>` | `RCPT#<expenseId>` | — |
+| Session | `SESSION#<tokenHash>` | `SESSION` (expires by TTL) | — |
+| Login throttle | `THROTTLE#<email or ip>` | `THROTTLE` (expires by TTL) | — |
+
+`LSI1` uses the table's `PK` with `LSI1SK` as its sort key and projects all attributes. It is sparse: only expense
+items have `LSI1SK`. All ids are random UUIDs and are never reused.
+
+**Access patterns:**
+
+| Need | Operation |
+|---|---|
+| Get / update / delete one expense | `GetItem` / `UpdateItem` / `DeleteItem` on `PK = USER#<me>`, `SK = EXP#<expenseId>` |
+| Expenses in a date range, newest first | `Query LSI1`: `PK = USER#<me>`, `LSI1SK BETWEEN EXP#<from> AND EXP#<to>~`, descending, strongly consistent |
+| Monthly summary | The same query for one month (all pages); totals by category in PHP |
+| A user's categories | `Query`: `PK = USER#<me>`, `begins_with(SK, CAT#)` |
+| An expense's receipt | `GetItem`: `SK = RCPT#<expenseId>` |
 
 **Design rules:**
 - **Isolation by key:** every read or write of user data uses `PK = USER#<authenticated user id>`, taken from the
   session and never from the request.
 - **Unique emails:** the user item and its email lock are written in one transaction, guarded by a condition
   that the email lock doesn't already exist.
-- **Date ranges** are key conditions on the expense sort key.
-- **Monthly summary:** query one month and total by category in PHP.
-- **Filters:** category and text filters run within the user's own partition.
-- **Integrity rules in PHP**, each with tests: category belongs to the user; deleting a category makes its expenses
-  Uncategorized; deleting an expense deletes its receipt.
+- **Date ranges** are key conditions on `LSI1SK`.
+- **Changing an expense's date** is one `UpdateItem` that sets `date` and `LSI1SK` together, conditioned on
+  `attribute_exists(PK)` (otherwise `404`). The primary key has no date in it, so the expense id, its URL, its receipt
+  item and its S3 object key never change. DynamoDB updates the index atomically with the item.
+- **Deleting an expense** removes the expense and receipt items in one `TransactWriteItems` (same partition), then
+  deletes the receipt's S3 objects ([ADR 0006](0006-direct-to-s3-receipt-uploads-and-async-processing.md)).
+- **Deleting a category** deletes only its `CAT#` item; expenses are not rewritten. Every read path (expense
+  responses, filters, monthly summary) resolves `categoryId` against the user's categories, loaded with one query,
+  and reports an id with no matching category as `null` (*Uncategorized*). Ids are never reused, so a leftover id
+  cannot match a later category. When such an expense is next saved, the leftover id is replaced by `null`.
+- **Filtering and pagination.** `GET /expenses` takes `limit` (default 50, max 100) and an opaque `cursor`, and returns
+  `{ items, nextCursor }`. Category and text filters can't be key conditions, so the API queries `LSI1` for the date
+  range in batches of 100 and filters in PHP (category through the category resolver, with `category=none` for
+  Uncategorized; text as a case-insensitive substring of the description). It examines items in order and stops at
+  the `limit`-th match, at the end of the range, or after examining 1,000 items in the request.
+  - A page holds **at most** `limit` items. A short or empty page with a non-null `nextCursor` means "keep going";
+    only `nextCursor: null` means there are no more results.
+  - The cursor is base64url JSON of the last examined item's `SK` and `LSI1SK` plus a hash of the filters, so nothing
+    is skipped or repeated. `PK` always comes from the session, so a cursor can't reach another user's data. A cursor
+    that doesn't decode or was issued for different filters gets `400`.
+  - There is no total count and no page numbers (that would mean reading the whole range); the UI uses "Load more".
+    This deliberately departs from the usual `total/page/limit` pagination metadata.
+- **Integrity rules in PHP**, each with tests: an expense's category must exist in the user's partition when the
+  expense is saved (otherwise `422`); deleted categories resolve to Uncategorized on read; deleting an expense deletes
+  its receipt.
 
-**Local development:** the official `amazon/dynamodb-local` container.
+**Local development:** the official `amazon/dynamodb-local` container, which supports local secondary indexes.
 
 ## Alternatives considered
 
@@ -45,12 +80,32 @@ Use **Amazon DynamoDB** with a **single table**: on-demand billing, point-in-tim
   request after a pause takes about 15 s, and it still needs a VPC.
 - **Aurora DSQL.** Serverless and PostgreSQL-compatible with no VPC, but it supports only a subset of PostgreSQL
   (for example, no foreign keys), so local PostgreSQL and AWS would behave differently.
+- **Date in the expense sort key, plus a GSI on `expenseId`** (earlier draft). A date change becomes a delete + put
+  transaction, and lookups by id go through an eventually consistent index (a `GET` straight after `POST` can 404).
+- **Date encoded in the expense id.** A date change would change the id, the URL and the receipt keys.
+- **A GSI instead of `LSI1`.** It can be added later and has no per-user size limit, but it is only eventually
+  consistent, so a just-saved expense can be missing from the list.
+- **Rewriting expenses when a category is deleted** (synchronously, in a transaction, or as a background job).
+  Unbounded writes, transactions are capped at 100 items, a partial failure leaves mixed data, and a background job
+  would still need the read-time rule while it runs. **Refusing to delete a category in use** was rejected as worse
+  for the user.
+- **DynamoDB `Limit` with a `FilterExpression`.** `Limit` applies before filtering, so pages are often empty.
+  **A GSI per category** costs an extra index and doesn't help text search. **OpenSearch Serverless** has a fixed
+  minimum monthly cost.
 
 ## Consequences
 
 - No VPC, no database credentials (access is by IAM), no idle cost, no connection limits from Lambda.
 - Per-user partitions make the isolation requirement structural rather than a convention.
 - Rules a relational database would enforce (foreign keys, cascades) are our code's responsibility and need tests.
+- Expenses may hold ids of deleted categories by design. All reads must go through the shared category resolver,
+  which has dedicated tests.
+- `LSI1` must exist when the table is created. Adding or removing it later means a new table and a data copy.
+- With an LSI, all of one user's items share a 10 GB limit (tens of millions of expenses), far beyond this app's needs.
+- Each expense write also writes its index entry (a date change writes it twice), and expense attributes are stored
+  twice. At proof-of-concept volume this is fractions of a cent per month.
+- Filtered lists can return short or empty pages, so clients must rely on `nextCursor`, not page length. Items that
+  are filtered out still cost read units; the 1,000-item budget bounds cost and latency per request.
 - New ways of querying the data need design work, because DynamoDB favours access patterns known up front.
   Ad-hoc reporting is harder than with SQL.
 - Single-table design is less familiar to many developers. The key layout is documented here and in

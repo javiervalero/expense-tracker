@@ -21,6 +21,7 @@ under review.
 | [0008](0008-frontend-stack.md) | Front-end stack | Proposed |
 | [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Proposed |
 | [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Proposed |
+| [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Proposed |
 
 ## Template
 
