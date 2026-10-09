@@ -5,10 +5,11 @@ declare(strict_types=1);
 namespace App\Tests\Integration\Pipeline;
 
 use App\Tests\Support\LocalAws;
-use Aws\S3\PostObjectV4;
+use App\Tests\Support\PresignedPostUpload;
 use Aws\S3\S3Client;
 use Aws\Sqs\SqsClient;
 use GuzzleHttp\Client as HttpClient;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -17,20 +18,19 @@ use PHPUnit\Framework\TestCase;
  * (ADR 0006, ADR 0007). Run it through `make test-integration` (the stack must be up).
  *
  * WHO ELSE READS THE QUEUE. These tests read (and delete) the messages of the real `receipts` queue, so nothing
- * else may consume it meanwhile. Today nothing does. From WP11 on the `worker-runner` service does: this suite
- * must then run with that service stopped (`docker compose -p expense-tracker stop worker-runner`, then
- * `start` it again), or the runner would take the messages first and the tests would time out. That is a
- * deliberate choice over a second queue or a Compose profile: the test then checks the very queue and relay
- * configuration the stack uses. The runner's own end-to-end test (ReceiptPipeTest, WP11) covers the runner running.
+ * else may consume it meanwhile. The `worker-runner` service does, so `make test-integration` stops it while this
+ * suite runs (and starts it again afterwards, also when a test fails). The group `queue-exclusive` marks such
+ * suites. That is a deliberate choice over a second queue or a Compose profile: the test then checks the very queue
+ * and relay configuration the stack uses. The runner's own end-to-end test (ReceiptPipeTest) covers the runner running.
  *
  * Isolation: every test uses unique keys, starts from a purged queue, deletes the objects it created (deletes emit
  * no event) and purges the queue afterwards.
  */
+#[Group('queue-exclusive')]
 final class S3ToQueueTest extends TestCase
 {
     private const RECEIPTS_BUCKET = 'receipts';
     private const THUMBNAILS_BUCKET = 'receipt-thumbnails';
-    private const CONTENT_TYPE = 'image/jpeg';
     private const FIRST_MESSAGE_TIMEOUT_SECONDS = 20;
     /** After the awaited message arrives, keep listening this long for a (wrong) second one. */
     private const SETTLE_SECONDS = 2;
@@ -116,33 +116,11 @@ final class S3ToQueueTest extends TestCase
         return "receipts/{$user}/expense-{$id}/receipt-{$id}";
     }
 
-    /**
-     * Presigned POST, built and sent like the front-end will (multipart, the file part last).
-     */
     private function upload(string $bucket, string $key): int
     {
         $this->createdObjects[] = ['bucket' => $bucket, 'key' => $key];
-        $form = new PostObjectV4(
-            $this->s3,
-            $bucket,
-            ['key' => $key, 'Content-Type' => self::CONTENT_TYPE],
-            [
-                ['bucket' => $bucket],
-                ['eq', '$key', $key],
-                ['eq', '$Content-Type', self::CONTENT_TYPE],
-                ['content-length-range', 10, 1024],
-            ],
-            '+10 minutes',
-        );
-        $action = $form->getFormAttributes()['action'] ?? null;
-        self::assertIsString($action);
-        $multipart = [];
-        foreach ($form->getFormInputs() as $name => $value) {
-            $multipart[] = ['name' => (string) $name, 'contents' => $value];
-        }
-        $multipart[] = ['name' => 'file', 'contents' => str_repeat('x', 100), 'filename' => 'receipt.jpg'];
 
-        return $this->http->post($action, ['multipart' => $multipart])->getStatusCode();
+        return PresignedPostUpload::send($this->s3, $this->http, $bucket, $key);
     }
 
     /**
@@ -163,7 +141,7 @@ final class S3ToQueueTest extends TestCase
                 $settleUntil = microtime(true) + self::SETTLE_SECONDS;
             }
         }
-        self::assertNotNull($settleUntil, 'no message for the uploaded key arrived within ' . self::FIRST_MESSAGE_TIMEOUT_SECONDS . ' s (is worker-runner consuming the queue? Stop it while this suite runs)');
+        self::assertNotNull($settleUntil, 'no message for the uploaded key arrived within ' . self::FIRST_MESSAGE_TIMEOUT_SECONDS . ' s (is worker-runner consuming the queue? Run this through make test-integration, which stops it)');
 
         return $messages;
     }

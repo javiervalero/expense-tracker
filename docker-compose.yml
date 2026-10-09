@@ -161,6 +161,48 @@ services:
       retries: 20
       start_period: 3s
 
+  # The worker runner (WP11): stands in for the Lambda SQS event source mapping, which does not exist locally.
+  # It long-polls the `receipts` queue, posts each batch to `worker` as an AWS-shaped SQS event and deletes only the
+  # messages that succeeded; the others return to the queue and, after 3 receives, go to `receipts-dlq`
+  # (docker/local-aws/src/Runner, bin/runner.php). No ports: it only makes outgoing calls.
+  #
+  # It is the ONLY intended consumer of `receipts`. S3ToQueueTest and RelayHttpTest read that queue themselves, so
+  # `make test-integration` stops this service while they run and starts it again afterwards.
+  # Started in step 1 of `make up` (not in LATE_SERVICES): it needs `sqs` and `worker` only, whose queues are declared
+  # in elasticmq.conf, and nothing that the `local-aws-init` bootstrap creates.
+  worker-runner:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    command: ["bin/runner.php"]
+    # Only what the runner needs (no env_file). The values are checked at start; a missing one, or an endpoint that is
+    # not a local stand-in, stops it with exit code 1 (and is logged). The invocation URL is the Runtime Interface
+    # Emulator's fixed path for the function named `function`.
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      SQS_ENDPOINT: ${SQS_ENDPOINT:-}
+      SQS_RECEIPTS_QUEUE_URL: ${SQS_RECEIPTS_QUEUE_URL:?not set - copy the SQS_ lines of .env.example into .env}
+      WORKER_INVOCATION_URL: http://worker:8080/2015-03-31/functions/function/invocations
+    # A crash (not a stop, and not the exit 1 of a bad configuration kept in a loop forever) is retried a few times.
+    restart: on-failure:5
+    # A stop finishes the batch in hand (an invocation may take up to its 8 s timeout, then the delete): more than
+    # Docker's default 10 s, so a stop never ends in SIGKILL.
+    stop_grace_period: 20s
+    # Same hardening as the relay. Nothing is written, so there is not even a tmpfs.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    depends_on:
+      sqs:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+
   # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
   local-aws-init:
@@ -216,3 +258,5 @@ services:
       # The worker integration tests (RieInvocationTest) call it at http://worker:8080.
       worker:
         condition: service_healthy
+      # `worker-runner` is deliberately NOT listed: two of the suites need it stopped (see the Makefile), and
+      # `docker compose run` would start a dependency again.

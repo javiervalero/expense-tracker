@@ -1,5 +1,5 @@
 # Local-only tooling image (never deployed): runs bin/bootstrap.php for the `local-aws-init` service and bin/relay.php
-# (`php -S`) for the `s3-events-relay` service; the worker runner joins in WP11. Base images are pinned by digest, the same ones as
+# (`php -S`) for the `s3-events-relay` service and bin/runner.php for the `worker-runner` service. Base images are pinned by digest, the same ones as
 # docker/php/Dockerfile. Build context: the repository root (see docker-compose.yml).
 
 # Resolves the production dependencies from composer.lock. Composer and its cache stay in this stage.
@@ -12,9 +12,16 @@ RUN composer install --no-dev --no-progress --prefer-dist --no-scripts --no-auto
 COPY docker/local-aws/src ./src
 RUN composer dump-autoload --no-dev --classmap-authoritative
 
+# The pcntl extension, which the worker runner needs to react to SIGTERM/SIGINT (the official image does not ship it).
+# Only pcntl.so and its ini file are copied on (the directory name is the PHP 8.5 extension API of the pinned base image); the compilers stay in this stage.
+FROM php:8.5-cli-alpine@sha256:93684051146ec037620855feb77f278090bde45ddc030801cd3f2a7685bc4deb AS pcntl
+RUN apk add --no-cache $PHPIZE_DEPS && docker-php-ext-install pcntl
+
 # What actually runs: PHP, the code and vendor/. No Composer, and a non-root user.
 FROM php:8.5-cli-alpine@sha256:93684051146ec037620855feb77f278090bde45ddc030801cd3f2a7685bc4deb AS runtime
 COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/zz-app.ini
+COPY --from=pcntl /usr/local/lib/php/extensions/no-debug-non-zts-20250925/pcntl.so /usr/local/lib/php/extensions/no-debug-non-zts-20250925/pcntl.so
+COPY --from=pcntl /usr/local/etc/php/conf.d/docker-php-ext-pcntl.ini /usr/local/etc/php/conf.d/docker-php-ext-pcntl.ini
 RUN addgroup -S -g 10001 localaws && adduser -S -u 10001 -G localaws -H -s /sbin/nologin localaws
 WORKDIR /app
 COPY --from=vendor /app/vendor ./vendor

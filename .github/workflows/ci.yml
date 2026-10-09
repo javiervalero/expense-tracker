@@ -60,7 +60,7 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_PHP= audit
 
-  # docker/local-aws: the local-only tooling of the Compose stack (bootstrap now; relay and runner later).
+  # docker/local-aws: the local-only tooling of the Compose stack (bootstrap, S3 events relay, worker runner).
   # A separate Composer project, so it has its own checks. Same make targets as on a developer machine.
   local-aws:
     name: local-aws
@@ -154,8 +154,10 @@ jobs:
       - name: Conformance tests (DynamoDB, SQS, S3) in the php container on the Compose network
         run: make test-conformance
 
-      # S3 emulator -> webhook -> s3-events-relay -> ElasticMQ. Reads the receipts queue, so nothing else may consume it.
-      - name: Pipeline integration tests (upload -> one queue message)
+      # S3 emulator -> webhook -> s3-events-relay -> ElasticMQ -> worker-runner -> worker. The target stops the runner
+      # while the suites that read the receipts queue run, then starts it for the end-to-end pipe tests (incl. the
+      # ~35 s dead-letter test).
+      - name: Pipeline integration tests (upload -> queue message -> worker; poison message -> DLQ)
         run: make test-integration
 
       - name: Dump the service logs

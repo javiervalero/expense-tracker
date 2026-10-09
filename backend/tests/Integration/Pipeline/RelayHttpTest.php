@@ -7,6 +7,7 @@ namespace App\Tests\Integration\Pipeline;
 use App\Tests\Support\LocalAws;
 use Aws\Sqs\SqsClient;
 use GuzzleHttp\Client as HttpClient;
+use PHPUnit\Framework\Attributes\Group;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 
@@ -15,8 +16,9 @@ use Psr\Http\Message\ResponseInterface;
  * that the unit tests prove for the handler, here proven through the real `php -S` server, its limits and its
  * read-only container. Run it through `make test-integration` (the stack must be up).
  *
- * Like S3ToQueueTest it reads (and purges) the real `receipts` queue, so the worker runner (WP11) must be stopped.
+ * Like S3ToQueueTest it reads (and purges) the real `receipts` queue, so the `worker-runner` service must be stopped meanwhile (`make test-integration` does it; group `queue-exclusive`).
  */
+#[Group('queue-exclusive')]
 final class RelayHttpTest extends TestCase
 {
     /** Same cap as MAX_BODY_BYTES in docker/local-aws/bin/relay.php (256 KiB). */

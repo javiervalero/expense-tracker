@@ -18,7 +18,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures
+.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -82,7 +82,7 @@ check-platform: ## composer.json config.platform.php equals the PHP in the pinne
 #   2. ONE_SHOT_SERVICES: run in the foreground. They exit on purpose, and `up --wait` counts "exited (0)" as a
 #      failure, so they cannot be in step 1. Their log is shown and a non-zero exit code fails `make up`;
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
-# LATE_SERVICES is empty for now. WP12 adds `api` here (`LATE_SERVICES = api`) and nothing else needs to change.
+# LATE_SERVICES is empty for now. WP12 adds `api` here (`LATE_SERVICES = api`) and nothing else needs to change. `worker-runner` is in step 1 on purpose: it needs only sqs and worker (queues come from elasticmq.conf), not the bootstrap.
 ONE_SHOT_SERVICES = local-aws-init
 LATE_SERVICES =
 
@@ -117,8 +117,48 @@ logs: ## Follow the local stack's logs (Ctrl+C to stop)
 test-conformance: .env php-image ## Conformance tests (DynamoDB Local, ElasticMQ, S3 emulator) in the php container; run `make up` first
 	$(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite conformance
 
-test-integration: .env php-image ## Pipeline integration tests (S3 emulator -> relay -> ElasticMQ) in the php container; run `make up` first
-	$(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
+# The `worker-runner` service consumes the real `receipts` queue, and two suites (S3ToQueueTest, RelayHttpTest) read and
+# purge that same queue themselves, so they cannot run while the runner is up. The recipe therefore:
+#   1. stops `worker-runner` (project-scoped: only this Compose project's service), then runs every suite except the
+#      group `needs-runner` (so S3ToQueueTest, RelayHttpTest and RieInvocationTest);
+#   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included). That test
+#      writes the run-unique upload key and poison message id under build/pipe-test/, and the recipe then greps the
+#      service logs for exactly those values (an empty queue alone could mean "no event"): the worker must have logged
+#      "receipt received" for the key, and (unless FAST) the runner must have logged "messages failed, left on the
+#      queue" for the poison id (the worker reported it in batchItemFailures, so this is the partial-failure path, not an
+#      outage and not a whole-batch failure);
+#   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
+#      does not run an EXIT trap on a signal, so INT, TERM and HUP are trapped too and turned into `exit`, which fires
+#      the EXIT trap; the trap keeps the original exit code (130 for INT, 143 for TERM/HUP).
+# `make test-fast` is the same without the tests marked `slow` (the ~35 s dead-letter test).
+PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
+# One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
+EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
+PIPE_MARKERS = build/pipe-test
+
+test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
+	@set -e; \
+	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
+	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
+	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
+	$(COMPOSE) stop worker-runner; \
+	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
+	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
+	rm -rf $(PIPE_MARKERS); \
+	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
+	$(COMPOSE) start worker-runner; \
+	$(PHPUNIT_INTEGRATION) --group needs-runner $(EXCLUDE_SLOW); \
+	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || { echo "make test-integration: the pipe test left no upload key marker" >&2; exit 1; }; \
+	$(COMPOSE) logs --no-log-prefix --since "$$since" worker | grep -F '"message":"receipt received"' | grep -qF "\"key\":\"$$key\"" \
+		|| { echo "make test-integration: the worker logged no 'receipt received' line for the key $$key" >&2; exit 1; }; \
+	if [ -z "$(FAST)" ]; then \
+		id=$$(cat $(PIPE_MARKERS)/poison-message-id.txt) || { echo "make test-integration: the dead-letter test left no message id marker" >&2; exit 1; }; \
+		$(COMPOSE) logs --no-log-prefix --since "$$since" worker-runner | grep -F '"message":"messages failed, left on the queue"' | grep -qF "\"failedMessageIds\":[\"$$id\"]" \
+			|| { echo "make test-integration: the runner logged no 'messages failed' line (batchItemFailures) for the poison message $$id" >&2; exit 1; }; \
+	fi
+
+test-fast: ## Like test-integration, without the tests marked `slow` (the dead-letter test, ~35 s)
+	@$(MAKE) --no-print-directory test-integration FAST=1
 
 # The S3 event fixtures exist twice (backend/ and docker/local-aws/ are separate Composer projects). They must stay
 # byte-identical, or the parser and the relay would be tested against different "real" events.
