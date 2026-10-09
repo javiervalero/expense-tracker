@@ -41,8 +41,8 @@
         "stan": "phpstan analyse --memory-limit=512M",
         "cs": "php-cs-fixer fix --dry-run --diff --show-progress=none",
         "cs:fix": "php-cs-fixer fix",
-        "test:coverage": "mkdir -p build/coverage && rm -f build/coverage/clover.xml && if [ -n \"$(find src -name '*.php' -print -quit)\" ]; then phpunit --testsuite unit,architecture --coverage-clover build/coverage/clover.xml --coverage-text; else echo 'src/ has no PHP files yet: writing an explicitly empty report'; printf '%s' '<?xml version=\"1.0\"?><coverage><project><metrics files=\"0\" statements=\"0\" coveredstatements=\"0\"/></project></coverage>' > build/coverage/clover.xml; phpunit --testsuite unit,architecture; fi",
-        "coverage:check": "if [ -n \"$(find src -name '*.php' -print -quit)\" ]; then php ../scripts/check-coverage.php build/coverage/clover.xml 80; else echo 'src/ has no PHP files yet: coverage report is empty by design'; php ../scripts/check-coverage.php --allow-empty build/coverage/clover.xml 80; fi"
+        "test:coverage": "mkdir -p build/coverage && rm -f build/coverage/clover.xml && phpunit --testsuite unit,architecture --coverage-clover build/coverage/clover.xml --coverage-text",
+        "coverage:check": "php ../scripts/check-coverage.php build/coverage/clover.xml 80"
     },
     "scripts-descriptions": {
         "test": "Run the unit and architecture suites",
@@ -51,6 +51,6 @@
         "cs": "PHP-CS-Fixer in dry-run mode (fails on any difference)",
         "cs:fix": "PHP-CS-Fixer, rewriting files",
         "test:coverage": "Run the unit and architecture suites and write a Clover report to build/coverage/",
-        "coverage:check": "Fail if line coverage of src/ is below 80%; an empty report fails unless src/ has no PHP files"
+        "coverage:check": "Fail if line coverage of src/ is below 80% (an empty report fails too)"
     }
 }
