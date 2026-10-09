@@ -2,7 +2,8 @@
 # (the host PHP is older than the project's PHP 8.5), as the host user so files are not owned by root.
 #
 # In CI the tools are installed on the runner, so the workflow calls the same targets with `RUN_PHP=`
-# (empty): the commands are identical, only the wrapper disappears.
+# (empty): the commands are identical, only the wrapper disappears. Node tools (contract/) work the same way with
+# `RUN_NODE`, a pinned node image run as the host user.
 
 PHP_IMAGE ?= expense-tracker-php:dev
 RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
@@ -12,16 +13,23 @@ LOCAL_AWS_COMPOSER = $(RUN_PHP) composer --working-dir=docker/local-aws
 
 # The Compose project name (`expense-tracker`) is also set in docker-compose.yml; repeated here so that a
 # stray COMPOSE_PROJECT_NAME in the environment can never point these commands at another project.
+# Node tools (contract/): the pinned node:24.21.0-alpine (index digest, multi-arch), as the host user. HOME and the npm
+# cache live in /tmp inside the container, so nothing is written outside the repository.
+NODE_IMAGE ?= node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+RUN_NODE ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app -e HOME=/tmp -e npm_config_cache=/tmp/.npm $(NODE_IMAGE)
+NPM_CONTRACT = $(RUN_NODE) npm --prefix contract
+GENERATED_TYPES = frontend/src/api/schema.gen.ts
+
 COMPOSE = docker compose -p expense-tracker
 
 # Building the image is only needed when the tools run in a container.
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast
+.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-14s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 php-image: ## Build the PHP tools image (pinned base images, pcov, Composer)
 	docker build --target dev -t $(PHP_IMAGE) -f docker/php/Dockerfile .
@@ -169,3 +177,41 @@ FIXTURES_B ?= docker/local-aws/tests/Fixtures/s3-events
 
 check-fixtures: ## The two copies of the S3 event JSON fixtures are identical
 	@scripts/check-fixtures.sh $(FIXTURES_A) $(FIXTURES_B)
+
+# The OpenAPI contract (ADR 0011). `make contract-install` first (once, and after a lockfile change); `make contract`
+# then lints the spec, bundles it to contract/dist/openapi.json and checks that the committed types equal the ones the
+# spec generates. The check does not use git: it generates into build/contract/ and compares the two files, so it works
+# the same on a dirty tree, before the first commit, and in CI. It never overwrites the committed file; after a spec
+# change run `make contract-gen` and commit the result. Scripts of dependencies never run (--ignore-scripts).
+CHECK_TYPES_FILE = build/contract/schema.gen.ts
+COMMITTED_TYPES = $(GENERATED_TYPES)
+
+contract-install: ## contract/: install npm dependencies from package-lock.json (no install scripts)
+	$(NPM_CONTRACT) ci --ignore-scripts --no-audit --no-fund
+
+# Fails fast with a clear message instead of an npm error about a missing binary.
+contract-ready:
+	@test -d contract/node_modules || { echo "make: contract/node_modules is missing; run 'make contract-install' first." >&2; exit 1; }
+
+contract-lint: contract-ready ## contract/: lint openapi.yaml with Redocly (needs contract-install)
+	$(NPM_CONTRACT) run lint
+
+contract-bundle: contract-ready ## contract/: bundle openapi.yaml into contract/dist/openapi.json (needs contract-install)
+	$(NPM_CONTRACT) run bundle
+
+contract-gen: contract-ready ## contract/: rewrite frontend/src/api/schema.gen.ts from openapi.yaml (needs contract-install)
+	$(NPM_CONTRACT) run gen
+
+contract-check-types: contract-ready ## contract/: fail if the committed schema.gen.ts differs from the generated types
+	$(NPM_CONTRACT) run gen -- $(CHECK_TYPES_FILE)
+	@if [ ! -f "$(COMMITTED_TYPES)" ]; then echo "make: $(COMMITTED_TYPES) is missing; run make contract-gen" >&2; exit 1; fi
+	@if ! cmp -s "$(COMMITTED_TYPES)" "$(CHECK_TYPES_FILE)"; then \
+		diff -u "$(COMMITTED_TYPES)" "$(CHECK_TYPES_FILE)" || true; \
+		echo "make: $(COMMITTED_TYPES) is stale or was edited by hand; run make contract-gen" >&2; exit 1; \
+	fi
+	@echo "$(COMMITTED_TYPES) is up to date"
+
+contract-audit: ## contract/: npm audit, high severity and above (needs contract-install)
+	$(NPM_CONTRACT) audit --audit-level=high
+
+contract: contract-lint contract-bundle contract-check-types ## Lint + bundle + check the committed types (needs contract-install)

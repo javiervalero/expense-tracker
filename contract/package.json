@@ -1,0 +1,19 @@
+{
+  "name": "expense-tracker-contract",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenAPI contract tooling: lint, bundle and TypeScript type generation (ADR 0011). Its own package, with its own TypeScript 5, so the front-end is free to use a newer TypeScript.",
+  "engines": {
+    "node": ">=24.21.0 <25"
+  },
+  "scripts": {
+    "lint": "redocly lint --config redocly.yaml openapi.yaml",
+    "bundle": "redocly bundle --config redocly.yaml openapi.yaml --ext json --output dist/openapi.json",
+    "gen": "node scripts/generate-types.mjs"
+  },
+  "devDependencies": {
+    "@redocly/cli": "2.62.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3"
+  }
+}

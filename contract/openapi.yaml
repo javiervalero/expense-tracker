@@ -1,0 +1,170 @@
+openapi: 3.1.0
+
+info:
+  title: Expense Tracker API
+  version: 0.1.0
+  summary: HTTP API of the expense tracker, served under /api/v1.
+  description: |
+    The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
+
+    Errors are RFC 9457 problem details (`application/problem+json`, ADR 0003).
+
+    Phase 0 only has the health check; the real endpoints arrive in later phases.
+
+servers:
+  - url: /api/v1
+    description: Same origin as the front-end (CloudFront in AWS, the Vite proxy locally)
+
+tags:
+  - name: health
+    description: Liveness of the API.
+
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [health]
+      summary: Health check
+      description: Returns 200 with `{"status":"ok"}` when the API is up. Needs no authentication.
+      security: []
+      responses:
+        '200':
+          description: The API is up.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+    head:
+      operationId: headHealth
+      tags: [health]
+      summary: Health check without a body
+      description: |
+        Same as `GET /health`, but the response has no body. Error responses to HEAD have no body either (only their
+        headers are documented).
+      security: []
+      responses:
+        '200':
+          description: The API is up. The response has no body.
+          headers:
+            Content-Type:
+              description: The type the body would have (the response has no body).
+              required: true
+              schema:
+                type: string
+                example: application/json
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '404':
+          description: Returned for any path not listed in this spec. No body (HEAD).
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '405':
+          description: Returned for every method other than GET and HEAD, OPTIONS included. No body (HEAD).
+          headers:
+            Allow:
+              $ref: '#/components/headers/Allow'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+
+components:
+  headers:
+    CacheControlNoStore:
+      description: Always `no-store`; nothing in the API may be cached.
+      required: true
+      schema:
+        type: string
+        example: no-store
+    ContentTypeOptionsNoSniff:
+      description: Always `nosniff`; the declared content type is the content type.
+      required: true
+      schema:
+        type: string
+        example: nosniff
+    Allow:
+      description: The methods the path supports, for example `GET, HEAD`.
+      required: true
+      schema:
+        type: string
+        example: GET, HEAD
+
+  responses:
+    NotFound:
+      description: Returned for any path not listed in this spec.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    MethodNotAllowed:
+      description: Returned for every method other than GET and HEAD on a listed path, OPTIONS included.
+      headers:
+        Allow:
+          $ref: '#/components/headers/Allow'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+  schemas:
+    HealthResponse:
+      type: object
+      description: Body of a successful health check.
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+    ProblemDetails:
+      type: object
+      description: |
+        RFC 9457 problem details. This API always sends `title` and `status`; clients must tolerate their absence
+        in problem documents from third parties (RFC 9457 makes every member optional). Members beyond the five standard ones are allowed (extension members), so this
+        schema does not use `additionalProperties: false`.
+      required: [title, status]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          default: about:blank
+          description: Identifies the problem type. `about:blank` means the title is the HTTP status phrase.
+        title:
+          type: string
+          description: Short, human-readable summary of the problem type.
+        status:
+          type: integer
+          minimum: 100
+          maximum: 599
+          description: The HTTP status code.
+        detail:
+          type: string
+          description: Human-readable explanation specific to this occurrence.
+        instance:
+          type: string
+          format: uri-reference
+          description: Identifies this occurrence of the problem.
+      additionalProperties: true

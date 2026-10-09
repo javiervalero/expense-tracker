@@ -1,0 +1,9 @@
+# Redocly lint configuration (ADR 0011). `recommended-strict` is the recommended ruleset with every warning promoted
+# to an error: `redocly lint` exits 0 on warnings, and a contract problem must fail the build, not scroll past.
+extends:
+  - recommended-strict
+
+rules:
+  # The repository has no license yet and the API is not published, so there is no license to declare. Turn this
+  # back on (and add `info.license`) if the project is ever published.
+  info-license: off

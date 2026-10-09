@@ -131,6 +131,34 @@ jobs:
       - name: S3 event fixtures are identical in both copies
         run: make check-fixtures
 
+  # The OpenAPI contract (ADR 0011): lint, bundle, generate the TypeScript types and fail when the committed
+  # frontend/src/api/schema.gen.ts differs. Node is installed here, so RUN_NODE is empty (same make targets as locally).
+  contract:
+    name: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: contract/package-lock.json
+
+      - name: Install dependencies from package-lock.json
+        run: make RUN_NODE= contract-install
+
+      - name: Lint and bundle the spec, regenerate the types, fail if schema.gen.ts is stale
+        run: make RUN_NODE= contract
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_NODE= contract-audit
+
   # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
   # including its presigned POST policy enforcement, CORS and presigned GET), then the pipeline integration tests.
   integration:
