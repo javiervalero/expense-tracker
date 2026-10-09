@@ -10,7 +10,7 @@
 | Requirements | [`docs/BRIEF.md`](BRIEF.md) |
 | Constraints | [`CLAUDE.md`](../CLAUDE.md) |
 | Drafted | 2026-10-07 |
-| Last updated | 2026-10-09 (approved) |
+| Last updated | 2026-10-09 (approved; ADR 0012 proposed after Phase 0 research) |
 
 ---
 
@@ -56,6 +56,7 @@ system also runs locally with Docker and no AWS account.
 | [0009](adr/0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code |
 | [0010](adr/0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions for CI/CD, deploying with OIDC (no stored AWS keys) |
 | [0011](adr/0011-openapi-contract.md) | OpenAPI 3.1 contract as the API source of truth, checked in CI on both sides |
+| [0012](adr/0012-runtime-platform.md) | Runtime platform: PHP 8.5 on Bref 3 layers, all Lambdas x86_64 (GD extra layer), client IP from CloudFront's viewer-address header, API reachable only through CloudFront (Proposed) |
 
 ## 4. Architecture
 
@@ -72,35 +73,36 @@ Browser ──signed POST──► S3 receipts bucket (originals) ──ObjectCr
 ```
 
 - **No VPC, no NAT gateway, no database server, no database password.** Every component authenticates with IAM.
+- **All Lambdas run on x86_64** with PHP 8.5 from Bref 3 layers; the worker adds Bref's GD layer, which has no arm64 build ([ADR 0012](adr/0012-runtime-platform.md)).
 - **Idle cost is close to $0**: everything is billed per request or per GB stored. AWS WAF has a fixed monthly fee,
   so it is available behind a switch but off by default.
-- App and API are served from **one domain**, so the session cookie is first-party and the API needs no CORS.
+- App and API are served from **one domain**, so the session cookie is first-party and the API needs no CORS. The API accepts only requests carrying CloudFront's secret origin header, and takes the client IP only from the `CloudFront-Viewer-Address` header that CloudFront adds.
 
 ### Local equivalent (no AWS account needed)
 
 | AWS | Local (Docker Compose) |
 |---|---|
-| CloudFront + S3 site | Vite dev server (proxies `/api` to the API) |
-| API Gateway + Lambda (API) | nginx + php-fpm, running the same PHP code |
+| CloudFront + S3 site | Vite dev server (proxies `/api` to the API, adding the same origin-verify and `CloudFront-Viewer-Address` headers as CloudFront) |
+| API Gateway + Lambda (API) | nginx + php-fpm (`php:8.5-fpm-alpine`), running the same PHP code |
 | DynamoDB | `amazon/dynamodb-local` |
 | S3 | S3-compatible emulator, chosen in a Phase 0 spike (MinIO is no longer maintained; see ADR 0007) |
 | SQS + DLQ | ElasticMQ (same redrive settings) |
-| S3 event → SQS → worker Lambda | Emulator webhook → small relay → ElasticMQ → local runner → worker in the Bref Lambda image. The worker receives the same SQS event as on AWS. |
+| S3 event → SQS → worker Lambda | Emulator webhook → small relay → ElasticMQ → local runner → worker in the `bref/php-85:3` image (plus GD) under the Lambda Runtime Interface Emulator. The worker receives the same SQS event as on AWS. |
 
 ## 5. Back-end design
 
-- **PHP 8.3, no framework.** Composer is used for PSR-4 autoloading and two runtime libraries: `aws/aws-sdk-php`, and
+- **PHP 8.5, no framework.** Composer's `config.platform.php` is pinned to the Bref layer's exact PHP version. Composer is used for PSR-4 autoloading and two runtime libraries: `aws/aws-sdk-php`, and
   `bref/bref` (needed by the Lambda runtime layer's bootstrap, never imported by our code). Development: PHPUnit,
   PHPStan, PHP-CS-Fixer, and an API contract validator.
 - `public/index.php` is the single HTTP entry point. A small hand-written router dispatches to handlers through
-  middleware: error handling, request logging (JSON lines), authentication, and CSRF protection.
+  middleware: error handling, origin verification (only CloudFront may call the API), request logging (JSON lines), authentication, and CSRF protection.
 - **Errors** follow RFC 9457 "problem details" (`application/problem+json`), with field-level validation errors.
 - **Modules:** `Http`, `Auth`, `Categories`, `Expenses`, `Receipts`, `Reports`, `Infrastructure` (DynamoDB, S3, clock,
   config).
 - **Money** is stored as integer cents, with one currency configured for the whole app.
 - On AWS, Bref provides only the PHP runtime. The API runs unchanged in Bref's FPM mode. The worker's Lambda entry
   point is a small file returning a plain closure. All logic lives in runtime-agnostic classes under `src/`, and a CI
-  check keeps Bref references out of them.
+  check keeps Bref references out of them. Lambda settings (runtime, x86_64, `BREF_RUNTIME`, handlers, layers) are in [ADR 0012](adr/0012-runtime-platform.md).
 
 ### API (`/api/v1`, JSON)
 
@@ -130,7 +132,7 @@ See [ADR 0002](adr/0002-dynamodb-single-table-data-model.md) for the reasoning a
 | Expense | `USER#<userId>` | `EXP#<expenseId>` | LSI1SK = `EXP#<yyyy-mm-dd>#<expenseId>`, date, amountCents, description, categoryId |
 | Receipt | `USER#<userId>` | `RCPT#<expenseId>` | status (`pending`/`ready`/`failed`), objectKey (`receipts/<userId>/<expenseId>/<receiptId>`), contentType, size, expiresAt (TTL; set while `pending` or `failed`, removed when `ready`) |
 | Session | `SESSION#<tokenHash>` | `SESSION` | userId, expiresAt (DynamoDB TTL) |
-| Login throttle | `THROTTLE#<email or ip>` | `THROTTLE` | attempts, expiresAt (DynamoDB TTL) |
+| Login throttle | `THROTTLE#<email or ip>` | `THROTTLE` | attempts, expiresAt (DynamoDB TTL); ip = IPv4 address or IPv6 /64 prefix (ADR 0012) |
 
 One local secondary index, **`LSI1`** (the table's `PK` + `LSI1SK`, all attributes projected), lists expenses by
 date. Only expense items carry `LSI1SK`. The thumbnail key is worked out from `objectKey`, so it is not stored.
@@ -195,13 +197,19 @@ and thumbnail. A `pending` record that is never uploaded expires through TTL. Se
 - **Passwords** are hashed with `password_hash` (Argon2id).
 - **CSRF:** `SameSite` cookie, plus a required custom request header and an `Origin` check on requests that change
   data.
-- **Abuse limits:** login attempts are throttled per account and per IP; API Gateway enforces rate limits.
+- **Abuse limits:** login attempts are throttled per account and per client IP; API Gateway enforces rate limits.
+  The client IP comes only from CloudFront's `CloudFront-Viewer-Address` header (port stripped, IPv6 counted per
+  /64), never from `REMOTE_ADDR` (always `127.0.0.1` under Bref) or `X-Forwarded-For` (ADR 0012).
+- **Origin lockdown:** CloudFront adds a secret `X-Origin-Verify` header to API requests. The first PHP middleware
+  rejects any request without it (constant-time comparison), so calling the API Gateway URL directly fails and
+  the client-IP header cannot be forged. Terraform generates the secret and rotates it with two overlapping slots.
 - **Receipts:** private, encrypted buckets (originals and thumbnails) with all public access blocked; versioning off,
   so deletes really delete; strict upload policies; content and image dimensions checked by the worker; view links
   expire within minutes.
 - **Least privilege:** each Lambda has its own IAM role, limited to what it needs. The worker cannot write to the
   originals bucket.
-- **Optional:** AWS WAF with managed rule sets (off by default because of its fixed monthly fee).
+- **No third-party telemetry:** Bref's anonymous usage ping is turned off (`BREF_PING_DISABLE`).
+- **Optional:** AWS WAF with managed rule sets on CloudFront (off by default because of its fixed monthly fee; WAF cannot be attached to an HTTP API).
 
 ## 10. Testing and CI/CD
 
@@ -253,15 +261,15 @@ Phases are split into two tracks:
 
 | # | Phase | Delivers | Size | Status |
 |---|---|---|---|---|
-| 0 | Foundations | Repo skeleton; Docker Compose (DynamoDB Local, S3 emulator, ElasticMQ, s3-events-relay, php-fpm, worker runner); Makefile; CI running PHPUnit, PHPStan, PHP-CS-Fixer, ESLint/Prettier, `vue-tsc`, Vitest, `terraform fmt`/`validate`, contract lint, Bref-boundary check; all checks required on PRs. **Spikes:** S3 emulator choice (ADR 0007) and Bref 3 verification, including running under the Lambda Runtime Interface Emulator (ADR 0001) | M | Not started |
-| 1 | Back-end core | Router, middleware, problem-details errors, DynamoDB access layer, table-creation script (table + `LSI1`), `/health`, OpenAPI skeleton + contract test helper (ADR 0011) | M | Not started |
-| 2 | Authentication | Register/login/logout/me, sessions, CSRF, login throttling | M | Not started |
+| 0 | Foundations | Repo skeleton; Docker Compose (DynamoDB Local, S3 emulator, ElasticMQ, s3-events-relay, php-fpm, worker runner); Makefile; CI running PHPUnit, PHPStan, PHP-CS-Fixer, ESLint/Prettier, `vue-tsc`, Vitest, `terraform fmt`/`validate`, contract lint, Bref-boundary check; all checks required on PRs. **Spikes:** S3 emulator choice (ADR 0007); confirm on `bref/php-85:3` the Bref 3 findings recorded in ADR 0012 (its "To verify in Phase 0" list). CI check that `config.platform.php` matches the Bref image's PHP version | M | Not started |
+| 1 | Back-end core | Router, middleware (including origin verification and trusted client IP, ADR 0012), problem-details errors, DynamoDB access layer, table-creation script (table + `LSI1`), `/health`, OpenAPI skeleton + contract test helper (ADR 0011) | M | Not started |
+| 2 | Authentication | Register/login/logout/me, sessions, CSRF, login throttling (per account and per client IP) | M | Not started |
 | 3 | Categories and expenses API | CRUD; date and category filters; cursor pagination with read budget; category resolver; ownership rules; **cross-user integration tests** | M | Not started |
 | 4 | Front-end | App shell, auth pages, route guards, expenses and categories UI, generated API types, Vitest | M | Not started |
 | 5 | Receipts | Signed uploads, emulator → ElasticMQ → worker, thumbnails bucket, conditional status updates and cleanup, TTL on pending, status polling, preview (PDF icon) | L | Not started |
 | 6 | Monthly summary | Report endpoint and summary **table** page; `scripts/smoke.sh` (curl) covering every feature against any base URL | S | Not started |
-| 7 | Infrastructure (Terraform) | State bootstrap; DynamoDB (table + `LSI1`, TTL on `expiresAt`); Lambdas (Bref layer); API Gateway with throttling; **S3 ×3** (`site`, `receipts` with the only event notification, `receipt-thumbnails`); SQS (visibility timeout ≥ 6× worker timeout) + DLQ (`maxReceiveCount` 3) and event source mapping with `ReportBatchItemFailures`; CloudFront + security headers; per-function IAM (worker cannot write to `receipts`); explicit log groups with retention; **alarms: budget, DLQ depth, receipt-cleanup errors**; plan test for the pipeline settings. **Written and planned only, not applied.** | L | Not started |
-| 8 | First deployment | `make deploy` (Terraform apply + front-end upload) run by the owner with short-lived AWS SSO credentials; smoke test on AWS; then one destroy → re-create → smoke test. **Every apply and destroy only with the owner's explicit go-ahead.** | M | Not started |
+| 7 | Infrastructure (Terraform) | State bootstrap; DynamoDB (table + `LSI1`, TTL on `expiresAt`); Lambdas (x86_64, `provided.al2023`, `BREF_RUNTIME`; Bref `php-85` layer, plus `gd-php-85` for the worker; layer versions from `composer.lock`, ADR 0012); API Gateway with throttling; **S3 ×3** (`site`, `receipts` with the only event notification, `receipt-thumbnails`); SQS (visibility timeout ≥ 6× worker timeout) + DLQ (`maxReceiveCount` 3) and event source mapping with `ReportBatchItemFailures`; CloudFront + security headers, origin request policy forwarding `CloudFront-Viewer-Address`, secret origin header (Terraform-generated, sensitive); per-function IAM (worker cannot write to `receipts`); explicit log groups with retention; **alarms: budget, DLQ depth, receipt-cleanup errors**; plan test for the pipeline settings. **Written and planned only, not applied.** | L | Not started |
+| 8 | First deployment | `make deploy` (Terraform apply + front-end upload) run by the owner with short-lived AWS SSO credentials; smoke test on AWS (also: a direct API Gateway call is rejected; a forged `CloudFront-Viewer-Address` is ignored); then one destroy → re-create → smoke test. **Every apply and destroy only with the owner's explicit go-ahead.** | M | Not started |
 | 9 | Essential documentation | README, `local-dev.md`, `deploy.md` (deploy and destroy runbook), `architecture.md` with the current diagram | S | Not started |
 
 ### Later: assurance, operations and polish
@@ -297,7 +305,7 @@ Playwright arrives in L1. The owner approved this on 2026-10-09.
 | Users only see and change their own data | 3 (key design + cross-user integration tests), 2 |
 | Receipts don't pass through the app server | 5 (signed S3 POST) |
 | Receipt processing doesn't block the user | 5 (S3 → SQS → worker, DLQ) |
-| Safe on the public internet | 2 (sessions, CSRF, throttling), 7 (HTTPS, headers, API throttling, private buckets, least-privilege IAM), security review every phase |
+| Safe on the public internet | 2 (sessions, CSRF, throttling), 7 (HTTPS, headers, API throttling, origin lockdown, private buckets, least-privilege IAM), security review every phase |
 | Runs locally without AWS | 0, 5 |
 | Deploys to AWS; created and destroyed from code | 7, 8 |
 | Automated tests and CI | 0 onwards |
@@ -316,7 +324,11 @@ Playwright arrives in L1. The owner approved this on 2026-10-09.
 | Large or crafted images exhaust worker memory (Lambda limit differs from local) | Low | Check dimensions before decoding (reject > ~40 MP); size the worker's memory; DLQ alarm |
 | PHP Lambda cold start after idle (~0.3–0.5 s) | Low | Acceptable for a proof of concept; recorded in ADR 0001 |
 | AWS resources left running or costs creeping | Low | Serverless pricing, budget alarm, destroy → re-create tested in Phase 8 |
-| Bref / Lambda layer versions change (Bref 3.0 was released in February 2026) | Low | Pin `bref/bref` and the layer version together; Bref confined to entry points; Phase 0 verification spike |
+| Bref / Lambda layer versions change, or Composer locks packages the layer's PHP can't run | Low | Terraform reads layer versions from the locked `bref/bref`; `config.platform.php` equals the layer's PHP, checked in CI; Bref confined to entry points (ADR 0012) |
+| Per-IP throttling bypassed by calling API Gateway directly or forging the client-IP header | Medium | Secret origin header checked first in PHP; IP read only from `CloudFront-Viewer-Address`; both checked by the Phase 8 smoke test (ADR 0012) |
+| Direct calls to the public API Gateway URL use Lambda invocations and the shared API rate limit | Low | Rejected in the first middleware within milliseconds; API Gateway throttling; budget alarm |
+| PHP 8.5 is newer, so a tool may lag in support | Low | Phase 0 verifies every pinned tool on 8.5; fall back to 8.4 if needed (ADR 0012) |
+| x86_64 Lambdas cost more than arm64 (arm64 is about 20% cheaper) | Low | Negligible at this volume; revisit if Bref ships arm64 extra layers |
 
 ## 14. Review
 
@@ -333,6 +345,7 @@ This plan was approved on 2026-10-09. The review process used, and still used fo
 - DynamoDB vs a relational database (ADR 0002): this is the decision with the most knock-on effects.
 - Cutting PDF thumbnails (section 7).
 - WAF off by default (section 9).
+- How the API is locked to CloudFront (ADR 0012): secret header checked in PHP vs Lambda function URL with OAC.
 
 **Resolved in review round 1 (PR #1, 2026-10-09):** receipt processing loop and cleanup (ADR 0006), expense keys,
 category deletion and filtered pagination (ADR 0002), Bref and the "no framework" constraint (ADR 0001), local vs

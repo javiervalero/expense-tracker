@@ -4,9 +4,9 @@ An ADR is a short document that records one significant decision: the context, w
 were considered, and the consequences. ADRs are never rewritten after the fact. If a decision changes, a new ADR
 supersedes the old one, so the history of *why* stays readable.
 
-**Statuses:** `Proposed` → `Accepted` | `Rejected`; later possibly `Superseded by NNNN`.
+**Statuses:** `Proposed` → `Accepted` | `Rejected`; later possibly `Superseded by NNNN`. When a later ADR changes only part of a decision, the old ADR stays Accepted and gets an `Amended by: NNNN` line under its status.
 
-All ADRs below were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`](../PLAN.md) was approved after review on PR #1.
+ADRs 0001–0011 were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`](../PLAN.md) was approved after review on PR #1.
 
 | # | Title | Status |
 |---|---|---|
@@ -21,6 +21,7 @@ All ADRs below were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`](
 | [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Accepted |
 | [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Accepted |
 | [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Accepted |
+| [0012](0012-runtime-platform.md) | Runtime platform: PHP 8.5, x86_64, Bref 3 configuration and client IP | Proposed |
 
 ## Template
 
