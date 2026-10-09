@@ -5,18 +5,23 @@ declare(strict_types=1);
 namespace App\Tests\Support;
 
 use Aws\DynamoDb\DynamoDbClient;
+use Aws\S3\S3Client;
 use Aws\Sqs\SqsClient;
 
 /**
- * AWS SDK clients for the local stand-ins (DynamoDB Local, ElasticMQ), built only from environment values.
+ * AWS SDK clients for the local stand-ins (DynamoDB Local, ElasticMQ, the S3 emulator), built only from environment values.
  *
  * Safety by construction: an explicit endpoint is mandatory for every service and one that is not a local
  * host (and in particular one that points at real AWS) is refused, so a test run can never reach (or bill) a real account. Credentials are always passed
  * explicitly, so the SDK never falls back to the default provider chain (profiles, instance metadata).
+ *
+ * KEEP IN SYNC: the endpoint allowlist (LOCAL_HOSTS, COMPOSE_SERVICE_NAME and the real-AWS suffixes) mirrors the
+ * one in docker/local-aws/src/Bootstrap/BootstrapSettings.php. They are separate on purpose (separate Composer
+ * projects); a change to one must be made in the other.
  */
 final readonly class LocalAws
 {
-    private const ENDPOINT_VARIABLES = ['SQS_ENDPOINT', 'DYNAMODB_ENDPOINT'];
+    private const ENDPOINT_VARIABLES = ['SQS_ENDPOINT', 'DYNAMODB_ENDPOINT', 'S3_ENDPOINT', 'S3_PUBLIC_ENDPOINT'];
     private const LOCAL_HOSTS = ['localhost', '127.0.0.1', '::1', '[::1]', 'host.docker.internal'];
     private const COMPOSE_SERVICE_NAME = '/^[a-z0-9-]+$/';
     private const SETTING_VARIABLES = ['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'];
@@ -67,6 +72,42 @@ final readonly class LocalAws
     public function dynamoDb(): DynamoDbClient
     {
         return new DynamoDbClient($this->clientConfig('DYNAMODB_ENDPOINT', '2012-08-10'));
+    }
+
+    /**
+     * S3 as seen from inside the Compose network (`S3_ENDPOINT`, for example http://s3:9000). Path-style addressing,
+     * which the single-host emulator needs.
+     */
+    public function s3(): S3Client
+    {
+        return new S3Client($this->s3Config('S3_ENDPOINT'));
+    }
+
+    /**
+     * S3 as the browser sees it (`S3_PUBLIC_ENDPOINT`, for example http://localhost:9000): for URLs that are signed
+     * for the host-facing address (presigned GET), where the signature covers the Host header.
+     */
+    public function s3ForPublicEndpoint(): S3Client
+    {
+        return new S3Client($this->s3Config('S3_PUBLIC_ENDPOINT'));
+    }
+
+    public function s3Endpoint(): string
+    {
+        return $this->environment['S3_ENDPOINT'];
+    }
+
+    public function s3PublicEndpoint(): string
+    {
+        return $this->environment['S3_PUBLIC_ENDPOINT'];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function s3Config(string $endpointVariable): array
+    {
+        return $this->clientConfig($endpointVariable, '2006-03-01') + ['use_path_style_endpoint' => true];
     }
 
     /**

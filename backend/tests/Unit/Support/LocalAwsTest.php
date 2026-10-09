@@ -22,6 +22,8 @@ final class LocalAwsTest extends TestCase
             'AWS_SECRET_ACCESS_KEY' => 'localdevsecret',
             'SQS_ENDPOINT' => 'http://sqs:9324',
             'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000',
+            'S3_ENDPOINT' => 'http://s3:9000',
+            'S3_PUBLIC_ENDPOINT' => 'http://localhost:9000',
         ];
     }
 
@@ -32,6 +34,19 @@ final class LocalAwsTest extends TestCase
         self::assertSame('http://sqs:9324', (string) $localAws->sqs()->getEndpoint());
         self::assertSame('http://dynamodb:8000', (string) $localAws->dynamoDb()->getEndpoint());
         self::assertSame('eu-west-1', $localAws->sqs()->getRegion());
+    }
+
+    public function testS3ClientsUsePathStyleAddressingOnTheirOwnEndpoint(): void
+    {
+        $localAws = LocalAws::fromEnvironment(self::validEnvironment());
+
+        $internalUri = $localAws->s3()->getObjectUrl('receipts', 'receipts/u/e/r');
+        $publicUri = $localAws->s3ForPublicEndpoint()->getObjectUrl('receipts', 'receipts/u/e/r');
+
+        self::assertSame('http://s3:9000/receipts/receipts/u/e/r', $internalUri);
+        self::assertSame('http://localhost:9000/receipts/receipts/u/e/r', $publicUri);
+        self::assertSame('http://s3:9000', $localAws->s3Endpoint());
+        self::assertSame('http://localhost:9000', $localAws->s3PublicEndpoint());
     }
 
     public function testClientsUseTheLocalCredentialsFromTheEnvironment(): void
@@ -62,7 +77,7 @@ final class LocalAwsTest extends TestCase
      */
     public static function missingVariables(): iterable
     {
-        foreach (['SQS_ENDPOINT', 'DYNAMODB_ENDPOINT', 'AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as $variable) {
+        foreach (['SQS_ENDPOINT', 'DYNAMODB_ENDPOINT', 'S3_ENDPOINT', 'S3_PUBLIC_ENDPOINT', 'AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY'] as $variable) {
             yield $variable => [$variable];
         }
     }
@@ -91,6 +106,8 @@ final class LocalAwsTest extends TestCase
     {
         yield 'sqs' => ['SQS_ENDPOINT', 'https://sqs.eu-west-1.amazonaws.com'];
         yield 'dynamodb' => ['DYNAMODB_ENDPOINT', 'https://dynamodb.eu-west-1.amazonaws.com'];
+        yield 's3' => ['S3_ENDPOINT', 'https://s3.eu-west-1.amazonaws.com'];
+        yield 's3 public' => ['S3_PUBLIC_ENDPOINT', 'https://s3.amazonaws.com'];
         yield 'uppercase host' => ['SQS_ENDPOINT', 'https://SQS.EU-WEST-1.AMAZONAWS.COM'];
         yield 'trailing dot' => ['SQS_ENDPOINT', 'https://sqs.eu-west-1.amazonaws.com.'];
         yield 'api.aws dual-stack' => ['DYNAMODB_ENDPOINT', 'https://dynamodb.us-east-1.api.aws'];

@@ -18,8 +18,9 @@ final class ElasticMqTest extends TestCase
     private const SOURCE_QUEUE = 'conformance-redrive';
     private const DEAD_LETTER_QUEUE = 'conformance-redrive-dlq';
     private const MAX_RECEIVE_COUNT = 3;
-    private const VISIBILITY_TIMEOUT_SECONDS = 1;
-    private const MESSAGE_WAIT_SECONDS = 10;
+    private const MESSAGE_WAIT_SECONDS = 15;
+    private const QUIET_WINDOW_SECONDS = 2.5; // more than twice the visibility timeout
+    private const POLL_PAUSE_MICROSECONDS = 200_000;
 
     private SqsClient $sqs;
     private string $sourceUrl;
@@ -38,18 +39,17 @@ final class ElasticMqTest extends TestCase
 
     public function testSendReceiveAndDeleteRoundTrip(): void
     {
-        $body = '{"Records":[{"key":"receipts/ünï cödé 🧾.jpg"}]}';
+        $body = $this->uniqueBody('{"Records":[{"key":"receipts/ünï cödé 🧾.jpg"}]}');
 
         $this->sqs->sendMessage(['QueueUrl' => $this->sourceUrl, 'MessageBody' => $body]);
-        $message = $this->receiveOne($this->sourceUrl);
+        $message = $this->waitForMessage($this->sourceUrl, $body);
 
         self::assertNotNull($message, 'the sent message should be received');
         self::assertSame($body, $message['Body']);
 
         $this->sqs->deleteMessage(['QueueUrl' => $this->sourceUrl, 'ReceiptHandle' => $message['ReceiptHandle']]);
-        $this->waitForVisibilityToExpire();
 
-        self::assertNull($this->receiveOne($this->sourceUrl), 'a deleted message must not come back');
+        self::assertFalse($this->comesBackWithin($this->sourceUrl, $body, self::QUIET_WINDOW_SECONDS), 'a deleted message must not come back');
     }
 
     public function testReceivingAnEmptyQueueReturnsNoMessages(): void
@@ -57,14 +57,20 @@ final class ElasticMqTest extends TestCase
         self::assertNull($this->receiveOne($this->sourceUrl));
     }
 
+    /**
+     * Timing: the message is never deleted, so it reappears once its visibility timeout (1 s) ends. Each wait polls
+     * with a deadline (MESSAGE_WAIT_SECONDS, far above the timeout) instead of sleeping a fixed time. The message
+     * is recognised by a body unique to this run, so a message left over from an earlier test or run (a purge does
+     * not necessarily remove in-flight messages) can neither be mistaken for it nor hide it.
+     */
     public function testApproximateReceiveCountIncrementsOnEveryReceive(): void
     {
-        $this->sqs->sendMessage(['QueueUrl' => $this->sourceUrl, 'MessageBody' => 'count me']);
+        $body = $this->uniqueBody('count me');
+        $this->sqs->sendMessage(['QueueUrl' => $this->sourceUrl, 'MessageBody' => $body]);
 
         $counts = [];
         for ($receive = 1; $receive <= self::MAX_RECEIVE_COUNT; ++$receive) {
-            // The message is never deleted, so it becomes visible again once its visibility timeout ends.
-            $message = $this->waitForMessage($this->sourceUrl);
+            $message = $this->waitForMessage($this->sourceUrl, $body);
             self::assertNotNull($message, sprintf('receive #%d should return the message', $receive));
             $counts[] = $message['Attributes']['ApproximateReceiveCount'];
         }
@@ -74,19 +80,28 @@ final class ElasticMqTest extends TestCase
 
     public function testMessageLandsInTheDeadLetterQueueAfterTheThirdReceive(): void
     {
-        $this->sqs->sendMessage(['QueueUrl' => $this->sourceUrl, 'MessageBody' => 'poison']);
+        $body = $this->uniqueBody('poison');
+        $this->sqs->sendMessage(['QueueUrl' => $this->sourceUrl, 'MessageBody' => $body]);
 
         for ($receive = 1; $receive <= self::MAX_RECEIVE_COUNT; ++$receive) {
             // Never deleted: the consumer "failed" each time, so the message returns after the visibility timeout.
-            self::assertNotNull($this->waitForMessage($this->sourceUrl), sprintf('receive #%d', $receive));
+            self::assertNotNull($this->waitForMessage($this->sourceUrl, $body), sprintf('receive #%d', $receive));
         }
 
         // Like SQS, ElasticMQ moves the message when the next receive finds it over the limit, so polling the
         // source queue is what triggers the move. That poll must never hand the message out a 4th time.
-        $deadLettered = $this->pollForDeadLetter();
+        $deadLettered = $this->pollForDeadLetter($body);
 
         self::assertNotNull($deadLettered, 'the message should reach the dead-letter queue');
-        self::assertSame('poison', $deadLettered['Body']);
+        self::assertSame($body, $deadLettered['Body']);
+    }
+
+    /**
+     * A body that no other test or earlier run can have used.
+     */
+    private function uniqueBody(string $prefix): string
+    {
+        return $prefix . ' #' . bin2hex(random_bytes(6));
     }
 
     private function queueUrl(string $name): string
@@ -115,42 +130,63 @@ final class ElasticMqTest extends TestCase
     }
 
     /**
+     * Polls until a message with exactly this body arrives or the deadline passes. Any other message met on the way
+     * is deleted: these queues belong to the conformance suite, and a stray one would otherwise keep being handed out.
+     *
      * @return array{Body: string, ReceiptHandle: string, Attributes: array<string, string>}|null
      */
-    private function waitForMessage(string $queueUrl): ?array
+    private function waitForMessage(string $queueUrl, string $body): ?array
     {
         $deadline = microtime(true) + self::MESSAGE_WAIT_SECONDS;
         do {
             $message = $this->receiveOne($queueUrl);
-            if ($message !== null) {
+            if ($message !== null && $message['Body'] === $body) {
                 return $message;
             }
-            usleep(200_000);
+            if ($message !== null) {
+                $this->sqs->deleteMessage(['QueueUrl' => $queueUrl, 'ReceiptHandle' => $message['ReceiptHandle']]);
+                continue; // the next one may be ours: no pause
+            }
+            usleep(self::POLL_PAUSE_MICROSECONDS);
         } while (microtime(true) < $deadline);
 
         return null;
     }
 
     /**
+     * True when a message with this body is received before the window closes (the window outlasts the
+     * visibility timeout, so a message that had not been deleted would show up).
+     */
+    private function comesBackWithin(string $queueUrl, string $body, float $seconds): bool
+    {
+        $end = microtime(true) + $seconds;
+        do {
+            $message = $this->receiveOne($queueUrl);
+            if ($message !== null && $message['Body'] === $body) {
+                return true;
+            }
+            usleep(self::POLL_PAUSE_MICROSECONDS);
+        } while (microtime(true) < $end);
+
+        return false;
+    }
+
+    /**
      * @return array{Body: string, ReceiptHandle: string, Attributes: array<string, string>}|null
      */
-    private function pollForDeadLetter(): ?array
+    private function pollForDeadLetter(string $body): ?array
     {
         $deadline = microtime(true) + self::MESSAGE_WAIT_SECONDS;
         do {
-            self::assertNull($this->receiveOne($this->sourceUrl), 'a 4th receive must not return the message');
+            $fromSource = $this->receiveOne($this->sourceUrl);
+            self::assertNotSame($body, $fromSource['Body'] ?? null, 'a 4th receive must not return the message');
             $message = $this->receiveOne($this->deadLetterUrl);
-            if ($message !== null) {
+            if ($message !== null && $message['Body'] === $body) {
                 return $message;
             }
-            usleep(250_000);
+            usleep(self::POLL_PAUSE_MICROSECONDS);
         } while (microtime(true) < $deadline);
 
         return null;
-    }
-
-    private function waitForVisibilityToExpire(): void
-    {
-        usleep((self::VISIBILITY_TIMEOUT_SECONDS * 1_000_000) + 300_000);
     }
 }
