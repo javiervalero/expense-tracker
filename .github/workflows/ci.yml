@@ -60,6 +60,51 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_PHP= audit
 
+  # docker/local-aws: the local-only tooling of the Compose stack (bootstrap now; relay and runner later).
+  # A separate Composer project, so it has its own checks. Same make targets as on a developer machine.
+  local-aws:
+    name: local-aws
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP 8.5 with pcov
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: pcov
+          tools: composer
+        env:
+          # Avoids GitHub API rate limits when the action downloads tools.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Find the Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer --working-dir=docker/local-aws config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-local-aws-${{ runner.os }}-${{ hashFiles('docker/local-aws/composer.lock') }}
+          restore-keys: composer-local-aws-${{ runner.os }}-
+
+      - name: Install dependencies from composer.lock
+        run: make RUN_PHP= local-aws-install
+
+      - name: Check composer.json, code style (dry run) and static analysis
+        run: make RUN_PHP= lint-local-aws
+
+      - name: Unit tests with coverage (80% bar on src/)
+        run: make RUN_PHP= test-local-aws
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_PHP= audit-local-aws
+
   # Repository guards: checks that are not about PHP code style or tests but about the repo staying consistent.
   guards:
     name: guards
@@ -82,7 +127,8 @@ jobs:
       - name: composer.json platform equals the PHP of the pinned bref/php-85 layer
         run: make check-platform
 
-  # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ).
+  # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
+  # including its presigned POST policy enforcement, CORS and presigned GET).
   integration:
     name: integration
     runs-on: ubuntu-24.04
@@ -97,10 +143,11 @@ jobs:
       - name: Install dependencies from composer.lock
         run: make php-install
 
-      - name: Start the local stack and wait until it is healthy
+      # Also builds the local-aws image and runs the idempotent S3 bootstrap (buckets, CORS, notification rule).
+      - name: Start the local stack, bootstrap it and wait until it is healthy
         run: make up
 
-      - name: Conformance tests in the php container on the Compose network
+      - name: Conformance tests (DynamoDB, SQS, S3) in the php container on the Compose network
         run: make test-conformance
 
       - name: Dump the service logs
