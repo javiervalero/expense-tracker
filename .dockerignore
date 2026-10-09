@@ -1,0 +1,3 @@
+# Build context allow-list: the Dockerfile only COPYs the PHP ini file.
+*
+!docker/php/conf.d/app.ini

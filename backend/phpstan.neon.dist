@@ -1,0 +1,15 @@
+includes:
+    - vendor/phpstan/phpstan-strict-rules/rules.neon
+    - vendor/phpstan/phpstan-phpunit/extension.neon
+    - vendor/phpstan/phpstan-phpunit/rules.neon
+parameters:
+    level: max
+    paths:
+        - src
+        - public
+        - entrypoints
+        - tests
+        - ../scripts
+    excludePaths:
+        # Deliberately "leaky" code used to test the Bref boundary scanner; it must not be analysed.
+        - tests/Architecture/Fixtures
