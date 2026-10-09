@@ -10,7 +10,7 @@
 | Requirements | [`docs/BRIEF.md`](BRIEF.md) |
 | Constraints | [`CLAUDE.md`](../CLAUDE.md) |
 | Drafted | 2026-10-07 |
-| Last updated | 2026-10-09 (approved; ADR 0012 proposed after Phase 0 research) |
+| Last updated | 2026-10-09 (approved; ADR 0012 accepted) |
 
 ---
 
@@ -56,7 +56,7 @@ system also runs locally with Docker and no AWS account.
 | [0009](adr/0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code |
 | [0010](adr/0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions for CI/CD, deploying with OIDC (no stored AWS keys) |
 | [0011](adr/0011-openapi-contract.md) | OpenAPI 3.1 contract as the API source of truth, checked in CI on both sides |
-| [0012](adr/0012-runtime-platform.md) | Runtime platform: PHP 8.5 on Bref 3 layers, all Lambdas x86_64 (GD extra layer), client IP from CloudFront's viewer-address header, API reachable only through CloudFront (Proposed) |
+| [0012](adr/0012-runtime-platform.md) | Runtime platform: PHP 8.5 on Bref 3 layers, all Lambdas x86_64 (GD extra layer), client IP from CloudFront's viewer-address header, API reachable only through CloudFront |
 
 ## 4. Architecture
 

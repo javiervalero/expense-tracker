@@ -1,6 +1,7 @@
 # 0005. Single origin for app and API through CloudFront
 
 - Status: Accepted (2026-10-09)
+- Amended by: [0012](0012-runtime-platform.md) (CloudFront-Viewer-Address forwarding; secret origin header check and rotation)
 - Date: 2026-10-07
 
 ## Context

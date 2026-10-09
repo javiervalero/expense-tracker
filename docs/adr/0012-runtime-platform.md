@@ -1,6 +1,6 @@
 # 0012. Runtime platform: PHP 8.5, x86_64, Bref 3 configuration and client IP
 
-- Status: Proposed
+- Status: Accepted (2026-10-09)
 - Date: 2026-10-09
 - Amends: [0001](0001-serverless-aws-php-on-lambda-with-bref.md), [0003](0003-vanilla-php-backend-structure.md),
   [0004](0004-server-side-sessions-with-cookies.md), [0005](0005-single-origin-through-cloudfront.md),

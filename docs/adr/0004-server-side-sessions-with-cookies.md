@@ -1,6 +1,7 @@
 # 0004. Server-side sessions with secure cookies
 
 - Status: Accepted (2026-10-09)
+- Amended by: [0012](0012-runtime-platform.md) (client IP source for per-IP login throttling; IPv6 per /64)
 - Date: 2026-10-07
 
 ## Context
