@@ -1,2 +1,17 @@
 # Personal Claude Code settings (per developer, not shared)
 .claude/settings.local.json
+
+# Phase 0: local secrets, dependencies, caches, build output and Terraform state
+# (.env.example and .terraform.lock.hcl are committed on purpose)
+.env
+vendor/
+node_modules/
+coverage/
+.phpunit.cache/
+.phpunit.result.cache
+contract/dist/
+.terraform/
+*.tfstate
+*.tfstate.*
+build/
+dist/
