@@ -59,3 +59,55 @@ jobs:
 
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_PHP= audit
+
+  # Repository guards: checks that are not about PHP code style or tests but about the repo staying consistent.
+  guards:
+    name: guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Builds the pinned tools image (it has Composer, which the vendor check and its tests use).
+      - name: Build the PHP tools image
+        run: make php-image
+
+      - name: Tests of the shell guards
+        run: make test-shell
+
+      # Skips with a clear message until docker/worker/Dockerfile exists (WP10), then checks the real one.
+      - name: composer.json platform equals the PHP of the pinned bref/php-85 layer
+        run: make check-platform
+
+  # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ).
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs in the pinned tools container, as the runner user. `make up` writes .env from .env.example.
+      - name: Install dependencies from composer.lock
+        run: make php-install
+
+      - name: Start the local stack and wait until it is healthy
+        run: make up
+
+      - name: Conformance tests in the php container on the Compose network
+        run: make test-conformance
+
+      - name: Dump the service logs
+        if: failure()
+        run: docker compose -p expense-tracker logs --no-color
+
+      # Never removes volumes (-v is not used anywhere).
+      - name: Stop the stack
+        if: always()
+        run: make down

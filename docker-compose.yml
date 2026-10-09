@@ -1,0 +1,57 @@
+# Local development stack (ADR 0007). Start it with `make up`, stop it with `make down`.
+#
+# Every host port is bound to 127.0.0.1 only: nothing is reachable from other machines on the network.
+# Images are pinned by digest (the tag is kept for humans; the digest is what is pulled).
+name: expense-tracker
+
+services:
+  # DynamoDB Local 3.3.1. In-memory with a shared database: data lives until the container stops.
+  dynamodb:
+    # amazon/dynamodb-local:3.3.1 (multi-arch index digest, taken with `docker buildx imagetools inspect`)
+    image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # Any HTTP answer (even an error) means the server is up; curl only fails when it cannot connect.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8000/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  # ElasticMQ 1.7.1 (native image): SQS-compatible, with the queues declared in docker/elasticmq/elasticmq.conf.
+  sqs:
+    # softwaremill/elasticmq-native:1.7.1 (multi-arch index digest)
+    image: softwaremill/elasticmq-native:1.7.1@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c
+    volumes:
+      - ./docker/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
+    ports:
+      # Must stay bound to 127.0.0.1: ElasticMQ builds queue URLs from the request Host header
+      # (`host = "*"` in elasticmq.conf), so exposing it more widely would hand out URLs for any caller-chosen host.
+      - "127.0.0.1:9324:9324"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9324/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  # PHP tools container on the Compose network: runs the conformance suite against the services above.
+  # Not started by `make up` (profile `tools`); `make test-conformance` runs it with `docker compose run`.
+  php:
+    profiles: ["tools"]
+    image: expense-tracker-php:dev
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: dev
+    working_dir: /app/backend
+    volumes:
+      - ./:/app
+    env_file: .env
+    depends_on:
+      dynamodb:
+        condition: service_healthy
+      sqs:
+        condition: service_healthy
