@@ -1,7 +1,7 @@
 # Spike B: S3 emulator (`pgsty/silo`)
 
 - Work package: WP3 of `docs/plans/phase-0-foundations.md`. Decision it feeds: ADR 0007, "S3 emulator" (gate G1).
-- Date: 2026-10-09. Harness: `spikes/s3-emulator/` (run with `./run.sh`; tear down with `./run.sh down`).
+- Date: 2026-10-09. Harness: `spikes/s3-emulator/` (deleted at the end of Phase 0; it is in commit `04231f396a5f`) (run with `./run.sh`; tear down with `./run.sh down`).
 - Result: **silo passes all three ADR 0007 criteria. Floci was not needed and was not run.** Recommendation: **silo.**
 
 ## What was tested

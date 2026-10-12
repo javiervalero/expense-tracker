@@ -1,6 +1,6 @@
 # Spike A: Bref 3 on php-85
 
-Date: 2026-10-09. Plan: `docs/plans/phase-0-foundations.md` WP2. Harness: `spikes/bref-php85/` (run it with
+Date: 2026-10-09. Plan: `docs/plans/phase-0-foundations.md` WP2. Harness: `spikes/bref-php85/` (deleted at the end of Phase 0; it is in commit `04231f396a5f`) (run it with
 `spikes/bref-php85/run.sh`; one check can be run alone, for example `./run.sh A6`). Docker only, no AWS, no
 credentials. Host: Docker 29.8.2, linux/amd64 images.
 

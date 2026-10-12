@@ -1,5 +1,0 @@
-{"Records":[
- {"messageId":"m1","receiptHandle":"r1","body":"ok","attributes":{},"messageAttributes":{},"eventSource":"aws:sqs","eventSourceARN":"arn:aws:sqs:eu-west-1:000000000000:spikea","awsRegion":"eu-west-1"},
- {"messageId":"m2","receiptHandle":"r2","body":"fail","attributes":{},"messageAttributes":{},"eventSource":"aws:sqs","eventSourceARN":"arn:aws:sqs:eu-west-1:000000000000:spikea","awsRegion":"eu-west-1"},
- {"messageId":"m3","receiptHandle":"r3","body":"ok","attributes":{},"messageAttributes":{},"eventSource":"aws:sqs","eventSourceARN":"arn:aws:sqs:eu-west-1:000000000000:spikea","awsRegion":"eu-west-1"}
-]}

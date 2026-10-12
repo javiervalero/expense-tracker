@@ -47,7 +47,6 @@ The full local guide, with the service table, the make targets, how to run one t
 | `infra/` | Terraform: the state bootstrap and the `dev` environment (no AWS resources applied yet) |
 | `scripts/` | Guards and checks run by `make` and CI (image pins, workflow audit, fixtures, Terraform wrapper) and their tests in `scripts/tests/` |
 | `docs/` | Requirements (`BRIEF.md`), the plan (`PLAN.md`), ADRs, the local dev guide and the phase plans |
-| `spikes/` | Phase 0 spike harnesses, kept until the owner approves their removal |
 | `.github/` | GitHub Actions workflows (CI) and the zizmor configuration |
 | `Makefile` | The developer entry points: run `make help` for the list |
 
