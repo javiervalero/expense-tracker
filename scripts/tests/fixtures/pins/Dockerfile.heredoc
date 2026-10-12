@@ -1,0 +1,6 @@
+# Fixture: heredocs are refused. Here the body ends in a backslash, which this parser would join with the next FROM.
+FROM scratch
+COPY <<'EOF\' /x
+hello
+EOF\
+FROM alpine:3

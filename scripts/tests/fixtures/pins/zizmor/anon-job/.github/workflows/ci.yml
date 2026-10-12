@@ -1,0 +1,14 @@
+# Fixture: clean except for one pedantic finding (anonymous-definition: the job has no name). The tests use it to
+# prove that lint-workflows.sh applies the repository's .github/zizmor.yml: a copy whose config disables that audit
+# passes, the real config fails.
+name: t
+on: push
+permissions: {}
+concurrency:
+  group: t
+  cancel-in-progress: false
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    steps:
+      - {uses: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1', with: {persist-credentials: false}}

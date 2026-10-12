@@ -1,0 +1,5 @@
+{
+    "name": "fixture/match",
+    "require": { "php": "~8.5.11" },
+    "config": { "platform": { "php": "8.5.11" } }
+}

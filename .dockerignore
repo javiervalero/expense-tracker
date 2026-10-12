@@ -1,0 +1,4 @@
+# Build context allow-list: the Dockerfile only COPYs the PHP ini file and the php-fpm pool file.
+*
+!docker/php/conf.d/app.ini
+!docker/php/php-fpm.d/zz-app.conf

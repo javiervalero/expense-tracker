@@ -1,0 +1,7 @@
+# Build context allow-list for docker/local-aws/Dockerfile (context = repository root, like docker/php/Dockerfile).
+*
+!docker/php/conf.d/app.ini
+!docker/local-aws/composer.json
+!docker/local-aws/composer.lock
+!docker/local-aws/src
+!docker/local-aws/bin

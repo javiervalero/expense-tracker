@@ -1,0 +1,7 @@
+# Fixture: `build:` does not exempt a single-part name outside the project prefix (php:8 is an official image).
+services:
+  a:
+    image: php:8
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned

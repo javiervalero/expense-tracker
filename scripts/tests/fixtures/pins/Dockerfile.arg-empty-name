@@ -1,0 +1,3 @@
+# Fixture: an ARG without a name used to crash the parser with "bad array subscript".
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ARG =x

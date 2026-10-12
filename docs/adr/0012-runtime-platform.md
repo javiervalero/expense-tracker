@@ -5,6 +5,7 @@
 - Amends: [0001](0001-serverless-aws-php-on-lambda-with-bref.md), [0003](0003-vanilla-php-backend-structure.md),
   [0004](0004-server-side-sessions-with-cookies.md), [0005](0005-single-origin-through-cloudfront.md),
   [0007](0007-local-development-with-docker-compose.md), [0009](0009-terraform-for-infrastructure.md)
+- Updated: 2026-10-09 (verified in Phase 0, gate G1)
 
 ## Context
 
@@ -185,6 +186,51 @@ by the Phase 0 PR.
 - The telemetry switch name in Bref 3 (`BREF_PING_DISABLE`) and that it actually stops the ping.
 - Where the `gd-php-85` layer version can be read from (a `layers.json` in `bref/extra-php-extensions`, or not).
 - The Vite proxy can set a header from the client's socket address.
+
+## Verified in Phase 0 (2026-10-09, gate G1)
+
+Checked on Docker only (no AWS), with `bref/php-85:3` (PHP 8.5.11, digest pinned in the report). Full evidence in [the report](../spikes/bref-php85.md).
+
+| "To verify in Phase 0" item | Result |
+|---|---|
+| `BREF_RUNTIME` values, handler meaning, RIE invocation, `batchItemFailures` on `php-85:3` | PASS. `function` returns `batchItemFailures`; `fpm` serves `public/index.php`; the CMD argument is the handler file. |
+| Pinned tools install and run on 8.5 | PASS. PHPUnit 13.4.1, PHPStan 2.3.1, PHP-CS-Fixer 3.95.27, opis/json-schema 2.6.0 and aws-sdk-php 3.400.0 run clean with deprecations as errors. |
+| Layer's exact PHP patch version; `composer show --tree` on 8.5 | PASS. Layer PHP is **8.5.11**; `bref/bref` 3.0.12 resolves with `symfony/process` v8.1.7. |
+| `gd_info()` reports WebP in the worker image | PASS. JPEG, PNG and WebP are supported; AVIF is not. WebP stays in the upload policy (ADR 0006 is not amended). |
+| `PASSWORD_ARGON2ID` in `php-85:3` and `php:8.5-fpm-alpine` | PASS in both. |
+| FPM mode: `REMOTE_ADDR` and `CloudFront-Viewer-Address` | PASS. `REMOTE_ADDR` is `127.0.0.1`; the header reaches PHP as `HTTP_CLOUDFRONT_VIEWER_ADDRESS`. |
+| Telemetry switch `BREF_PING_DISABLE` stops the ping | PASS, confirmed by packet capture. Without it, 14 UDP packets in 1500 invocations; with `BREF_PING_DISABLE=1`, 0. |
+| Where the `gd-php-85` layer version can be read | PASS. `bref/extra-php-extensions` publishes `layers.json` (`{layer: {region: version}}`); `gd-php-85` is version `1` in all 22 regions. |
+| Vite proxy sets a header from the client socket address | **Not tested in Phase 0.** Moved to WP14 (the frontend proxy). |
+
+Settled points:
+
+- **PHP 8.5.11** is the exact layer version and the `config.platform.php` pin. No fallback to 8.4 is needed: the Decision §1 trigger did not fire. pcov 1.0.12 also works for coverage.
+- **WebP is kept.** AVIF is not offered.
+- **The bundled RIE is used.** No extra binary is needed.
+- **Worker errors are HTTP 200.** Under RIE, a handler exception returns HTTP 200 with `errorType`, `errorMessage` and `stackTrace` in the JSON body, and **no `X-Amz-Function-Error` header**. The local runner must treat a body containing `errorType` as a failed invocation and delete no message from that batch, as the real event source mapping does.
+- **`BREF_RUNTIME` must always be set.** If it is unset, the container crash-loops and returns HTTP 502 with an empty body. Set it explicitly in every Dockerfile and in Terraform.
+- **`BREF_PING_DISABLE=1` is confirmed.** It must be the literal value `1` (`0` and empty do not disable).
+- **`layers.json` is available,** so the `gd-php-85` version is read the same way as `php-85`: from `vendor/bref/extra-php-extensions/layers.json`. `bref/extra-php-extensions` is added as a **dev** dependency when Terraform first needs it (Phase 7); only its data file is used and it is never deployed. The pinned-variable fallback is not needed. The version is pinned by `composer.lock` and changes only when the package is bumped on purpose. Its releases are not numbered in step with `bref/bref` (3.0.13 vs 3.0.12), so each is bumped on its own terms.
+- **Client IP:** `REMOTE_ADDR` is always `127.0.0.1` under Bref FPM. Whether CloudFront overwrites a forged `CloudFront-Viewer-Address` is still a Phase 8 check (see below).
+
+**Correction** to the Context (item 2): the list of packages that `bref/bref` installs is inaccurate. The actual tree for `bref/bref` 3.0.12 on PHP 8.5 is:
+
+```
+bref/bref 3.0.12
+|--crwlr/query-string ^1.0.3
+|--ext-curl *
+|--hollodotme/fast-cgi-client ^3.0.1 (ext-json)
+|--nyholm/psr7 ^1.4.1 (psr/http-factory, psr/http-message)
+|--php >=8.2
+|--psr/container ^1.0|^2.0
+|--psr/http-message ^1.0|^2.0
+|--psr/http-server-handler ^1.0
+|--riverline/multipart-parser ^2.1.2 (ext-mbstring)
+`--symfony/process ^5.4|^6.4|^7.0|^8.0   (locked v8.1.7, requires php >=8.4.1)
+```
+
+There are **no Symfony polyfill packages** in this tree. `symfony/process` is locked at 8.x, which is fine on PHP 8.5 but would not run on 8.3.
 
 ## To verify on first deployment (Phase 8)
 

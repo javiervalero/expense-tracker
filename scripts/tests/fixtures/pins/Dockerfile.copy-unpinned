@@ -1,0 +1,3 @@
+# Fixture: pinned FROM, but COPY --from an image by tag.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer

@@ -1,0 +1,4 @@
+# Fixture: COPY split with a backslash puts --from=composer:2 on a line of its own.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+COPY \
+  --from=composer:2 /usr/bin/composer /usr/bin/composer

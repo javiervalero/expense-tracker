@@ -1,0 +1,4 @@
+# Fixture: a remote extends.file in flow style (the YAML is parsed, so the spelling does not matter).
+services:
+  a:
+    extends: {file: "git@example.invalid:evil/repo.git", service: base}

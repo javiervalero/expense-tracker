@@ -1,0 +1,8 @@
+# Fixture: `models:` (pulled AI models) is not used by this repository, so it is refused outright.
+services:
+  a:
+    image: alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    models: [m]
+models:
+  m:
+    model: ai/smollm2

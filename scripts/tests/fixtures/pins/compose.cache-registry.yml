@@ -1,0 +1,8 @@
+# Fixture: a build cache imported from a registry can feed layers that were never built from this repository.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      cache_from: ["type=registry,ref=evil/cache:latest"]

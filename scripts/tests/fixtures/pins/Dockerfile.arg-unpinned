@@ -1,0 +1,3 @@
+# Fixture: a variable in FROM is refused (the ARG default is a tag here).
+ARG BASE=php:8.5-cli-alpine
+FROM ${BASE}

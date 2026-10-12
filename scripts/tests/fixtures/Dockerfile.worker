@@ -1,0 +1,5 @@
+# Test fixture for scripts/check-php-platform.sh: same FROM line shape as docker/worker/Dockerfile.
+# The digest is the bref/php-85:3 image recorded in docs/spikes/bref-php85.md (PHP 8.5.11).
+FROM composer:2.10.3 AS vendor
+FROM bref/php-85:3@sha256:1ea1cbb20612cdb6620b1e073600d74eb64bd70450d03c4b47e3dfbc1f1fd740 AS runtime
+COPY --from=bref/extra-gd-php-85:3@sha256:f2ef519e9e5b6fe61008e2290f9fa3ba4e7378e6594be2616eeb402a7452803f /opt /opt

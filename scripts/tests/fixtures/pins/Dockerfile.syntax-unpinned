@@ -1,0 +1,3 @@
+# syntax=docker/dockerfile:1
+# Fixture: the syntax directive downloads and runs a frontend image, so it must be pinned too.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

@@ -1,0 +1,8 @@
+# Fixture: `build:` does not exempt an image that Compose is told to pull (pull_policy: always), whatever its name.
+services:
+  a:
+    image: nginx:latest
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned

@@ -1,0 +1,4 @@
+{
+    "name": "fixture/no-platform",
+    "require": { "php": "~8.5.11" }
+}

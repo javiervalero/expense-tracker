@@ -1,0 +1,283 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the jobs only read the repository. The only secret in use is the run's own read-only GITHUB_TOKEN
+# (the zizmor step of the guards job, for its online audits).
+permissions:
+  contents: read
+
+# A newer push to the same branch or PR replaces the run in progress.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Runs on main are never cancelled, so every merged commit keeps a complete result.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  backend:
+    name: backend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP 8.5 with pcov
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: pcov
+          tools: composer
+        env:
+          # Avoids GitHub API rate limits when the action downloads tools.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Find the Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer --working-dir=backend config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-${{ runner.os }}-${{ hashFiles('backend/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-
+
+      # The same make targets as on a developer machine; RUN_PHP is empty because PHP is installed here.
+      - name: Install dependencies from composer.lock
+        run: make RUN_PHP= php-install
+
+      - name: Check composer.json, code style (dry run) and static analysis
+        run: make RUN_PHP= lint-php
+
+      - name: Unit and architecture tests with coverage (80% bar on src/)
+        run: make RUN_PHP= test-unit
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_PHP= audit
+
+  # docker/local-aws: the local-only tooling of the Compose stack (bootstrap, S3 events relay, worker runner).
+  # A separate Composer project, so it has its own checks. Same make targets as on a developer machine.
+  local-aws:
+    name: local-aws
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up PHP 8.5 with pcov
+        uses: shivammathur/setup-php@eb7c497e18156a6bbabfef1d3a82760b9eda3962 # 2.40.0
+        with:
+          php-version: '8.5'
+          coverage: pcov
+          tools: composer
+        env:
+          # Avoids GitHub API rate limits when the action downloads tools.
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Find the Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer --working-dir=docker/local-aws config cache-files-dir)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Composer downloads
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: composer-local-aws-${{ runner.os }}-${{ hashFiles('docker/local-aws/composer.lock') }}
+          restore-keys: composer-local-aws-${{ runner.os }}-
+
+      - name: Install dependencies from composer.lock
+        run: make RUN_PHP= local-aws-install
+
+      - name: Check composer.json, code style (dry run) and static analysis
+        run: make RUN_PHP= lint-local-aws
+
+      - name: Unit tests with coverage (80% bar on src/)
+        run: make RUN_PHP= test-local-aws
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_PHP= audit-local-aws
+
+  # Repository guards: checks that are not about PHP code style or tests but about the repo staying consistent.
+  guards:
+    name: guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history: the secret scan below reads every commit, not only the tip.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Builds the pinned tools image (it has Composer, which the vendor check and its tests use).
+      - name: Build the PHP tools image
+        run: make php-image
+
+      - name: Tests of the shell guards
+        run: make test-shell
+
+      # Reads the real docker/worker/Dockerfile: the PHP of its pinned bref/php-85 layer, and its --no-dev vendor/.
+      - name: composer.json platform equals the PHP of the pinned bref/php-85 layer
+        run: make check-platform
+
+      # backend/ and docker/local-aws/ each keep a copy of the S3 event fixtures; they must stay identical.
+      - name: S3 event fixtures are identical in both copies
+        run: make check-fixtures
+
+      # Every Dockerfile FROM / COPY --from / RUN --mount from=, and every Compose image as Compose resolves it: pinned
+      # by digest.
+      - name: Dockerfile and Compose images are pinned
+        run: make check-image-pins
+
+      # zizmor (pinned image) over the workflows and actions: every `uses:` pinned by hash, pinned container and service
+      # images, and the security audits. ZIZMOR_ONLINE=1 turns on the online audits (impostor-commit,
+      # known-vulnerable-actions, ...); only then does the script forward GH_TOKEN, by name, through the environment
+      # (never in the command line). Locally the default is offline with no network. Read-only token.
+      - name: Workflows and actions are pinned and pass the zizmor audits
+        env:
+          ZIZMOR_ONLINE: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make lint-workflows
+
+      # gitleaks (pinned image) over the full git history; same target as locally. Allowlist: .gitleaks.toml.
+      - name: No secrets in the git history
+        run: make secrets-scan
+
+  # The OpenAPI contract (ADR 0011): lint, bundle, generate the TypeScript types and fail when the committed
+  # frontend/src/api/schema.gen.ts differs. Node is installed here, so RUN_NODE is empty (same make targets as locally).
+  contract:
+    name: contract
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: contract/package-lock.json
+
+      - name: Install dependencies from package-lock.json
+        run: make RUN_NODE= contract-install
+
+      - name: Lint and bundle the spec, regenerate the types, fail if schema.gen.ts is stale
+        run: make RUN_NODE= contract
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_NODE= contract-audit
+
+  # The front-end (ADR 0008): ESLint, Prettier --check, vue-tsc, Vitest with the 80% coverage bar, the production build,
+  # a check that the origin-verify value is not in the bundle, and npm audit. Node is installed here, so RUN_NODE is
+  # empty (same make targets as locally).
+  frontend:
+    name: frontend
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js 24.21.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies from package-lock.json
+        run: make RUN_NODE= frontend-install
+
+      - name: ESLint, Prettier (check) and vue-tsc
+        run: make RUN_NODE= frontend-lint
+
+      - name: Unit and component tests with coverage (80% bar)
+        run: make RUN_NODE= frontend-test
+
+      - name: Production build
+        run: make RUN_NODE= frontend-build
+
+      # The Vite proxy sends ORIGIN_VERIFY_LOCAL; it must never be part of what the browser downloads.
+      - name: The origin-verify value is not in the bundle
+        run: make RUN_NODE= check-bundle-secrets
+
+      - name: Audit dependencies for known vulnerabilities
+        run: make RUN_NODE= frontend-audit
+
+  # Conformance tests: the emulators behave the way the code relies on (DynamoDB Local, ElasticMQ, the S3 emulator,
+  # including its presigned POST policy enforcement, CORS and presigned GET), then the pipeline integration tests.
+  integration:
+    name: integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Runs in the pinned tools container, as the runner user. `make up` writes .env from .env.example.
+      - name: Install dependencies from composer.lock
+        run: make php-install
+
+      # The `frontend` service runs Vite from frontend/node_modules (in the pinned node container, like php-install).
+      - name: Install front-end dependencies from package-lock.json
+        run: make frontend-install
+
+      # Also builds the local-aws image and runs the idempotent S3 bootstrap (buckets, CORS, notification rule).
+      - name: Start the local stack, bootstrap it and wait until it is healthy
+        run: make up
+
+      - name: Conformance tests (DynamoDB, SQS, S3) in the php container on the Compose network
+        run: make test-conformance
+
+      # S3 emulator -> webhook -> s3-events-relay -> ElasticMQ -> worker-runner -> worker. The target stops the runner
+      # while the suites that read the receipts queue run, then starts it for the end-to-end pipe tests (incl. the
+      # ~35 s dead-letter test).
+      - name: Pipeline integration tests (upload -> queue message -> worker; poison message -> DLQ)
+        run: make test-integration
+
+      - name: Dump the service logs
+        if: failure()
+        run: docker compose -p expense-tracker logs --no-color
+
+      # Never removes volumes (-v is not used anywhere).
+      - name: Stop the stack
+        if: always()
+        run: make down
+
+  # Terraform skeleton (ADR 0009): format check, then `init -backend=false` (read-only lock files) and `validate` of each
+  # root. No AWS account, credentials or secrets are involved; the only network access is the provider download.
+  # scripts/terraform.sh runs the pinned hashicorp/terraform image (Docker is available on the runner).
+  terraform:
+    name: terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Terraform fmt (check), init without backend, validate
+        run: make tf-check
+
+      # Not part of `make test-shell` (slow: Docker plus a provider download); runs only here and via `make tf-test`.
+      - name: Tests of the Terraform check
+        run: make tf-test

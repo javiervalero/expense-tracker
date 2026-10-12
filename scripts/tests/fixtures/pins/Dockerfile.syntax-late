@@ -1,0 +1,3 @@
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# syntax=docker/dockerfile:1
+# Fixture: BuildKit ignores a syntax directive this late, but the guard refuses it anyway (parser differences).

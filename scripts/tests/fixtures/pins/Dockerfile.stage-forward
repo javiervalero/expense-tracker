@@ -1,0 +1,3 @@
+# Fixture: a stage name used before it is defined is an image reference.
+FROM later AS first
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS later

@@ -1,0 +1,7 @@
+# Fixture: `build:` does not exempt an image that names another user or registry; Compose may pull it.
+services:
+  a:
+    image: someuser/foo:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned

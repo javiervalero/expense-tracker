@@ -1,0 +1,52 @@
+# Fixture: pinned images; locally built images (expense-tracker-* with pull_policy unset, missing or never; any name
+# with pull_policy: build); a pinned inline Dockerfile; a service that only exists in a profile; a pinned image volume;
+# allowed additional contexts (pinned docker-image://, service:, local directory); an ordinary build argument; a local
+# include (short syntax).
+include:
+  - include-target.yaml
+services:
+  a:
+    image: repo/a:1.0@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    volumes:
+      - type: image
+        source: alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        target: /img
+  c:
+    image: "expense-tracker-c:dev"
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      additional_contexts:
+        tools: docker-image://alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        from-service: service:a
+        local-dir: ./zizmor
+      args:
+        APP_ENV: dev
+  c-missing:
+    image: expense-tracker-c-missing:dev
+    pull_policy: missing
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+  c-never:
+    image: expense-tracker-c-never
+    pull_policy: never
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+  d:
+    image: someuser/foo:latest
+    pull_policy: build
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+  inline:
+    image: expense-tracker-inline:dev
+    build:
+      context: .
+      dockerfile_inline: |
+        FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        RUN true
+  tools:
+    profiles: [tools]
+    image: repo/tools:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

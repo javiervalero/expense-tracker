@@ -1,0 +1,6 @@
+# Fixture: an image volume mounts the content of an image, which Compose pulls.
+services:
+  a:
+    image: alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    volumes:
+      - {type: image, source: alpine:3, target: /x}

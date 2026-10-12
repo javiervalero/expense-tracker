@@ -1,0 +1,3 @@
+# Fixture: a variable in FROM is refused (the ARG has no default here).
+ARG BASE
+FROM $BASE

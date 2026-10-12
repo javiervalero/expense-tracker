@@ -1,0 +1,3 @@
+# Fixture: FROM without an image, and AS without a stage name, fail cleanly.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS
+FROM --platform=linux/amd64

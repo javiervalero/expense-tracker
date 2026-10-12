@@ -1,0 +1,404 @@
+# Local development stack (ADR 0007). Start it with `make up`, stop it with `make down`.
+#
+# Every host port is bound to 127.0.0.1 only: nothing is reachable from other machines on the network.
+# Images are pinned by digest (the tag is kept for humans; the digest is what is pulled).
+name: expense-tracker
+
+services:
+  # DynamoDB Local 3.3.1. In-memory with a shared database: data lives until the container stops.
+  dynamodb:
+    # amazon/dynamodb-local:3.3.1 (multi-arch index digest, taken with `docker buildx imagetools inspect`)
+    image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      # Any HTTP answer (even an error) means the server is up; curl only fails when it cannot connect.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "http://127.0.0.1:8000/"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  # ElasticMQ 1.7.1 (native image): SQS-compatible, with the queues declared in docker/elasticmq/elasticmq.conf.
+  sqs:
+    # softwaremill/elasticmq-native:1.7.1 (multi-arch index digest)
+    image: softwaremill/elasticmq-native:1.7.1@sha256:e4580ab9ad1bd5cd37b4ba04911bc5ccc8cd2d9ab4de56ece65acee71c24e05c
+    volumes:
+      - ./docker/elasticmq/elasticmq.conf:/opt/elasticmq.conf:ro
+    ports:
+      # Must stay bound to 127.0.0.1: ElasticMQ builds queue URLs from the request Host header
+      # (`host = "*"` in elasticmq.conf), so exposing it more widely would hand out URLs for any caller-chosen host.
+      - "127.0.0.1:9324:9324"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:9324/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+
+  # S3 emulator: pgsty/silo (a maintained fork of MinIO), chosen in the Phase 0 spike (ADR 0007, docs/spikes/s3-emulator.md).
+  # The buckets, the CORS rule and the notification rule are not created here but by `local-aws-init` (below).
+  s3:
+    # pgsty/silo RELEASE.2026-09-16T00-00-00Z (linux/amd64 image digest from the spike). AGPL-3.0: used unmodified,
+    # only as a local development and CI service; never ship it.
+    image: pgsty/silo:RELEASE.2026-09-16T00-00-00Z@sha256:635197cb9f36d01bee221d34d1c7d7960f6a95c48b0b6c01d99cd13bdae51a46
+    command: ["server", "/data"]
+    ports:
+      # 127.0.0.1 only, and on the host's 9000 on purpose: presigned URLs are signed for http://localhost:9000.
+      - "127.0.0.1:9000:9000"
+    environment:
+      # The emulator's root user is the project's fake AWS key pair (.env), so one pair works everywhere.
+      MINIO_ROOT_USER: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
+      MINIO_ROOT_PASSWORD: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
+      MINIO_BROWSER: "off"
+      # Webhook target RELAY: where "object created" events go (the s3-events-relay service, below). The ARN
+      # to use in a bucket rule is arn:minio:sqs::RELAY:webhook (S3_NOTIFICATION_ARN). Silo starts and reports
+      # healthy while the target is unreachable; events wait in queue_dir and are replayed once it answers.
+      MINIO_NOTIFY_WEBHOOK_ENABLE_RELAY: "on"
+      MINIO_NOTIFY_WEBHOOK_ENDPOINT_RELAY: ${S3_WEBHOOK_ENDPOINT:?not set - copy the S3_ lines of .env.example into .env}
+      MINIO_NOTIFY_WEBHOOK_AUTH_TOKEN_RELAY: ${S3_WEBHOOK_AUTH_TOKEN:?not set - copy the S3_ lines of .env.example into .env}
+      MINIO_NOTIFY_WEBHOOK_QUEUE_DIR_RELAY: /queue
+      MINIO_NOTIFY_WEBHOOK_QUEUE_LIMIT_RELAY: "10000"
+    # Objects and the pending-event queue live in memory and vanish with the container, like DynamoDB Local's data.
+    # One lifecycle for both on purpose: no events for objects that no longer exist, no objects without their events.
+    # Explicit tmpfs for /data also stops the image's own `VOLUME /data` from creating an anonymous volume that
+    # `make down` (which never uses -v) would leave behind.
+    # Hardening (WP8 security review): not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The two tmpfs are the only writable places and belong to the unprivileged user (uid/gid 10001).
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /data:uid=10001,gid=10001,mode=0770
+      - /queue:uid=10001,gid=10001,mode=0770
+    healthcheck:
+      # The image is ubi-micro (no curl or wget): the binary ships its own probe.
+      test: ["CMD", "silo", "healthcheck", "live"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
+  # Webhook receiver for the S3 emulator: puts each "object created" event on the receipts queue as an AWS-shaped
+  # message (docker/local-aws/src/Relay, ADR 0007). Listens on container port 8080 and is NOT published to the host:
+  # only the emulator, on the Compose network, can reach it (and it also needs the bearer token).
+  # `s3` does not depend on it on purpose: silo starts without it and queues events in its queue_dir until it answers.
+  s3-events-relay:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    # The image's entrypoint is `php`: this is `php -S 0.0.0.0:8080 bin/relay.php`, with explicit limits:
+    #   memory_limit 32M: a request body is capped at 256 KiB (MAX_BODY_BYTES in bin/relay.php), so this is plenty;
+    #   post_max_size / upload_max_filesize 1M: above the cap on purpose, so that PHP never empties a body that the
+    #     relay itself would answer with 413 (a Content-Length over the cap is refused by the relay before any read).
+    command: ["-d", "memory_limit=32M", "-d", "post_max_size=1M", "-d", "upload_max_filesize=1M", "-S", "0.0.0.0:8080", "bin/relay.php"]
+    expose: ["8080"]
+    # Only what the relay needs (no env_file). The values are checked at the first request and the service reports
+    # unhealthy if one is missing, or if an endpoint is not a local stand-in.
+    environment:
+      # Eight workers, so that the healthcheck and other requests still answer while a few wait for the queue (at most
+      # 3 s each, see SqsClientFactory).
+      PHP_CLI_SERVER_WORKERS: "8"
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      SQS_ENDPOINT: ${SQS_ENDPOINT:-}
+      SQS_RECEIPTS_QUEUE_URL: ${SQS_RECEIPTS_QUEUE_URL:?not set - copy the SQS_ lines of .env.example into .env}
+      S3_WEBHOOK_AUTH_TOKEN: ${S3_WEBHOOK_AUTH_TOKEN:?not set - copy the S3_ lines of .env.example into .env}
+    # Same hardening as `s3`: not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The one writable place is a small tmpfs /tmp: `php -S` buffers request bodies above about 64 KiB in a temporary
+    # file, and without it those requests fail ("Unable to create temporary file", empty body, 400). Its size bounds
+    # what concurrent big requests can hold (8 workers x the 256 KiB cap fits easily); mode 1777 is the usual /tmp.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=8m
+    healthcheck:
+      # The image has PHP and nothing else (no curl or wget). A non-2xx answer or no answer makes this exit 1.
+      test: ["CMD", "php", "-d", "default_socket_timeout=2", "-r", "exit(@file_get_contents('http://127.0.0.1:8080/health') === false ? 1 : 0);"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+    depends_on:
+      sqs:
+        condition: service_healthy
+
+  # The receipt worker (WP10): the Bref PHP 8.5 image in function mode, with the Runtime Interface Emulator that ships
+  # in it. RIE answers on container port 8080 at POST /2015-03-31/functions/function/invocations; `worker-runner`
+  # (WP11) posts SQS-shaped events there, the way the Lambda event source mapping would. Internal only: nothing is
+  # published to the host, and the worker has no AWS access or credentials (Phase 0 only logs what it receives).
+  worker:
+    image: expense-tracker-worker:dev
+    build:
+      context: .
+      dockerfile: docker/worker/Dockerfile
+      target: runtime
+    expose: ["8080"]
+    # No env_file and no secrets. BREF_RUNTIME=function and BREF_PING_DISABLE=1 come from the image (ENV).
+    # Same hardening as the other services: not root, no capabilities, no privilege gain, read-only root filesystem.
+    # The Lambda base image itself runs as root (Lambda swaps in its own user), so 10001 is set here. The one
+    # writable place is a small tmpfs /tmp, which is also where Lambda allows writes (the later image handling goes there).
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=64m
+    healthcheck:
+      # RIE has no health endpoint, so this only proves that it accepts connections: curl succeeds on ANY HTTP answer
+      # (the root path answers 404) and fails only when it cannot connect. It does not start an invocation. That PHP
+      # and the handler really work is proven by tests/Integration/Worker/RieInvocationTest.php.
+      test: ["CMD", "curl", "-s", "-o", "/dev/null", "--max-time", "2", "http://127.0.0.1:8080/"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
+  # The worker runner (WP11): stands in for the Lambda SQS event source mapping, which does not exist locally.
+  # It long-polls the `receipts` queue, posts each batch to `worker` as an AWS-shaped SQS event and deletes only the
+  # messages that succeeded; the others return to the queue and, after 3 receives, go to `receipts-dlq`
+  # (docker/local-aws/src/Runner, bin/runner.php). No ports: it only makes outgoing calls.
+  #
+  # It is the ONLY intended consumer of `receipts`. S3ToQueueTest and RelayHttpTest read that queue themselves, so
+  # `make test-integration` stops this service while they run and starts it again afterwards.
+  # Started in step 1 of `make up` (not in LATE_SERVICES): it needs `sqs` and `worker` only, whose queues are declared
+  # in elasticmq.conf, and nothing that the `local-aws-init` bootstrap creates.
+  worker-runner:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    command: ["bin/runner.php"]
+    # Only what the runner needs (no env_file). The values are checked at start; a missing one, or an endpoint that is
+    # not a local stand-in, stops it with exit code 1 (and is logged). The invocation URL is the Runtime Interface
+    # Emulator's fixed path for the function named `function`.
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      SQS_ENDPOINT: ${SQS_ENDPOINT:-}
+      SQS_RECEIPTS_QUEUE_URL: ${SQS_RECEIPTS_QUEUE_URL:?not set - copy the SQS_ lines of .env.example into .env}
+      WORKER_INVOCATION_URL: http://worker:8080/2015-03-31/functions/function/invocations
+    # A crash (not a stop, and not the exit 1 of a bad configuration kept in a loop forever) is retried a few times.
+    restart: on-failure:5
+    # A stop finishes the batch in hand (an invocation may take up to its 8 s timeout, then the delete): more than
+    # Docker's default 10 s, so a stop never ends in SIGKILL.
+    stop_grace_period: 20s
+    # Same hardening as the relay. Nothing is written, so there is not even a tmpfs.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    depends_on:
+      sqs:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+
+  # The local API (WP12), in two containers like production's one handler: `api` (nginx) forwards /api/ to `api-php`
+  # (php-fpm), which runs backend/public/index.php. See ADR 0007 and 0012. Both start in step 1 of `make up`: neither
+  # needs anything the `local-aws-init` bootstrap creates (Phase 0 serves only /api/v1/health), so LATE_SERVICES stays
+  # empty. When the API starts to use DynamoDB or S3, move `api` there.
+  #
+  # php-fpm, from the `fpm` stage of docker/php/Dockerfile. The code is MOUNTED, read-only, at /var/task (the path
+  # Lambda uses, so SCRIPT_FILENAME is the same everywhere): an edit shows up at the next request without a rebuild.
+  # Only public/, src/ and vendor/ are mounted (not tests/ or composer files); `make php-install` must have run.
+  # Not published, and ONLY on the internal network `api-internal`: FastCGI has no authentication, so anything that can
+  # connect to port 9000 can run code. Only `api` (on both networks) reaches it.
+  #
+  # NO SECRETS, NO env_file, NEVER AWS CREDENTIALS here: the pool has clear_env = no, so every variable of this
+  # container is visible to the PHP code of every request. The environment is what the API needs, listed below
+  # (nothing yet; APP_ENV is the first placeholder).
+  api-php:
+    image: expense-tracker-php:fpm
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: fpm
+    volumes:
+      - ./backend/public:/var/task/public:ro
+      - ./backend/src:/var/task/src:ro
+      - ./backend/vendor:/var/task/vendor:ro
+    networks: [api-internal]
+    environment:
+      APP_ENV: local
+    # Same hardening as the other services. Not root, so php-fpm runs its workers as that user (the pool `user` and
+    # `group` of the image are only for a root master). The one writable place is /tmp.
+    user: "10001:10001"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=10001,gid=10001,mode=1777,size=16m
+    healthcheck:
+      # Healthy = php-fpm accepts connections on 9000 AND the mounted code is there (a missing `make php-install`
+      # or an empty mount would otherwise look healthy until the first request). The image has no FastCGI client;
+      # `api`'s own healthcheck runs a real request through both. A connection with no request is dropped by php-fpm
+      # without a log line. Cheap: one short php process.
+      test:
+        - CMD
+        - php
+        - -r
+        - "exit(is_file('/var/task/vendor/autoload.php') && is_file('/var/task/public/index.php') && @fsockopen('127.0.0.1', 9000) !== false ? 0 : 1);"
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+
+  # nginx 1.30.5, the unprivileged build (nginxinc/nginx-unprivileged): runs as uid 101 and listens on 8080, so it
+  # needs neither root nor capabilities (cap_drop ALL) to start, and the stock image is not run with its root-start,
+  # privilege-drop entrypoint. Only docker/api/nginx.conf (a complete configuration) is mounted, plus the map.
+  api:
+    # nginxinc/nginx-unprivileged:1.30.5-alpine (multi-arch index digest, taken with `docker buildx imagetools inspect`)
+    image: nginxinc/nginx-unprivileged:1.30.5-alpine@sha256:15c994d10d6d78658721c3bcafff14cb281fba2a4bdf9d5ba92c416a472516e3
+    volumes:
+      - ./docker/api/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./docker/api/viewer-address.conf:/etc/nginx/viewer-address.conf:ro
+    # On the default network (the host port and the php tools container reach it) and on api-internal (to reach php-fpm).
+    networks: [default, api-internal]
+    ports:
+      - "127.0.0.1:8080:8080"
+    user: "101:101"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=101,gid=101,mode=1777,size=16m
+    healthcheck:
+      # A real request through nginx AND php-fpm: wget fails on a non-2xx answer or no answer.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 3s
+    depends_on:
+      api-php:
+        condition: service_healthy
+
+  # The front-end dev server (WP14): Vite, serving http://localhost:5173 and proxying /api to `api` (nginx), the way
+  # CloudFront will in production (single origin, ADR 0005). The proxy adds X-Origin-Verify and always overwrites
+  # CloudFront-Viewer-Address (frontend/vite/proxyHeaders.ts). Browser -> Vite -> nginx -> php-fpm.
+  #
+  # The code is MOUNTED read-only at /app (an edit shows up at once through Vite's file watcher) and the dependencies
+  # come from frontend/node_modules, installed by `make frontend-install` in the same pinned node image (like
+  # backend/vendor and `make php-install`). Not a named volume on purpose: a new named volume is owned by root and this
+  # container is not root; and the installed files are the ones `make frontend-lint` and `make frontend-test` use.
+  frontend:
+    # Same image (and digest) as NODE_IMAGE in the Makefile: keep the two equal.
+    image: node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+    working_dir: /app
+    volumes:
+      - ./frontend:/app:ro
+    # Fails with a clear message instead of a "vite: not found" when `make frontend-install` has not run.
+    # --host 0.0.0.0: the published port below is what restricts access to 127.0.0.1 on the host. --configLoader runner:
+    # Vite then does not write a temporary copy of vite.config.ts next to it (the mount is read-only).
+    command:
+      - sh
+      - -c
+      - >-
+        test -x node_modules/.bin/vite || { echo "frontend: node_modules is missing; run make frontend-install" >&2; exit 1; };
+        exec node_modules/.bin/vite --host 0.0.0.0 --strictPort --configLoader runner
+    ports:
+      - "127.0.0.1:5173:5173"
+    # Only what Vite needs. Both values are NOT secrets (see .env.example) and are not VITE_-prefixed, so they never
+    # reach the browser bundle. The defaults equal .env.example, so an older .env without these lines does not break
+    # every Compose command.
+    environment:
+      API_PROXY_TARGET: ${API_PROXY_TARGET:-http://api:8080}
+      ORIGIN_VERIFY_LOCAL: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
+      # Vite's dependency cache goes to the tmpfs below (the mount and the root file system are read-only).
+      FRONTEND_CACHE_DIR: /tmp/vite-cache
+      HOME: /tmp
+    # Same hardening as the other services where Vite allows it: not root, no capabilities, no privilege gain, read-only
+    # root filesystem. Vite writes only its cache, in /tmp. Unlike the other services the user is not 10001 but 1000
+    # (the node image's own `node` user): any uid can read the mounted files, and the user needs nothing else.
+    user: "1000:1000"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    read_only: true
+    tmpfs:
+      - /tmp:uid=1000,gid=1000,mode=1777,size=64m
+    healthcheck:
+      # Through the whole chain: Vite -> proxy -> nginx -> php-fpm. busybox wget fails on a non-2xx answer or no answer.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5173/api/v1/health"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+      start_period: 5s
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
+  # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
+  local-aws-init:
+    image: expense-tracker-local-aws:dev
+    build:
+      context: .
+      dockerfile: docker/local-aws/Dockerfile
+      target: runtime
+    restart: "no"
+    # Only what the bootstrap needs (no env_file: it must not receive the webhook token or other unrelated values).
+    # Interpolated from .env or from the shell (a value given on the command line wins over .env).
+    environment:
+      AWS_REGION: ${AWS_REGION:-}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_CORS_ALLOWED_ORIGIN: ${S3_CORS_ALLOWED_ORIGIN:-}
+      S3_NOTIFICATION_ARN: ${S3_NOTIFICATION_ARN:-}
+      S3_WEBHOOK_ENDPOINT: ${S3_WEBHOOK_ENDPOINT:-}
+      BOOTSTRAP_WAIT_SECONDS: ${BOOTSTRAP_WAIT_SECONDS:-}
+    command: ["bin/bootstrap.php"]
+    depends_on:
+      s3:
+        condition: service_healthy
+
+  # PHP tools container on the Compose network: runs the conformance suite against the services above.
+  # Not started by `make up` (profile `tools`); `make test-conformance` runs it with `docker compose run`.
+  php:
+    profiles: ["tools"]
+    image: expense-tracker-php:dev
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: dev
+    working_dir: /app/backend
+    volumes:
+      - ./:/app
+    # .env includes S3_WEBHOOK_AUTH_TOKEN, which the relay HTTP tests (RelayHttpTest) send as the bearer token.
+    env_file: .env
+    depends_on:
+      dynamodb:
+        condition: service_healthy
+      sqs:
+        condition: service_healthy
+      s3:
+        condition: service_healthy
+      # The pipeline integration tests need events to reach the queue.
+      s3-events-relay:
+        condition: service_healthy
+      # The CORS and notification rules the conformance tests check are set by the bootstrap.
+      local-aws-init:
+        condition: service_completed_successfully
+      # The worker integration tests (RieInvocationTest) call it at http://worker:8080.
+      worker:
+        condition: service_healthy
+      # The API integration tests (HealthOverNginxTest) call it at http://api:8080.
+      api:
+        condition: service_healthy
+      # `worker-runner` is deliberately NOT listed: two of the suites need it stopped (see the Makefile), and
+      # `docker compose run` would start a dependency again.
+
+networks:
+  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Only `api-php` and `api`.
+  api-internal:
+    internal: true
