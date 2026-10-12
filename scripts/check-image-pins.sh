@@ -40,7 +40,7 @@
 #   - in .env.example, any COMPOSE_* line (make up copies it to .env, where COMPOSE_FILE would change what is loaded).
 # Allowed without a pin: `FROM scratch`; FROM / COPY --from / --mount from= naming an EARLIER stage of the same
 # Dockerfile (case-insensitive) or, for COPY --from and --mount, the number of an earlier stage.
-# With no argument it scans the repository except spikes/ (throwaway experiments, deleted in WP17) and the test
+# With no argument it scans the repository except spikes/ (deleted at the end of Phase 0; the skip stays so a restored harness is not scanned) and the test
 # fixtures. Dependency directories are pruned by EXACT path (frontend/node_modules, frontend/dist, backend/vendor,
 # docker/local-aws/vendor, contract/..., .git, .terraform, build): a directory merely NAMED vendor or build is scanned.
 # Directory arguments are scanned in full (the tests rely on that); arguments that start with `-` are refused.

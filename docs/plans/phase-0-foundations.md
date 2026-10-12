@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved by the owner, 2026-10-09** |
+| Status | **Done (PR #3); approved by the owner, 2026-10-09** |
 | Phase | 0 (PLAN §12, essential track) |
 | Branch | `feat/phase-0-foundations`, from `main` (ADR 0012 accepted, PR #2) |
 | Inputs | PLAN §4, §5, §10–§13; ADR 0001, 0003, 0007, 0009, 0010, 0011, 0012; Phase 0 research (2026-10-09) |
