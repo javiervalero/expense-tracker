@@ -28,7 +28,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets
+.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -70,8 +70,11 @@ test-local-aws: $(PHP_IMAGE_DEP) ## docker/local-aws unit tests with coverage, 8
 audit-local-aws: $(PHP_IMAGE_DEP) ## docker/local-aws: composer audit (known vulnerabilities in locked dependencies)
 	$(LOCAL_AWS_COMPOSER) audit
 
-test-shell: ## Tests of the shell guards (scripts/tests/*.test.sh)
-	@set -e; for t in scripts/tests/*.test.sh; do echo "== $$t"; bash "$$t"; done
+test-shell: ## Tests of the shell guards (scripts/tests/*.test.sh, except terraform-check: see tf-test)
+	@set -e; for t in scripts/tests/*.test.sh; do \
+	  case "$$t" in scripts/tests/terraform-check.test.sh) continue;; esac; \
+	  echo "== $$t"; bash "$$t"; \
+	done
 
 # Builds the tools image, then checks the real worker Dockerfile: the PHP in its pinned bref/php-85 layer must equal
 # composer.json config.platform.php, and the --no-dev vendor/ must load on that PHP. A missing Dockerfile is an error
@@ -257,3 +260,32 @@ check-bundle-secrets: ## The ORIGIN_VERIFY_LOCAL value (.env, else .env.example)
 # through @vue/eslint-config-typescript -> fast-glob; ESLint now uses typescript-eslint directly and the tree is clean.)
 frontend-audit: frontend-ready ## frontend/: npm audit of all packages (dev tools too), high and above (needs frontend-install)
 	$(NPM_FRONTEND) audit --audit-level=high
+
+# Terraform (ADR 0009): Phase 0 has no AWS resources and no credentials; the checks need only the provider download.
+# scripts/terraform.sh runs the pinned image as the host user without any AWS_* variable. `init -backend=false` never
+# contacts the (partial) S3 backend, and `-lockfile=readonly` makes a stale or missing .terraform.lock.hcl an error
+# instead of rewriting it. TF_DIR can point at a copy of the tree (scripts/tests/terraform-check.test.sh does).
+TERRAFORM ?= scripts/terraform.sh
+TF_DIR ?= infra/terraform
+TF_ROOTS = $(TF_DIR)/bootstrap $(TF_DIR)/envs/dev
+TF_LOCK_PLATFORMS = -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_amd64 -platform=darwin_arm64
+
+tf-fmt: ## Terraform: rewrite all .tf files to the canonical format
+	$(TERRAFORM) fmt -recursive $(TF_DIR)
+
+tf-check: ## Terraform: fmt check, then init (no backend, read-only lock files) and validate of each root
+	$(TERRAFORM) fmt -check -recursive -diff $(TF_DIR)
+	@set -e; for root in $(TF_ROOTS); do \
+	  echo "== $$root"; \
+	  $(TERRAFORM) -chdir="$$root" init -backend=false -input=false -lockfile=readonly; \
+	  $(TERRAFORM) -chdir="$$root" validate; \
+	done
+
+tf-test: ## Terraform: tests of tf-check (needs Docker, ~50s; excluded from test-shell)
+	bash scripts/tests/terraform-check.test.sh
+
+tf-lock: ## Terraform: regenerate the .terraform.lock.hcl hashes for linux and darwin, amd64 and arm64
+	@set -e; for root in $(TF_ROOTS); do \
+	  echo "== $$root"; \
+	  $(TERRAFORM) -chdir="$$root" providers lock $(TF_LOCK_PLATFORMS); \
+	done

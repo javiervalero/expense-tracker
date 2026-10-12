@@ -239,3 +239,23 @@ jobs:
       - name: Stop the stack
         if: always()
         run: make down
+
+  # Terraform skeleton (ADR 0009): format check, then `init -backend=false` (read-only lock files) and `validate` of each
+  # root. No AWS account, credentials or secrets are involved; the only network access is the provider download.
+  # scripts/terraform.sh runs the pinned hashicorp/terraform image (Docker is available on the runner).
+  terraform:
+    name: terraform
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Terraform fmt (check), init without backend, validate
+        run: make tf-check
+
+      # Not part of `make test-shell` (slow: Docker plus a provider download); runs only here and via `make tf-test`.
+      - name: Tests of the Terraform check
+        run: make tf-test
