@@ -1,0 +1,8 @@
+# Fixture: even a project-prefixed local image is refused when Compose is told to pull it (pull_policy: always).
+services:
+  a:
+    image: expense-tracker-x:dev
+    pull_policy: always
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned

@@ -1,0 +1,5 @@
+# escape=`
+# Fixture: the continuation uses the declared escape character (a backtick) and hides --from from a line parser.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+COPY `
+  --from=composer:2 /usr/bin/composer /usr/bin/composer

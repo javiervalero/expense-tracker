@@ -1,0 +1,3 @@
+services:
+  a:
+    image: repo/a:1.0

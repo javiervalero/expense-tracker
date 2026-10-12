@@ -1,0 +1,3 @@
+# Fixture: RUN --mount=...from=<image> pulls an image just like COPY --from.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+RUN --network=none --mount=type=bind,from=composer:2,source=/usr/bin,target=/x true

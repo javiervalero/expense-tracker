@@ -1,0 +1,9 @@
+# Fixture: an additional build context can name an image (docker-image://), which BuildKit pulls.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      additional_contexts:
+        tools: docker-image://alpine:3

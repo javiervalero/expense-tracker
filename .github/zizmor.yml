@@ -1,0 +1,13 @@
+# zizmor configuration (`make lint-workflows`, also the `guards` CI job). Workflows and actions are audited by zizmor
+# (pinned image, see ZIZMOR_IMAGE in the Makefile); scripts/check-image-pins.sh only checks Dockerfiles and Compose.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        # Every `uses:` (actions, reusable workflows, docker:// images) must be pinned by hash: a commit SHA, or a
+        # sha256 digest. Tags and branches are refused, GitHub's own actions included.
+        "*": hash-pin
+  unpinned-images:
+    # `container:` and `services.*.image` must be pinned by digest. This audit belongs to zizmor's "pedantic" persona,
+    # which scripts/lint-workflows.sh selects (`--pedantic`); the explicit entry documents that it is wanted.
+    disable: false

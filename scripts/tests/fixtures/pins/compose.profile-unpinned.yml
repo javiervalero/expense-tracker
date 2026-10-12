@@ -1,0 +1,5 @@
+# Fixture: a service behind a profile is checked as well.
+services:
+  tools:
+    profiles: [tools]
+    image: alpine:3

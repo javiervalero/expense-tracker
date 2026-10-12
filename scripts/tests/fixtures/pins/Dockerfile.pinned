@@ -1,0 +1,20 @@
+# syntax=docker/dockerfile:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+# Fixture: everything is pinned, or is an earlier stage, or scratch. Variables elsewhere (RUN, ENV) are fine.
+ARG UNUSED=1
+FROM php:8.5-cli-alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS Vendor
+COPY --from=composer:2.10.3@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /usr/bin/composer /usr/bin/composer
+COPY \
+  --from=composer:2.10.3@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+  # a comment inside a continuation is dropped, as Docker does
+  /usr/bin/composer /usr/bin/composer2
+RUN --mount=type=cache,target=/root/.composer echo "$HOME" ${HOME}
+
+FROM --platform=linux/amd64 scratch AS assets
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS runtime
+COPY --from=vendor /app/vendor ./vendor
+COPY --from=Assets /x /x
+COPY --from=0 /y /y
+RUN --mount=type=bind,from=vendor,source=/a,target=/b true
+RUN --mount=type=bind,from=alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,target=/c true
+ONBUILD COPY --from=alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa /d /d
+FROM RUNTIME

@@ -1,0 +1,2 @@
+# Fixture: a tag without a digest.
+FROM php:8.5-cli-alpine

@@ -16,7 +16,8 @@ LOCAL_AWS_COMPOSER = $(RUN_PHP) composer --working-dir=docker/local-aws
 # Node tools (contract/): the pinned node:24.21.0-alpine (index digest, multi-arch), as the host user. HOME and the npm
 # cache live in /tmp inside the container, so nothing is written outside the repository. `-e ORIGIN_VERIFY_LOCAL` (no
 # value) passes the variable through from make's environment only when it is set (see frontend-build).
-NODE_IMAGE ?= node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
+# `override`: see the pinned guard images below.
+override NODE_IMAGE := node:24.21.0-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
 RUN_NODE ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app -e HOME=/tmp -e npm_config_cache=/tmp/.npm -e ORIGIN_VERIFY_LOCAL $(NODE_IMAGE)
 NPM_CONTRACT = $(RUN_NODE) npm --prefix contract
 NPM_FRONTEND = $(RUN_NODE) npm --prefix frontend
@@ -28,7 +29,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -147,7 +148,7 @@ test-conformance: .env php-image ## Conformance tests (DynamoDB Local, ElasticMQ
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
 #      does not run an EXIT trap on a signal, so INT, TERM and HUP are trapped too and turned into `exit`, which fires
 #      the EXIT trap; the trap keeps the original exit code (130 for INT, 143 for TERM/HUP).
-# `make test-fast` is the same without the tests marked `slow` (the ~35 s dead-letter test).
+# FAST=1 leaves out the tests marked `slow` (the ~35 s dead-letter test); `make test-fast` sets it for the whole suite.
 PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
 # One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
 EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
@@ -174,8 +175,85 @@ test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> E
 			|| { echo "make test-integration: the runner logged no 'messages failed' line (batchItemFailures) for the poison message $$id" >&2; exit 1; }; \
 	fi
 
-test-fast: ## Like test-integration, without the tests marked `slow` (the dead-letter test, ~35 s)
-	@$(MAKE) --no-print-directory test-integration FAST=1
+# The whole test suite (Phase 0 definition of done). Run as a sequence (not as prerequisites) so that the order holds
+# with `make -j` too: the cheap suites first, then the stack (`make up` is idempotent) for the tests that need it.
+# Needs `make php-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
+test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
+	$(MAKE) --no-print-directory test-unit
+	$(MAKE) --no-print-directory test-local-aws
+	$(MAKE) --no-print-directory frontend-test
+	$(MAKE) --no-print-directory up
+	$(MAKE) --no-print-directory test-conformance
+	$(MAKE) --no-print-directory test-integration
+
+test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s)
+	$(MAKE) --no-print-directory test FAST=1
+
+# Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
+# guards, and the dependency audits. (The Bref boundary is an architecture test, so it runs in `make test-unit`.)
+# Needs the three `*-install` targets once. Each part is a target of its own, so a failure names the check.
+LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
+
+lint: ## ALL static checks and audits (no stack needed): PHP, front-end, contract, Terraform, platform + image pins
+	@set -e; for t in $(LINT_TARGETS); do \
+	  echo "== make $$t"; $(MAKE) --no-print-directory $$t; \
+	done
+
+# Pinned images for the guards, by tag AND digest (multi-arch index digests). `override` on purpose: with a plain `:=`
+# a command-line assignment (`make JQ_IMAGE=other ...`) would still win; `override` makes the Makefile's value win over
+# both the command line and the environment, so nothing can swap a pinned image for another one. NODE_IMAGE and
+# GITLEAKS_IMAGE are declared the same way. The two scripts read ZIZMOR_IMAGE and JQ_IMAGE from the environment (make
+# exports them) or, when run without make, through `make print-<NAME>`; both scripts also refuse an unpinned value.
+#   ZIZMOR_IMAGE  zizmor 1.30.1, audits workflows and actions (scripts/lint-workflows.sh)
+#   JQ_IMAGE      jq 1.8.2, parses `docker compose config` output in check-image-pins.sh. A pinned jq image, not the
+#                 PHP tools image: it is a fixed single-purpose binary that needs no build, so the guard works on a
+#                 fresh clone and cannot be affected by edits to docker/php/Dockerfile (a file this guard checks).
+#   YQ_IMAGE      yq 4.54.1 (mikefarah/yq), parses YAML before anything else reads it: Compose `include` / `extends.file`
+#                 and docker actions in check-image-pins.sh, local `uses:` targets in lint-workflows.sh. A real parser,
+#                 so quoting, escapes, complex keys and aliases cannot hide a key.
+override ZIZMOR_IMAGE := ghcr.io/zizmorcore/zizmor:1.30.1@sha256:a2eb396d886c053073405c7a980f2139ba2248ec172243cfa3841e57196e8101
+override JQ_IMAGE := ghcr.io/jqlang/jq:1.8.2@sha256:b9c68867e5766576263a222e91db3de422d802069c7af70440e667a95344e486
+override YQ_IMAGE := mikefarah/yq:4.54.1@sha256:4b3d9475d65571d28cbb19544d3820ec2945e4c8b2f18279394282b8dc3a592e
+export ZIZMOR_IMAGE JQ_IMAGE YQ_IMAGE
+
+# Only the variables the scripts read can be printed (no generic print-%, which would print any variable). The value is
+# single-quoted for the shell, with any ' inside it escaped, and printed with printf, not echo.
+shell_quote = '$(subst ','\'',$(1))'
+.PHONY: print-ZIZMOR_IMAGE print-JQ_IMAGE print-YQ_IMAGE
+print-ZIZMOR_IMAGE:
+	@printf '%s\n' $(call shell_quote,$(ZIZMOR_IMAGE))
+print-JQ_IMAGE:
+	@printf '%s\n' $(call shell_quote,$(JQ_IMAGE))
+print-YQ_IMAGE:
+	@printf '%s\n' $(call shell_quote,$(YQ_IMAGE))
+
+check-image-pins: ## Every Dockerfile FROM/COPY --from/--mount from=, and Compose image (as Compose resolves it), is pinned by digest
+	@scripts/check-image-pins.sh
+
+# zizmor over .github/ (workflows and actions): every `uses:` pinned by hash, pinned container/service images, plus the
+# security audits. Offline unless ZIZMOR_ONLINE=1 (CI sets it with GH_TOKEN; then the online audits run too). Config:
+# .github/zizmor.yml.
+lint-workflows: ## zizmor (pinned image) over workflows and actions: hash-pinned uses, pinned images, security audits
+	@scripts/lint-workflows.sh
+
+# Full git history, not only the working tree. Findings are redacted. Config and the allowlist of known-fake values:
+# .gitleaks.toml (the only way to allow a value: reviewed, by path AND rule AND value). Inline `gitleaks:allow` comments
+# are NOT honoured (--ignore-gitleaks-allow), and a .gitleaksignore file (tracked anywhere, or at the root) is refused,
+# because either would let a commit silence its own finding. The container runs as the host user (git refuses a
+# repository owned by someone else), with the repository mounted read-only, a read-only root file system (HOME is a
+# tmpfs), no network, no capabilities and no-new-privileges. A shallow clone would silently skip the older commits, so
+# it is an error.
+override GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+
+secrets-scan: ## gitleaks over the full git history (pinned image; needs a full clone, not a shallow one)
+	@if [ "$$(git rev-parse --is-shallow-repository)" != false ]; then \
+		echo "make secrets-scan: this is a shallow clone (or not a git repository); the scan would skip history. Fetch it all: git fetch --unshallow" >&2; exit 1; \
+	fi
+	@ignored=$$(git ls-files -- ':(glob)**/.gitleaksignore'); \
+	if [ -n "$$ignored" ] || [ -e .gitleaksignore ]; then \
+		echo "make secrets-scan: a .gitleaksignore file is not allowed ($$(echo $$ignored .gitleaksignore)); allow a known-fake value in .gitleaks.toml instead (by path AND rule AND value), or rotate a real secret" >&2; exit 1; \
+	fi
+	docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/repo:ro -e HOME=/tmp -w /repo $(GITLEAKS_IMAGE) git --redact --no-banner --ignore-gitleaks-allow --exit-code 1 .
 
 # The S3 event fixtures exist twice (backend/ and docker/local-aws/ are separate Composer projects). They must stay
 # byte-identical, or the parser and the relay would be tested against different "real" events.
@@ -265,7 +343,7 @@ frontend-audit: frontend-ready ## frontend/: npm audit of all packages (dev tool
 # scripts/terraform.sh runs the pinned image as the host user without any AWS_* variable. `init -backend=false` never
 # contacts the (partial) S3 backend, and `-lockfile=readonly` makes a stale or missing .terraform.lock.hcl an error
 # instead of rewriting it. TF_DIR can point at a copy of the tree (scripts/tests/terraform-check.test.sh does).
-TERRAFORM ?= scripts/terraform.sh
+TERRAFORM := scripts/terraform.sh
 TF_DIR ?= infra/terraform
 TF_ROOTS = $(TF_DIR)/bootstrap $(TF_DIR)/envs/dev
 TF_LOCK_PLATFORMS = -platform=linux_amd64 -platform=linux_arm64 -platform=darwin_amd64 -platform=darwin_arm64

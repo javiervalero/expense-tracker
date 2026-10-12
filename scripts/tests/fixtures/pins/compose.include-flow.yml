@@ -1,0 +1,2 @@
+# Fixture: a remote include in flow style (the YAML is parsed, so the spelling does not matter).
+include: [include-target.yaml, oci://registry.invalid/evil/stack:latest]

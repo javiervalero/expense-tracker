@@ -315,8 +315,11 @@ targets with `RUN_PHP=` / `RUN_NODE=` empty, so the commands are identical.
 
 #### WP16: Pin and secret guards, final Makefile and CI (M)
 - **Files:** `scripts/check-image-pins.sh` + `scripts/tests/check-image-pins.test.sh` (every Dockerfile `FROM`/`COPY
-  --from`, Compose `image:` and workflow `uses:` pinned by `@sha256:` or 40-hex SHA; pinned and unpinned fixtures);
-  gitleaks in a pinned image over full history (`fetch-depth: 0`) in the `guards` job; final Makefile (`make test` =
+  --from`/`RUN --mount from=`/`# syntax=` and every Compose image, as resolved by `docker compose config`, pinned by
+  `@sha256:`; no variables in image references; pinned and unpinned fixtures); `scripts/lint-workflows.sh` +
+  `.github/zizmor.yml` (zizmor in a pinned image: workflow and action `uses:`, `container:` and `services:` images
+  hash-pinned, plus its other audits); gitleaks in a pinned image over full history (`fetch-depth: 0`, fails on a
+  shallow clone) in the `guards` job; final Makefile (`make test` =
   unit + local-aws + conformance + integration + frontend; `make test-fast` skips `slow`; `make lint` = section 1).
 - **Tests first (RED):** unpinned fixture fails, pinned passes.
 - **Acceptance:** all jobs green: `backend`, `local-aws`, `integration`, `frontend`, `contract`, `terraform`, `guards`.

@@ -1,0 +1,6 @@
+# Fixture: an include from a registry (short syntax). What it contains can change after review.
+include:
+  - oci://registry.invalid/evil/stack:latest
+services:
+  a:
+    image: alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

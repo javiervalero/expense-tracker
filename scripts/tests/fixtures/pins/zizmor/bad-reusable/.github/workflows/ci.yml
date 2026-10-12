@@ -1,0 +1,6 @@
+name: t
+on: push
+permissions: {}
+jobs:
+  j:
+    uses: octo/repo/.github/workflows/w.yml@v1

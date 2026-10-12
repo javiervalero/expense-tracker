@@ -1,0 +1,10 @@
+name: t
+on: push
+permissions: {}
+concurrency:
+  group: t
+  cancel-in-progress: false
+jobs:
+  j:
+    name: j
+    uses: octo/repo/.github/workflows/w.yml@3d3c42e5aac5ba805825da76410c181273ba90b1

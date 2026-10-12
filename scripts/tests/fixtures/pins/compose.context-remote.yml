@@ -1,0 +1,13 @@
+# Fixture: additional build contexts that are not a pinned image, a service or a local directory.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      additional_contexts:
+        oci: oci-layout:///srv/layout
+        http: http://example.invalid/context.tar
+        gitssh: git@example.invalid:evil/repo
+        github: github.com/evil/repo
+        dotgit: ./vendor/repo.git

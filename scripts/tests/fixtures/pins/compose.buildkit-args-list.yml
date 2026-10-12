@@ -1,0 +1,10 @@
+# Fixture: the same in list form and lower case.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      args:
+        - APP_ENV=dev
+        - buildkit_syntax=docker/dockerfile:1

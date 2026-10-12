@@ -1,0 +1,3 @@
+# Fixture: an empty --from value must fail cleanly (no "bad array subscript").
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+COPY --from= a b

@@ -1,0 +1,4 @@
+# Fixture: not a Compose file by name; compose.pinned.yml and compose.include-*.yml include it (a local relative path).
+services:
+  included:
+    image: repo/included:1@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa

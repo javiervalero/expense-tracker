@@ -1,0 +1,5 @@
+# Fixture: a local include in the long syntax (path as a list, project_directory).
+include:
+  - path:
+      - include-target.yaml
+    project_directory: .

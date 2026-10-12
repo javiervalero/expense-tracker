@@ -1,0 +1,5 @@
+services:
+  a:
+    extends:
+      file: base.yaml
+      service: base

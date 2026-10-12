@@ -1,0 +1,4 @@
+# Fixture: variables in COPY --from and in RUN --mount from= are refused.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+COPY --from=$TOOLS /a /b
+RUN --mount=type=bind,from=${TOOLS},target=/c true

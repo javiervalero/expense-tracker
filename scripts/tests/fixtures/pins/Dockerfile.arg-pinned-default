@@ -1,0 +1,3 @@
+# Fixture: even with a pinned default, a variable in FROM can be replaced by --build-arg, so it is refused.
+ARG BASE=alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+FROM ${BASE}

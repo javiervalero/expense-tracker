@@ -1,0 +1,6 @@
+# Fixture: an include from a git repository (long syntax, path as a list).
+include:
+  - path:
+      - include-target.yaml
+      - https://example.invalid/evil/repo.git#main
+    project_directory: .

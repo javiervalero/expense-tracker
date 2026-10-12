@@ -1,0 +1,13 @@
+# Fixture: cache entries that start like a local or gha cache but are not (BuildKit takes the LAST type=, and a gha
+# cache can name its own URL), and a plain local cache. The repository uses no build cache, so every entry is refused.
+services:
+  a:
+    image: expense-tracker-a:dev
+    build:
+      context: .
+      dockerfile: Dockerfile.pinned
+      cache_from:
+        - type=local,type=registry,ref=evil.example/cache:latest
+        - type=gha,url=https://evil.example/,url_v2=https://evil.example/,token=x
+      cache_to:
+        - type=local,dest=/tmp/cache

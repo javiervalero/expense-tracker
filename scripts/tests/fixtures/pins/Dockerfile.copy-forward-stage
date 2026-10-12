@@ -1,0 +1,5 @@
+# Fixture: a stage defined LATER (or a stage number out of range) is an image reference, not a stage.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS first
+COPY --from=later /a /b
+COPY --from=1 /a /b
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa AS later

@@ -1,0 +1,11 @@
+name: t
+on: push
+permissions: {}
+jobs:
+  j:
+    runs-on: ubuntu-24.04
+    services:
+      cache:
+        image: redis:7
+    steps:
+      - run: echo hi

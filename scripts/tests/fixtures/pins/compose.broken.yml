@@ -1,0 +1,4 @@
+# Fixture: Compose cannot parse this, so the guard cannot vouch for it.
+services:
+  a:
+    image: [alpine

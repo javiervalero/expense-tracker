@@ -1,0 +1,6 @@
+# Fixture: extends.file from a git repository.
+services:
+  a:
+    extends:
+      file: git@example.invalid:evil/repo.git
+      service: base

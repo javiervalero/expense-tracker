@@ -1,0 +1,19 @@
+# gitleaks configuration (`make secrets-scan`, also the `guards` CI job). It scans the FULL git history, so a value
+# removed from the tree is still reported. Findings are printed redacted.
+#
+# Keep the default rules; allowlist only known-fake values, each by path AND rule AND value (condition = "AND"),
+# never with a blanket regex. A real secret must never be added here: rotate it instead.
+title = "expense-tracker"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+# spikes/s3-emulator: the Phase 0 spike ran a local S3 emulator in Compose with a made-up root password. It is a
+# placeholder for a container on the developer's machine, not a credential for any real system. The spike is deleted
+# in WP17; the commits keep it in the history, hence this entry.
+description = "Fake local S3 emulator password in the Phase 0 spike (spikes/s3-emulator)"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^spikes/s3-emulator/(bootstrap\.php|compose\.yml)$''']
+regexes = ['''^spikesecretkey1234$''']

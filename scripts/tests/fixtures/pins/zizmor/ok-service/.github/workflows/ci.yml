@@ -1,0 +1,15 @@
+name: t
+on: push
+permissions: {}
+concurrency:
+  group: t
+  cancel-in-progress: false
+jobs:
+  j:
+    name: j
+    runs-on: ubuntu-24.04
+    services:
+      cache:
+        image: redis:7@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    steps:
+      - run: echo hi

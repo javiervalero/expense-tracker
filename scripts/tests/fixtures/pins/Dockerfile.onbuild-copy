@@ -1,0 +1,3 @@
+# Fixture: ONBUILD COPY --from=<image> runs in the child build and pulls that image.
+FROM alpine@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+ONBUILD COPY --from=img:tag /a /b

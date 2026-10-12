@@ -5,7 +5,8 @@ on:
     branches: [main]
   pull_request:
 
-# Least privilege: the jobs only read the repository. No secrets are used anywhere.
+# Least privilege: the jobs only read the repository. The only secret in use is the run's own read-only GITHUB_TOKEN
+# (the zizmor step of the guards job, for its online audits).
 permissions:
   contents: read
 
@@ -114,6 +115,8 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # The whole history: the secret scan below reads every commit, not only the tip.
+          fetch-depth: 0
           persist-credentials: false
 
       # Builds the pinned tools image (it has Composer, which the vendor check and its tests use).
@@ -130,6 +133,25 @@ jobs:
       # backend/ and docker/local-aws/ each keep a copy of the S3 event fixtures; they must stay identical.
       - name: S3 event fixtures are identical in both copies
         run: make check-fixtures
+
+      # Every Dockerfile FROM / COPY --from / RUN --mount from=, and every Compose image as Compose resolves it: pinned
+      # by digest.
+      - name: Dockerfile and Compose images are pinned
+        run: make check-image-pins
+
+      # zizmor (pinned image) over the workflows and actions: every `uses:` pinned by hash, pinned container and service
+      # images, and the security audits. ZIZMOR_ONLINE=1 turns on the online audits (impostor-commit,
+      # known-vulnerable-actions, ...); only then does the script forward GH_TOKEN, by name, through the environment
+      # (never in the command line). Locally the default is offline with no network. Read-only token.
+      - name: Workflows and actions are pinned and pass the zizmor audits
+        env:
+          ZIZMOR_ONLINE: '1'
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: make lint-workflows
+
+      # gitleaks (pinned image) over the full git history; same target as locally. Allowlist: .gitleaks.toml.
+      - name: No secrets in the git history
+        run: make secrets-scan
 
   # The OpenAPI contract (ADR 0011): lint, bundle, generate the TypeScript types and fail when the committed
   # frontend/src/api/schema.gen.ts differs. Node is installed here, so RUN_NODE is empty (same make targets as locally).

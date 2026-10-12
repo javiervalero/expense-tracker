@@ -1,0 +1,4 @@
+# Fixture: not a Compose file by name; compose.extends.yml pulls its service in with `extends`.
+services:
+  base:
+    image: alpine:3
