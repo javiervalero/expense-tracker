@@ -1,0 +1,81 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Fixture", "version": "1.0.0" },
+  "paths": {
+    "/expenses/{id}": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "One expense.",
+            "headers": {
+              "Cache-Control": { "$ref": "#/components/headers/NoStore" },
+              "X-Optional": { "schema": { "type": "string" } }
+            },
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Expense" } }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/expenses/summary": {
+      "get": {
+        "responses": {
+          "204": { "description": "Nothing to say." }
+        }
+      }
+    },
+    "/health": {
+      "head": {
+        "responses": {
+          "200": {
+            "description": "Up, no body.",
+            "headers": {
+              "Content-Type": { "required": true, "schema": { "type": "string", "example": "application/json" } }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "headers": {
+      "NoStore": { "required": true, "schema": { "type": "string", "example": "no-store" } }
+    },
+    "responses": {
+      "NotFound": {
+        "description": "Not found.",
+        "headers": { "Cache-Control": { "$ref": "#/components/headers/NoStore" } },
+        "content": {
+          "application/problem+json": { "schema": { "$ref": "#/components/schemas/ProblemDetails" } }
+        }
+      }
+    },
+    "schemas": {
+      "Expense": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "amount", "link"],
+        "discriminator": { "propertyName": "kind" },
+        "example": { "id": "x", "kind": "expense", "amount": 1, "link": "/a" },
+        "properties": {
+          "id": { "type": "string", "example": "abc" },
+          "kind": { "const": "expense" },
+          "amount": { "$ref": "#/components/schemas/Cents" },
+          "link": { "type": "string", "format": "uri-reference" }
+        }
+      },
+      "Cents": { "type": "integer", "minimum": 0, "example": 100 },
+      "ProblemDetails": {
+        "type": "object",
+        "required": ["title", "status"],
+        "properties": {
+          "type": { "type": "string", "format": "uri-reference", "default": "about:blank" },
+          "title": { "type": "string" },
+          "status": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

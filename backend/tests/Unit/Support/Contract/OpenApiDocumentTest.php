@@ -1,0 +1,95 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Unit\Support\Contract;
+
+use App\Tests\Support\Contract\OpenApiDocument;
+use InvalidArgumentException;
+use PHPUnit\Framework\TestCase;
+
+final class OpenApiDocumentTest extends TestCase
+{
+    private static function fixture(): OpenApiDocument
+    {
+        return OpenApiDocument::fromFile(__DIR__ . '/../../../Fixtures/contract/openapi.fixture.json');
+    }
+
+    public function testMapsAConcretePathToItsTemplate(): void
+    {
+        self::assertSame('/expenses/{id}', self::fixture()->pathTemplate('GET', '/expenses/42'));
+    }
+
+    public function testPrefersALiteralPathOverATemplate(): void
+    {
+        self::assertSame('/expenses/summary', self::fixture()->pathTemplate('GET', '/expenses/summary'));
+    }
+
+    public function testMethodIsCaseInsensitive(): void
+    {
+        self::assertSame('/health', self::fixture()->pathTemplate('head', '/health'));
+    }
+
+    public function testReturnsNullWhenNoPathMatches(): void
+    {
+        self::assertNull(self::fixture()->pathTemplate('GET', '/nope'));
+        self::assertNull(self::fixture()->pathTemplate('GET', '/expenses/1/extra'));
+    }
+
+    public function testReturnsNullWhenThePathExistsButNotForThatMethod(): void
+    {
+        self::assertNull(self::fixture()->pathTemplate('DELETE', '/expenses/42'));
+    }
+
+    public function testFindsADocumentedResponse(): void
+    {
+        $response = self::fixture()->response('GET', '/expenses/{id}', 200);
+
+        self::assertNotNull($response);
+        self::assertSame('One expense.', $response->description());
+    }
+
+    public function testFollowsAResponseRefIntoComponents(): void
+    {
+        $response = self::fixture()->response('GET', '/expenses/{id}', 404);
+
+        self::assertNotNull($response);
+        self::assertSame('Not found.', $response->description());
+        self::assertSame(['application/problem+json'], $response->mediaTypes());
+    }
+
+    public function testReturnsNullForAnUndocumentedStatus(): void
+    {
+        self::assertNull(self::fixture()->response('GET', '/expenses/{id}', 500));
+    }
+
+    public function testListsOnlyRequiredHeadersResolvingRefs(): void
+    {
+        $response = self::fixture()->response('GET', '/expenses/{id}', 200);
+
+        self::assertNotNull($response);
+        self::assertSame(['Cache-Control'], $response->requiredHeaders());
+    }
+
+    public function testAResponseWithoutContentHasNoMediaTypes(): void
+    {
+        $response = self::fixture()->response('GET', '/expenses/summary', 204);
+
+        self::assertNotNull($response);
+        self::assertSame([], $response->mediaTypes());
+    }
+
+    public function testRejectsAFileThatIsNotAnOpenApiDocument(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        OpenApiDocument::fromFile(__FILE__);
+    }
+
+    public function testRejectsAMissingFile(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        OpenApiDocument::fromFile('/nonexistent/openapi.json');
+    }
+}
