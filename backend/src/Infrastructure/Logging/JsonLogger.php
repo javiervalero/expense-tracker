@@ -110,4 +110,22 @@ final readonly class JsonLogger
 
         return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $text) ?? self::REDACTED;
     }
+
+    /**
+     * A write-only stream on stderr, the log destination of every process of the project.
+     *
+     * @return resource
+     */
+    public static function stderrStream(): mixed
+    {
+        $stream = fopen('php://stderr', 'wb');
+        // @codeCoverageIgnoreStart
+        // Unreachable in tests: php://stderr cannot be made to fail to open.
+        if ($stream === false) {
+            throw new \RuntimeException('Cannot open php://stderr for logging.');
+        }
+        // @codeCoverageIgnoreEnd
+
+        return $stream;
+    }
 }

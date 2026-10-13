@@ -16,6 +16,9 @@ final readonly class Request
     /** Attribute holding the decoded route parameters (`array<string, string>`), set by the routing middleware. */
     public const ROUTE_PARAMS = 'route.params';
 
+    /** Attribute holding the request id (16 hex characters) that the kernel generates for each request. */
+    public const REQUEST_ID = 'request.id';
+
     /**
      * @param array<array-key, string> $query
      * @param array<array-key, string> $headers lower-case names

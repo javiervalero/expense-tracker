@@ -21,24 +21,8 @@ final class WorkerFactory
      */
     public static function create(mixed $logStream = null): SqsBatchProcessor
     {
-        $logger = new JsonLogger($logStream ?? self::stderr());
+        $logger = new JsonLogger($logStream ?? JsonLogger::stderrStream());
 
         return new SqsBatchProcessor(new ReceivedReceiptLogger(new S3EventParser(), $logger), $logger);
-    }
-
-    /**
-     * @return resource
-     */
-    private static function stderr(): mixed
-    {
-        $stream = fopen('php://stderr', 'wb');
-        // @codeCoverageIgnoreStart
-        // Unreachable in tests: php://stderr cannot be made to fail to open.
-        if ($stream === false) {
-            throw new \RuntimeException('Cannot open php://stderr for logging.');
-        }
-        // @codeCoverageIgnoreEnd
-
-        return $stream;
     }
 }
