@@ -14,13 +14,24 @@ use App\Http\Problem\HttpProblem;
  *  - `QUERY_STRING`, parsed strictly by {@see QueryString} (an invalid one is a 400);
  *  - headers: `HTTP_*` variables (lower-cased, "_" becomes "-") plus `CONTENT_TYPE` and `CONTENT_LENGTH`
  *    when not empty. String values only. `HTTP_PROXY` is dropped (httpoxy). Everything else, such as
- *    `REMOTE_ADDR` or environment variables, is ignored. Headers whose names differ only in "-" versus "_"
- *    cannot be told apart in `$_SERVER`; the front proxy is expected to drop underscore headers.
+ *    `REMOTE_ADDR` or environment variables, is ignored;
+ *  - the content headers come ONLY from `CONTENT_TYPE` / `CONTENT_LENGTH`: `HTTP_CONTENT_TYPE` and
+ *    `HTTP_CONTENT_LENGTH` (a client-sent "Content-Type" header cannot reach them in CGI, but an underscore
+ *    spelling could) are ignored;
+ *  - only the canonical spelling is a header: `HTTP_` followed by upper-case letters, digits and "_" (what nginx
+ *    and Bref produce). Any other spelling (`HTTP_x_a`, `HTTP_X-A`) is ignored, so two variables can never
+ *    map to the same header name and the result does not depend on their order in `$_SERVER`;
+ *  - headers whose names differ only in "-" versus "_" (`X-Foo`, `X_Foo`) are the same variable and cannot be told
+ *    apart here. On AWS, underscore headers do not get through because CloudFront only forwards the allow-listed
+ *    headers of the origin request policy, and the origin check rejects anything not coming from CloudFront;
+ *    locally nginx ignores them by default (`underscores_in_headers off`).
  */
 final class RequestFactory
 {
     private const HEADER_PREFIX = 'HTTP_';
     private const CONTENT_HEADERS = ['CONTENT_TYPE', 'CONTENT_LENGTH'];
+    private const CANONICAL_HTTP_VARIABLE = '/^HTTP_[A-Z0-9_]+$/';
+    private const HTTP_CONTENT_VARIABLES = ['HTTP_CONTENT_TYPE', 'HTTP_CONTENT_LENGTH'];
     private const DROPPED_HEADERS = ['proxy'];
 
     /**
@@ -42,7 +53,7 @@ final class RequestFactory
     /**
      * @param array<array-key, mixed> $server
      *
-     * @return array<string, string>
+     * @return array<array-key, string>
      */
     private static function headers(array $server): array
     {
@@ -66,7 +77,10 @@ final class RequestFactory
         if (in_array($variable, self::CONTENT_HEADERS, true)) {
             return self::normalise($variable);
         }
-        if (str_starts_with($variable, self::HEADER_PREFIX) && strlen($variable) > strlen(self::HEADER_PREFIX)) {
+        if (
+            preg_match(self::CANONICAL_HTTP_VARIABLE, $variable) === 1
+            && !in_array($variable, self::HTTP_CONTENT_VARIABLES, true)
+        ) {
             return self::normalise(substr($variable, strlen(self::HEADER_PREFIX)));
         }
 

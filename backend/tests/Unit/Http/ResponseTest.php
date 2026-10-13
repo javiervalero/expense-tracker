@@ -142,4 +142,89 @@ final class ResponseTest extends TestCase
 
         new Response(200, ['X-A' => ["a\r\nb"]], '');
     }
+
+    public function testConstructorRejectsHeaderNamesThatDifferOnlyInCase(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new Response(200, ['Content-Type' => ['a'], 'content-type' => ['b']], '');
+    }
+
+    public function testJsonReplacesACallerContentTypeInsteadOfDuplicatingIt(): void
+    {
+        $response = Response::json(200, [], ['content-type' => ['text/plain'], 'X-A' => ['1']]);
+
+        self::assertSame(['application/json'], $response->headerValues('Content-Type'));
+        self::assertSame(['Content-Type' => ['application/json'], 'X-A' => ['1']], $response->headers);
+    }
+
+    public function testProblemReplacesACallerContentTypeInsteadOfDuplicatingIt(): void
+    {
+        $response = Response::problem(ProblemDetails::forStatus(404), ['CONTENT-TYPE' => ['text/plain']]);
+
+        self::assertSame(['application/problem+json'], $response->headerValues('content-type'));
+        self::assertCount(1, $response->headers);
+    }
+
+    #[DataProvider('controlCharacterValues')]
+    public function testHeaderValuesWithControlCharactersAreRejected(string $value): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        Response::empty(200)->withHeader('X-A', $value);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function controlCharacterValues(): iterable
+    {
+        yield 'backspace' => ["a\x08b"];
+        yield 'vertical tab' => ["a\x0Bb"];
+        yield 'form feed' => ["a\x0Cb"];
+        yield 'escape' => ["a\x1Bb"];
+        yield 'unit separator' => ["a\x1Fb"];
+        yield 'delete' => ["a\x7Fb"];
+        yield 'start of heading' => ["\x01"];
+    }
+
+    public function testHeaderValuesMayContainTabsSpacesAndUtf8(): void
+    {
+        $response = Response::empty(200)->withHeader('X-A', "a\tb c \u{e9}");
+
+        self::assertSame(["a\tb c \u{e9}"], $response->headerValues('X-A'));
+    }
+
+    public function testProblemSubstitutesInvalidUtf8InsteadOfFailing(): void
+    {
+        $response = Response::problem(new ProblemDetails(500, 'Error', detail: "bad \xff byte"));
+
+        self::assertSame(500, $response->status);
+        $decoded = json_decode($response->body, true, flags: JSON_THROW_ON_ERROR);
+        self::assertIsArray($decoded);
+        self::assertSame("bad \u{fffd} byte", $decoded['detail']);
+    }
+
+    public function testProblemStillThrowsWhenTheBodyCannotBeEncodedAtAll(): void
+    {
+        $this->expectException(\JsonException::class);
+
+        Response::problem(new ProblemDetails(500, 'Error', extensions: ['n' => NAN]));
+    }
+
+    public function testHeaderValueListsAreReindexed(): void
+    {
+        $response = new Response(200, ['X-A' => [3 => 'a', 7 => 'b']], '');
+
+        self::assertSame(['a', 'b'], $response->headers['X-A']);
+    }
+
+    public function testNumericHeaderNamesDoNotRaiseTypeErrors(): void
+    {
+        $response = new Response(200, ['123' => ['x']], '');
+
+        self::assertSame(['x'], $response->headerValues('123'));
+        self::assertSame(['x', 'y'], $response->withAddedHeader('123', 'y')->headerValues('123'));
+        self::assertSame(['z'], $response->withHeader('123', 'z')->headerValues('123'));
+    }
 }

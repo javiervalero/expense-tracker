@@ -181,4 +181,25 @@ final class ProblemDetailsTest extends TestCase
 
         new FieldError('amount', 'Bad.');
     }
+
+    public function testAnHttpProblemCarriesNoHeadersByDefault(): void
+    {
+        self::assertSame([], HttpProblem::of(404)->headers);
+    }
+
+    public function testAnHttpProblemExposesTheHeadersItWasGiven(): void
+    {
+        $problem = HttpProblem::of(429, null, null, ['Retry-After' => ['30']]);
+
+        self::assertSame(['Retry-After' => ['30']], $problem->headers);
+        self::assertSame(429, $problem->problem->status);
+    }
+
+    public function testAValidationProblemCanCarryHeaders(): void
+    {
+        $problem = new ValidationProblem([new FieldError('/a', 'bad')], ['X-A' => ['1']]);
+
+        self::assertSame(['X-A' => ['1']], $problem->headers);
+        self::assertSame([], (new ValidationProblem([new FieldError('/a', 'bad')]))->headers);
+    }
 }

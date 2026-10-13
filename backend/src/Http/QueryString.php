@@ -18,6 +18,13 @@ use App\Http\Problem\HttpProblem;
  *  - a name cannot be empty and cannot contain "[" or "]" (so no `a[]` or `a[x]`, raw or encoded);
  *  - a name that appears twice (after decoding) is an error: there are no multi-value parameters;
  *  - at most {@see self::MAX_PAIRS} pairs.
+ *
+ * These guarantees hold for a RAW query string, which is what PHP behind nginx receives locally. On Lambda, Bref
+ * first rebuilds the query string from the event (parse_str, then http_build_query), so what reaches this parser
+ * is already normalised: duplicates collapse (last wins), an invalid escape becomes a literal "%", an empty
+ * name disappears, repeats turn into `a[0]`, `a[1]`. `QueryStringBrefTest` pins the exact outputs. Handlers must
+ * therefore validate their own parameters (type, range, allowed values) and never rely on this parser alone.
+ * Names or values that are all digits become integer array keys (`?1=x`), hence the `array-key` return type.
  */
 final class QueryString
 {
@@ -26,7 +33,7 @@ final class QueryString
     private const INVALID_ESCAPE = '/%(?![0-9A-Fa-f]{2})/';
 
     /**
-     * @return array<string, string>
+     * @return array<array-key, string>
      *
      * @throws HttpProblem
      */

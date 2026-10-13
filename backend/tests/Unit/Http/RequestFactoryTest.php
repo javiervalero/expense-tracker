@@ -53,6 +53,61 @@ final class RequestFactoryTest extends TestCase
         self::assertSame('7', $request->header('content-length'));
     }
 
+    public function testHttpPrefixedContentVariablesAreIgnored(): void
+    {
+        $request = RequestFactory::fromGlobals([
+            'REQUEST_METHOD' => 'POST',
+            'REQUEST_URI' => '/',
+            'HTTP_CONTENT_TYPE' => 'text/plain',
+            'HTTP_CONTENT_LENGTH' => '999',
+        ], '');
+
+        self::assertSame([], $this->headersOf($request));
+    }
+
+    public function testHttpPrefixedContentVariablesNeverOverrideTheRealOnes(): void
+    {
+        $base = ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/'];
+        $real = ['CONTENT_TYPE' => 'application/json'];
+        $spoofed = ['HTTP_CONTENT_TYPE' => 'text/plain'];
+
+        foreach ([$real + $spoofed, $spoofed + $real] as $variables) {
+            $request = RequestFactory::fromGlobals($base + $variables, '');
+
+            self::assertSame('application/json', $request->header('content-type'));
+        }
+    }
+
+    public function testOnlyTheCanonicalSpellingOfAnHttpVariableIsAHeader(): void
+    {
+        $request = RequestFactory::fromGlobals([
+            'REQUEST_METHOD' => 'GET',
+            'REQUEST_URI' => '/',
+            'HTTP_x_forwarded_for' => 'lower',
+            'HTTP_X-FORWARDED-FOR' => 'dashed',
+            'HTTP_X_FORWARDED_FOR' => '10.0.0.1',
+        ], '');
+
+        self::assertSame(['x-forwarded-for' => '10.0.0.1'], $this->headersOf($request));
+    }
+
+    public function testTheResultDoesNotDependOnTheOrderOfCollidingVariables(): void
+    {
+        $base = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/'];
+        $canonicalFirst = $base + ['HTTP_X_A' => 'canonical', 'HTTP_x_a' => 'other'];
+        $canonicalLast = $base + ['HTTP_x_a' => 'other', 'HTTP_X_A' => 'canonical'];
+
+        self::assertSame(['x-a' => 'canonical'], $this->headersOf(RequestFactory::fromGlobals($canonicalFirst, '')));
+        self::assertSame(['x-a' => 'canonical'], $this->headersOf(RequestFactory::fromGlobals($canonicalLast, '')));
+    }
+
+    public function testNumericHeaderNamesAreKept(): void
+    {
+        $request = RequestFactory::fromGlobals(['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/', 'HTTP_123' => 'n'], '');
+
+        self::assertSame('n', $request->header('123'));
+    }
+
     public function testEmptyContentTypeAndLengthAreNotHeaders(): void
     {
         $request = RequestFactory::fromGlobals([
@@ -172,7 +227,7 @@ final class RequestFactoryTest extends TestCase
     }
 
     /**
-     * @return array<string, string>
+     * @return array<array-key, string>
      */
     private function headersOf(\App\Http\Request $request): array
     {

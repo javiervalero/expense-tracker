@@ -18,7 +18,9 @@ use JsonException;
  *    an object (array, scalar, null, empty body) gives 400.
  *
  * Integers beyond 64 bits are kept as strings (JSON_BIGINT_AS_STRING) so no precision is lost silently; callers
- * validate types. Duplicate keys: the last one wins. Nested empty objects and empty arrays both decode to [].
+ * validate types. Duplicate keys: the last one wins. Nested empty objects and empty arrays both decode to []. A JSON object whose keys are all
+ * sequential integers (`{"0":"a","1":"b"}`) decodes to a PHP list and is indistinguishable from an array; other digit-only keys
+ * become integer keys. Validate the shape you expect.
  * Problem details never echo the input.
  */
 final class JsonBody

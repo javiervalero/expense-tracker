@@ -124,21 +124,42 @@ final class RouterTest extends TestCase
         self::assertTrue($router->match($this->request('GET', '/api/v1/expenses/a/b'))->isNotFound());
     }
 
-    public function testAnEncodedSlashStaysInsideTheParameterAndIsDecodedAfterMatching(): void
+    #[DataProvider('unsafeParameterValues')]
+    public function testAParameterThatDecodesToAPathOrInvisibleCharacterIsNotFound(string $segment): void
     {
-        $route = $this->route('GET', '/expenses/{id}');
+        $router = $this->router($this->route('GET', '/expenses/{id}'));
 
-        $result = $this->router($route)->match($this->request('GET', '/api/v1/expenses/a%2Fb'));
-
-        self::assertSame($route, $result->route);
-        self::assertSame(['id' => 'a/b'], $result->params);
+        self::assertTrue($router->match($this->request('GET', '/api/v1/expenses/' . $segment))->isNotFound(), $segment);
+        self::assertTrue($router->match($this->request('DELETE', '/api/v1/expenses/' . $segment))->isNotFound(), $segment);
     }
 
-    public function testEncodedSlashesInLowerCaseAreHandledToo(): void
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function unsafeParameterValues(): iterable
     {
-        $result = $this->router($this->route('GET', '/expenses/{id}'))->match($this->request('GET', '/api/v1/expenses/a%2fb'));
+        yield 'encoded traversal' => ['..%2F..%2Fusers%2F42'];
+        yield 'encoded slash' => ['a%2Fb'];
+        yield 'encoded slash in lower case' => ['a%2fb'];
+        yield 'dot dot' => ['..'];
+        yield 'encoded dot dot' => ['%2e%2e'];
+        yield 'dot' => ['.'];
+        yield 'encoded backslash' => ['a%5Cb'];
+        yield 'bidi override' => ['%E2%80%AE'];
+        yield 'next line control' => ['%C2%85'];
+        yield 'zero width joiner (format)' => ['a%E2%80%8Db'];
+        yield 'private use' => ['a%EE%80%80b'];
+        yield 'unassigned' => ['a%EF%BF%BEb'];
+        yield 'surrogate (invalid utf-8)' => ['a%ED%A0%80b'];
+    }
 
-        self::assertSame(['id' => 'a/b'], $result->params);
+    public function testHarmlessParameterValuesWithDotsAndHashesStillMatch(): void
+    {
+        $router = $this->router($this->route('GET', '/expenses/{id}'));
+
+        self::assertSame(['id' => '...'], $router->match($this->request('GET', '/api/v1/expenses/...'))->params);
+        self::assertSame(['id' => 'a.b'], $router->match($this->request('GET', '/api/v1/expenses/a.b'))->params);
+        self::assertSame(['id' => 'a#b'], $router->match($this->request('GET', '/api/v1/expenses/a%23b'))->params);
     }
 
     public function testAnEncodedSlashIsNeverASeparatorBetweenTemplateSegments(): void
@@ -156,7 +177,6 @@ final class RouterTest extends TestCase
         self::assertSame(['id' => 'a b+c'], $router->match($this->request('GET', '/api/v1/expenses/a%20b+c'))->params);
         self::assertSame(['id' => "caf\u{e9}"], $router->match($this->request('GET', '/api/v1/expenses/caf%C3%A9'))->params);
         self::assertSame(['id' => '%41'], $router->match($this->request('GET', '/api/v1/expenses/%2541'))->params);
-        self::assertSame(['id' => '..'], $router->match($this->request('GET', '/api/v1/expenses/%2e%2e'))->params);
     }
 
     #[DataProvider('undecodablePaths')]
@@ -346,6 +366,34 @@ final class RouterTest extends TestCase
         yield 'duplicate parameter name' => ['GET', '/a/{id}/b/{id}'];
         yield 'the prefix is added by the router' => ['GET', '/api/v1/a'];
         yield 'encoded character in the template' => ['GET', '/a%2Fb'];
+    }
+
+    public function testAParameterRouteShadowingALaterRouteOfTheSameMethodIsRejected(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->router($this->route('GET', '/expenses/{id}'), $this->route('GET', '/expenses/export'));
+    }
+
+    public function testAShadowingParameterRouteIsRejectedEvenWhenTheLaterRouteHasParametersToo(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        $this->router($this->route('GET', '/a/{x}/{y}'), $this->route('GET', '/a/b/{z}'));
+    }
+
+    public function testRoutesThatOnlyPartlyOverlapOrUseAnotherMethodAreAccepted(): void
+    {
+        $router = $this->router(
+            $this->route('GET', '/expenses/export'),
+            $this->route('GET', '/expenses/{id}'),
+            $this->route('DELETE', '/expenses/{id}'),
+            $this->route('GET', '/{kind}/b'),
+            $this->route('GET', '/a/{y}'),
+            $this->route('GET', '/expenses/{id}/lines'),
+        );
+
+        self::assertCount(6, $router->routes());
     }
 
     public function testDuplicateRoutesAreRejected(): void

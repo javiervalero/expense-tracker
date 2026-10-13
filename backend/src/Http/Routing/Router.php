@@ -18,6 +18,11 @@ use InvalidArgumentException;
  *  - `%2F` is never a separator: segments are split on the raw "/" only, so an encoded slash stays inside its
  *    segment. A `{name}` parameter matches any one non-empty segment;
  *  - parameter values are percent-decoded once, after matching ("+" stays "+");
+ *  - a segment whose decoded text contains "/" or "\", is "." or "..", or contains a Unicode "Other" character
+ *    (category C: controls such as NEL, format characters such as the U+202E bidi override, unassigned, private
+ *    use) is 404 like the other unroutable paths, so a parameter can never smuggle a path or an invisible
+ *    character into a storage key. Anything else is allowed, including "#" (`a%23b`): handlers MUST validate
+ *    ids (e.g. as a UUID) before building storage keys from them;
  *  - a path that is longer than {@see self::MAX_PATH_LENGTH}, holds a control character (including NUL and DEL),
  *    has an invalid percent escape, or has any segment that does not decode to valid UTF-8 without control
  *    characters (`%00`, `%0A`, `%FF`) is 404 (not 400) before any matching, for every method: such a path
@@ -34,6 +39,8 @@ final readonly class Router
     public const MAX_PATH_LENGTH = 2048;
 
     private const CONTROL_CHARACTERS = '/[\x00-\x1F\x7F]/';
+    private const UNSAFE_CHARACTER = '/[\/\\\\]|\p{C}/u';
+    private const DOT_SEGMENTS = ['.', '..'];
     private const INVALID_ESCAPE = '/%(?![0-9A-Fa-f]{2})/';
 
     /**
@@ -48,6 +55,7 @@ final readonly class Router
             }
             $shapes[$route->shape()] = true;
         }
+        self::assertNoShadowing($routes);
     }
 
     /**
@@ -150,6 +158,49 @@ final readonly class Router
     {
         $value = rawurldecode($segment);
 
-        return preg_match('//u', $value) === 1 && preg_match(self::CONTROL_CHARACTERS, $value) !== 1 ? $value : null;
+        if (
+            preg_match('//u', $value) !== 1
+            || in_array($value, self::DOT_SEGMENTS, true)
+            || preg_match(self::UNSAFE_CHARACTER, $value) === 1
+        ) {
+            return null;
+        }
+
+        return $value;
+    }
+
+    /**
+     * A route with a parameter that covers every path of a LATER route with the same method would make that route
+     * unreachable (first registered wins), which is a registration mistake: register the literal one first.
+     *
+     * @param list<Route> $routes
+     */
+    private static function assertNoShadowing(array $routes): void
+    {
+        foreach ($routes as $index => $earlier) {
+            foreach (array_slice($routes, $index + 1) as $later) {
+                if ($earlier->method === $later->method && self::covers($earlier, $later)) {
+                    throw new InvalidArgumentException(
+                        'Route ' . $earlier->template . ' shadows ' . $later->template . '; register it after.',
+                    );
+                }
+            }
+        }
+    }
+
+    private static function covers(Route $earlier, Route $later): bool
+    {
+        $laterSegments = $later->segments();
+        $earlierSegments = $earlier->segments();
+        if (count($earlierSegments) !== count($laterSegments)) {
+            return false;
+        }
+        foreach ($earlierSegments as $position => $segment) {
+            if (Route::parameterOf($segment) === null && $segment !== $laterSegments[$position]) {
+                return false;
+            }
+        }
+
+        return true;
     }
 }

@@ -16,8 +16,9 @@ final class ValidationProblem extends HttpProblem
 
     /**
      * @param list<FieldError> $errors
+     * @param array<string, list<string>> $headers
      */
-    public function __construct(array $errors)
+    public function __construct(array $errors, array $headers = [])
     {
         if ($errors === []) {
             throw new InvalidArgumentException('A validation problem lists at least one field error.');
@@ -28,6 +29,6 @@ final class ValidationProblem extends HttpProblem
             title: ProblemDetails::forStatus(self::STATUS)->title,
             detail: self::DETAIL,
             extensions: ['errors' => array_map(static fn(FieldError $error): array => $error->toArray(), $errors)],
-        ));
+        ), headers: $headers);
     }
 }

@@ -14,16 +14,12 @@ use LogicException;
  */
 final readonly class RouteResult
 {
-    private const MATCHED = 'matched';
-    private const NOT_FOUND = 'not-found';
-    private const METHOD_NOT_ALLOWED = 'method-not-allowed';
-
     /**
      * @param array<string, string> $params
      * @param list<string> $allow
      */
     private function __construct(
-        private string $outcome,
+        private RouteOutcome $outcome,
         public ?Route $route,
         public array $params,
         public array $allow,
@@ -34,12 +30,12 @@ final readonly class RouteResult
      */
     public static function matched(Route $route, array $params): self
     {
-        return new self(self::MATCHED, $route, $params, []);
+        return new self(RouteOutcome::Matched, $route, $params, []);
     }
 
     public static function notFound(): self
     {
-        return new self(self::NOT_FOUND, null, [], []);
+        return new self(RouteOutcome::NotFound, null, [], []);
     }
 
     /**
@@ -47,30 +43,31 @@ final readonly class RouteResult
      */
     public static function methodNotAllowed(array $allow): self
     {
-        return new self(self::METHOD_NOT_ALLOWED, null, [], $allow);
+        return new self(RouteOutcome::MethodNotAllowed, null, [], $allow);
     }
 
+    /** @phpstan-assert-if-true !null $this->route */
     public function isMatch(): bool
     {
-        return $this->outcome === self::MATCHED;
+        return $this->outcome === RouteOutcome::Matched;
     }
 
     public function isNotFound(): bool
     {
-        return $this->outcome === self::NOT_FOUND;
+        return $this->outcome === RouteOutcome::NotFound;
     }
 
     public function isMethodNotAllowed(): bool
     {
-        return $this->outcome === self::METHOD_NOT_ALLOWED;
+        return $this->outcome === RouteOutcome::MethodNotAllowed;
     }
 
     /** The 404 or 405 problem-details response (405 carries `Allow`). */
     public function problemResponse(): Response
     {
         return match ($this->outcome) {
-            self::NOT_FOUND => Response::problem(ProblemDetails::forStatus(404)),
-            self::METHOD_NOT_ALLOWED => Response::problem(
+            RouteOutcome::NotFound => Response::problem(ProblemDetails::forStatus(404)),
+            RouteOutcome::MethodNotAllowed => Response::problem(
                 ProblemDetails::forStatus(405),
                 ['Allow' => [implode(', ', $this->allow)]],
             ),
