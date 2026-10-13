@@ -421,6 +421,32 @@ WP1 ─► WP2 ─► WP3 ─► WP4 ─► WP5 ─► WP6 ─► WP7 ─┐
   - API Gateway v2 joining duplicate headers (R3);
   - Bref FPM does not split long JSON log lines.
 
+### Security notes from the WP3 review (2026-10-13)
+
+From the security review of the WP3 HTTP primitives (opus/high).
+
+- **The query string on Lambda is normalised by Bref** (S-M1).
+  - Bref rebuilds `QUERY_STRING` from API Gateway's `rawQueryString`, so on AWS:
+    - a repeated name is merged, and the last value wins;
+    - an invalid `%` escape is accepted as text;
+    - an empty name is dropped.
+  - `QueryString`'s strict rules hold only for raw queries, i.e. locally behind nginx. `QueryStringBrefTest` pins the production behaviour.
+  - Decision (main session): accept this and document it. Handlers validate their own parameters. Switching to `BREF_RUNTIME=function` would be an ADR 0012 change and is not planned. A note goes in ADR 0012 in WP10.
+- **Route ids** (S-M2). The router returns 404 when a decoded parameter contains `/`, `\`, a Unicode C-category character, or is exactly `.` or `..`. **Every handler must still validate ids as UUIDs before building DynamoDB or S3 keys** (`EXP#<id>`, `receipts/<user>/<id>/…`).
+- **WP4:**
+  - The error middleware never renders `getPrevious()`, a non-HttpProblem message or a trace.
+  - Lower nginx `client_max_body_size` toward 64k.
+  - `nosniff` and `no-store` go on every PHP response, as planned.
+  - Never read `HTTP_PROXY` (httpoxy) or `getenv('HTTP_PROXY')`.
+- **WP6, origin check:** `hash_equals` runs on the **whole** header value. Never split on commas, because API Gateway joins repeated headers.
+- **WP7, client IP:**
+  - Read only `cloudfront-viewer-address`.
+  - On AWS this is safe only while the CloudFront origin request policy is an **allow-list** (never "all viewer headers") and the origin check runs first. Underscore variants such as `X_Origin_Verify` reach FPM there.
+- **Phase 7/8 smoke test, through CloudFront and API Gateway:** send `%2F`, `%23`, `..`, an underscore header and a duplicate query name. Assert what PHP receives, including whether `rawPath` keeps the encoding.
+- **Phase 3, money:** amounts must be integer cents or a decimal string in the schema, never JSON floats, which lose precision silently.
+- **Phase 2, sessions:** Bref rebuilds `Cookie` from v2 `cookies[]`, so duplicate cookie names are possible (cookie tossing). Define which session cookie wins, or reject duplicates.
+- **Validators:** JSON objects with numeric keys decode to PHP lists. Never use `array_is_list` to tell objects from arrays. Reject control characters in string fields.
+
 ## 7. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
