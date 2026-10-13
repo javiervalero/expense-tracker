@@ -22,7 +22,7 @@ final readonly class Response
     private const MAX_STATUS = 599;
     private const UNSAFE_VALUE = '/[\x00-\x08\x0A-\x1F\x7F]/';
     private const CONTENT_TYPE = 'Content-Type';
-    private const TOKEN = "/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/";
+    private const TOKEN = "/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/D";
 
     /** @var array<array-key, list<string>> */
     public array $headers;
@@ -172,7 +172,7 @@ final readonly class Response
 
     private static function assertSafe(string $name, string $value): void
     {
-        if (preg_match(self::TOKEN, $name) !== 1 || preg_match(self::UNSAFE_VALUE, $value) === 1) {
+        if (preg_match(self::TOKEN, $name) !== 1 || preg_match(self::UNSAFE_VALUE, $value) !== 0) {
             throw new InvalidArgumentException('Invalid header name or value.');
         }
     }

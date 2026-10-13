@@ -138,6 +138,20 @@ final class RequestFactoryTest extends TestCase
         self::assertSame(['x-ok' => 'yes'], $this->headersOf($request));
     }
 
+    public function testNonCanonicalHttpVariablesAreIgnored(): void
+    {
+        $request = RequestFactory::fromGlobals([
+            'REQUEST_METHOD' => 'GET',
+            'REQUEST_URI' => '/',
+            "HTTP_CONTENT_TYPE\n" => 'text/plain',
+            "HTTP_X_A\n" => 'newline',
+            'HTTP__' => 'underscores',
+            'HTTP_X_OK' => 'yes',
+        ], '');
+
+        self::assertSame(['x-ok' => 'yes'], $this->headersOf($request));
+    }
+
     public function testTheProxyHeaderIsDropped(): void
     {
         $request = RequestFactory::fromGlobals([

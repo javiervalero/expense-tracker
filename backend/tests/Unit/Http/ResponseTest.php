@@ -129,6 +129,13 @@ final class ResponseTest extends TestCase
         yield 'newline in name' => ["X-A\r\nX-B", 'a'];
     }
 
+    public function testAHeaderNameWithATrailingNewlineIsRejected(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new Response(200, ["X-A\n" => ['v']], '');
+    }
+
     public function testConstructorRejectsInvalidStatuses(): void
     {
         $this->expectException(InvalidArgumentException::class);

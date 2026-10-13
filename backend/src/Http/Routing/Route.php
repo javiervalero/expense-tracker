@@ -14,8 +14,9 @@ use InvalidArgumentException;
  */
 final readonly class Route
 {
-    private const METHOD = '/^[A-Z]+$/';
-    private const TEMPLATE = '#^(?:/(?:[A-Za-z0-9._~-]+|\{[A-Za-z][A-Za-z0-9_]*\}))+$#';
+    private const DOT_SEGMENTS = ['.', '..'];
+    private const METHOD = '/^[A-Z]+$/D';
+    private const TEMPLATE = '#^(?:/(?:[A-Za-z0-9._~-]+|\{[A-Za-z][A-Za-z0-9_]*\}))+$#D';
 
     public function __construct(
         public string $method,
@@ -27,6 +28,9 @@ final readonly class Route
         }
         if (preg_match(self::TEMPLATE, $template) !== 1 || str_starts_with($template, Router::PREFIX . '/')) {
             throw new InvalidArgumentException('Invalid route template "' . $template . '".');
+        }
+        if (array_intersect($this->segments(), self::DOT_SEGMENTS) !== []) {
+            throw new InvalidArgumentException('A route template has a dot segment, which can never match: "' . $template . '".');
         }
         $names = $this->parameterNames();
         if (count($names) !== count(array_unique($names))) {

@@ -18,10 +18,11 @@ use InvalidArgumentException;
  *  - `%2F` is never a separator: segments are split on the raw "/" only, so an encoded slash stays inside its
  *    segment. A `{name}` parameter matches any one non-empty segment;
  *  - parameter values are percent-decoded once, after matching ("+" stays "+");
- *  - a segment whose decoded text contains "/" or "\", is "." or "..", or contains a Unicode "Other" character
- *    (category C: controls such as NEL, format characters such as the U+202E bidi override, unassigned, private
- *    use) is 404 like the other unroutable paths, so a parameter can never smuggle a path or an invisible
- *    character into a storage key. Anything else is allowed, including "#" (`a%23b`): handlers MUST validate
+ *  - a segment whose decoded text contains "/" or "\", is "." or "..", or contains a control/format
+ *    (Unicode C category) character, or a line/paragraph separator (U+2028, U+2029) is 404 like the other
+ *    unroutable paths. The C category covers controls such as NEL, format characters such as the U+202E bidi
+ *    override, unassigned and private use code points, so a parameter can never smuggle a path or an
+ *    unprintable character into a storage key. Anything else is allowed, including "#" (`a%23b`): handlers MUST validate
  *    ids (e.g. as a UUID) before building storage keys from them;
  *  - a path that is longer than {@see self::MAX_PATH_LENGTH}, holds a control character (including NUL and DEL),
  *    has an invalid percent escape, or has any segment that does not decode to valid UTF-8 without control
@@ -39,7 +40,7 @@ final readonly class Router
     public const MAX_PATH_LENGTH = 2048;
 
     private const CONTROL_CHARACTERS = '/[\x00-\x1F\x7F]/';
-    private const UNSAFE_CHARACTER = '/[\/\\\\]|\p{C}/u';
+    private const UNSAFE_CHARACTER = '/[\/\\\\]|[\p{C}\p{Zl}\p{Zp}]/u';
     private const DOT_SEGMENTS = ['.', '..'];
     private const INVALID_ESCAPE = '/%(?![0-9A-Fa-f]{2})/';
 
@@ -102,8 +103,8 @@ final readonly class Router
         if (
             strlen($path) > self::MAX_PATH_LENGTH
             || !str_starts_with($path, $prefix)
-            || preg_match(self::CONTROL_CHARACTERS, $path) === 1
-            || preg_match(self::INVALID_ESCAPE, $path) === 1
+            || preg_match(self::CONTROL_CHARACTERS, $path) !== 0
+            || preg_match(self::INVALID_ESCAPE, $path) !== 0
         ) {
             return null;
         }
@@ -161,7 +162,7 @@ final readonly class Router
         if (
             preg_match('//u', $value) !== 1
             || in_array($value, self::DOT_SEGMENTS, true)
-            || preg_match(self::UNSAFE_CHARACTER, $value) === 1
+            || preg_match(self::UNSAFE_CHARACTER, $value) !== 0
         ) {
             return null;
         }

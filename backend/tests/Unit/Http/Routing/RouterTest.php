@@ -150,7 +150,12 @@ final class RouterTest extends TestCase
         yield 'zero width joiner (format)' => ['a%E2%80%8Db'];
         yield 'private use' => ['a%EE%80%80b'];
         yield 'unassigned' => ['a%EF%BF%BEb'];
-        yield 'surrogate (invalid utf-8)' => ['a%ED%A0%80b'];
+        yield 'encoded utf-16 surrogate code point (invalid utf-8)' => ['a%ED%A0%80b'];
+        yield 'mixed-case encoded dot dot' => ['%2E%2e'];
+        yield 'literal dot then encoded dot' => ['.%2e'];
+        yield 'overlong encoded dot (invalid utf-8)' => ['%C0%AE'];
+        yield 'line separator U+2028' => ['a%E2%80%A8b'];
+        yield 'paragraph separator U+2029' => ['a%E2%80%A9b'];
     }
 
     public function testHarmlessParameterValuesWithDotsAndHashesStillMatch(): void
@@ -177,6 +182,13 @@ final class RouterTest extends TestCase
         self::assertSame(['id' => 'a b+c'], $router->match($this->request('GET', '/api/v1/expenses/a%20b+c'))->params);
         self::assertSame(['id' => "caf\u{e9}"], $router->match($this->request('GET', '/api/v1/expenses/caf%C3%A9'))->params);
         self::assertSame(['id' => '%41'], $router->match($this->request('GET', '/api/v1/expenses/%2541'))->params);
+    }
+
+    public function testADoubleEncodedDotDotIsDecodedOnlyOnce(): void
+    {
+        $router = $this->router($this->route('GET', '/expenses/{id}'));
+
+        self::assertSame(['id' => '%2e%2e'], $router->match($this->request('GET', '/api/v1/expenses/%252e%252e'))->params);
     }
 
     #[DataProvider('undecodablePaths')]
@@ -366,6 +378,11 @@ final class RouterTest extends TestCase
         yield 'duplicate parameter name' => ['GET', '/a/{id}/b/{id}'];
         yield 'the prefix is added by the router' => ['GET', '/api/v1/a'];
         yield 'encoded character in the template' => ['GET', '/a%2Fb'];
+        yield 'dot segment in the template' => ['GET', '/a/./b'];
+        yield 'dot dot segment in the template' => ['GET', '/a/..'];
+        yield 'lone dot template' => ['GET', '/.'];
+        yield 'trailing newline in the template' => ['GET', "/a\n"];
+        yield 'trailing newline in the method' => ["GET\n", '/a'];
     }
 
     public function testAParameterRouteShadowingALaterRouteOfTheSameMethodIsRejected(): void

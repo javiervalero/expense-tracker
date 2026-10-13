@@ -30,7 +30,7 @@ final class RequestFactory
 {
     private const HEADER_PREFIX = 'HTTP_';
     private const CONTENT_HEADERS = ['CONTENT_TYPE', 'CONTENT_LENGTH'];
-    private const CANONICAL_HTTP_VARIABLE = '/^HTTP_[A-Z0-9_]+$/';
+    private const CANONICAL_HTTP_VARIABLE = '/^HTTP_[A-Z0-9][A-Z0-9_]*$/D';
     private const HTTP_CONTENT_VARIABLES = ['HTTP_CONTENT_TYPE', 'HTTP_CONTENT_LENGTH'];
     private const DROPPED_HEADERS = ['proxy'];
 
