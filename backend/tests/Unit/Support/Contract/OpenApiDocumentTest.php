@@ -46,7 +46,7 @@ final class OpenApiDocumentTest extends TestCase
         $response = self::fixture()->response('GET', '/expenses/{id}', 200);
 
         self::assertNotNull($response);
-        self::assertSame('One expense.', $response->description());
+        self::assertSame(['application/json'], $response->mediaTypes());
     }
 
     public function testFollowsAResponseRefIntoComponents(): void
@@ -54,7 +54,7 @@ final class OpenApiDocumentTest extends TestCase
         $response = self::fixture()->response('GET', '/expenses/{id}', 404);
 
         self::assertNotNull($response);
-        self::assertSame('Not found.', $response->description());
+        self::assertSame(['Cache-Control'], $response->requiredHeaders());
         self::assertSame(['application/problem+json'], $response->mediaTypes());
     }
 
@@ -91,5 +91,28 @@ final class OpenApiDocumentTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         OpenApiDocument::fromFile('/nonexistent/openapi.json');
+    }
+
+    public function testIgnoresTheQueryStringAndFragmentWhenMatchingAPath(): void
+    {
+        self::assertSame('/expenses/{id}', self::fixture()->pathTemplate('GET', '/expenses/42?include=tags&x=1'));
+        self::assertSame('/expenses/{id}', self::fixture()->pathTemplate('GET', '/expenses/42#top'));
+        self::assertSame('/expenses/summary', self::fixture()->pathTemplate('GET', '/expenses/summary?from=2026-01-01'));
+    }
+
+    public function testAnUnparsableDocumentReportsTheParseError(): void
+    {
+        $file = tempnam(sys_get_temp_dir(), 'oas');
+        self::assertIsString($file);
+        file_put_contents($file, '{"openapi": ');
+
+        try {
+            OpenApiDocument::fromFile($file);
+            self::fail('expected InvalidArgumentException');
+        } catch (InvalidArgumentException $e) {
+            self::assertStringContainsString('Syntax error', $e->getMessage());
+        } finally {
+            unlink($file);
+        }
     }
 }

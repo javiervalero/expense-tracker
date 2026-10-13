@@ -8,22 +8,14 @@ namespace App\Tests\Support\Contract;
 final readonly class OpenApiResponse
 {
     /**
-     * @param string                          $pointer       JSON pointer of the response object inside the document
-     * @param string                          $description
-     * @param list<string>                    $requiredHeaders
-     * @param array<string, string>           $schemaPointers media type (lower case) => pointer of its schema
+     * @param list<string>           $requiredHeaders
+     * @param array<string, ?string> $schemaPointers media type (lower case) => pointer of its schema, null when the
+     *                                               media type documents no schema (any body is accepted)
      */
     public function __construct(
-        public string $pointer,
-        private string $description,
         private array $requiredHeaders,
         private array $schemaPointers,
     ) {}
-
-    public function description(): string
-    {
-        return $this->description;
-    }
 
     /** @return list<string> */
     public function requiredHeaders(): array
@@ -37,6 +29,12 @@ final readonly class OpenApiResponse
         return array_keys($this->schemaPointers);
     }
 
+    public function documents(string $mediaType): bool
+    {
+        return array_key_exists($mediaType, $this->schemaPointers);
+    }
+
+    /** Null when the media type is undocumented or documents no schema. */
     public function schemaPointer(string $mediaType): ?string
     {
         return $this->schemaPointers[$mediaType] ?? null;

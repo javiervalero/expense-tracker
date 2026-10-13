@@ -176,17 +176,45 @@ final class ContractValidatorTest extends TestCase
         self::assertSame([], self::check('GET', '/expenses/e1', 200, self::JSON, $body));
     }
 
-    public function testLoadsTheRealBundledSpec(): void
+    /** @return list<string> */
+    private static function checkEdge(string $path, string $contentType, string $body): array
     {
-        $file = __DIR__ . '/../../../../../contract/dist/openapi.json';
-        if (!is_file($file)) {
-            self::markTestSkipped('contract/dist/openapi.json is missing; run `make contract-bundle`.');
-        }
-        $validator = new ContractValidator(OpenApiDocument::fromFile($file));
-        $headers = ['Content-Type' => 'application/json', 'Cache-Control' => 'no-store', 'X-Content-Type-Options' => 'nosniff'];
+        $validator = new ContractValidator(OpenApiDocument::fromFile(__DIR__ . '/../../../Fixtures/contract/openapi.edge.json'));
 
-        self::assertSame([], $validator->validate('GET', '/health', 200, $headers, '{"status":"ok"}'));
-        self::assertNotSame([], $validator->validate('GET', '/health', 200, $headers, '{"status":"down"}'));
-        self::assertNotSame([], $validator->validate('GET', '/health', 200, $headers, '{"status":"ok","x":1}'));
+        return array_map(
+            static fn(ContractViolation $v): string => $v->location . ': ' . $v->message,
+            $validator->validate('GET', $path, 200, ['Content-Type' => $contentType], $body),
+        );
+    }
+
+    public function testAnEmptySchemaAcceptsAnyJsonBody(): void
+    {
+        self::assertSame([], self::checkEdge('/any', 'application/json', '{"a":[1,2]}'));
+        self::assertSame([], self::checkEdge('/any', 'application/json', '"text"'));
+    }
+
+    public function testEmptyPropertiesObjectsSurviveTheRoundTrip(): void
+    {
+        self::assertSame([], self::checkEdge('/strict', 'application/json', '{}'));
+        self::assertCount(1, self::checkEdge('/strict', 'application/json', '{"a":1}'));
+    }
+
+    public function testAMediaTypeWithoutASchemaAcceptsAnyBody(): void
+    {
+        self::assertSame([], self::checkEdge('/noschema', 'application/json', '{"a":1}'));
+        self::assertSame([], self::checkEdge('/noschema', 'application/json', 'not json at all'));
+    }
+
+    public function testNonJsonMediaTypesSkipBodyValidation(): void
+    {
+        self::assertSame([], self::checkEdge('/text', 'text/plain; charset=utf-8', 'hello'));
+        self::assertCount(1, self::checkEdge('/text', 'text/html', 'hello'));
+    }
+
+    public function testPlusJsonMediaTypesAreValidatedAsJson(): void
+    {
+        self::assertSame([], self::checkEdge('/vnd', 'application/vnd.api+json', '{"data":1}'));
+        self::assertCount(1, self::checkEdge('/vnd', 'application/vnd.api+json', '{}'));
+        self::assertCount(1, self::checkEdge('/vnd', 'application/vnd.api+json', '{nope'));
     }
 }

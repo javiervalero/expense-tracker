@@ -14,6 +14,10 @@ use Opis\JsonSchema\Validator;
  * The whole document is registered under a fixed `$id`, so a schema is addressed as `$id#/json/pointer` and the
  * `#/components/...` refs inside it resolve against the same document.
  *
+ * Limits: required headers are checked for presence only (not their schema or value); only the first body error is
+ * reported (Opis is told to stop there); only exact status codes are supported (no `2XX`, no `default`); bodies are
+ * schema-checked only for `application/json` and `*+json` media types.
+ *
  * Opis stops at the first error on purpose: with several errors enabled its additionalProperties message also lists
  * properties that are valid, which misleads.
  */
@@ -66,12 +70,16 @@ final readonly class ContractValidator
         }
 
         $mediaType = strtolower(trim(explode(';', (string) $contentType)[0]));
-        $schemaPointer = $response->schemaPointer($mediaType);
-        if ($schemaPointer === null) {
+        if (!$response->documents($mediaType)) {
             $documented = implode(', ', $response->mediaTypes());
             $shown = $mediaType === '' ? 'no content type' : $mediaType;
 
             return [new ContractViolation(ContractViolation::CONTENT_TYPE, "$shown is not documented for $operation (documented: $documented)")];
+        }
+
+        $schemaPointer = $response->schemaPointer($mediaType);
+        if ($schemaPointer === null || !self::isJson($mediaType)) {
+            return [];
         }
 
         try {
@@ -93,6 +101,11 @@ final readonly class ContractValidator
         }
 
         return $violations;
+    }
+
+    private static function isJson(string $mediaType): bool
+    {
+        return $mediaType === 'application/json' || preg_match('#^[^/]+/[^/]+\+json$#', $mediaType) === 1;
     }
 
     /** Percent-encodes what a URI fragment cannot hold (`{`, `}`, spaces) but keeps `/` and `~`. */
