@@ -59,7 +59,8 @@ final class ApiFactory
             // a 403 included; the origin check runs before routing, so no path is exempt (unknown ones get 403, not
             // 404). A request that could not be built (oversized body, malformed query) travels as a bare request and
             // its problem is raised right after the origin check. ClientIp comes after that, so only a request that
-            // passed the origin check has its address read, and the router comes last. Any middleware that reads the query or the body must come after DeferredProblemMiddleware.
+            // passed the origin check has its address read, and the router comes last. Any middleware that reads the
+            // query or the body must come after DeferredProblemMiddleware.
             return new ApiKernel(new Pipeline(
                 [
                     new ErrorHandlingMiddleware($requestLogger),

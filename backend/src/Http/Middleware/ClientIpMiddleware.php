@@ -24,7 +24,7 @@ use App\Infrastructure\Logging\JsonLogger;
  */
 final readonly class ClientIpMiddleware implements Middleware
 {
-    public const ATTRIBUTE = 'client.address';
+    public const ATTRIBUTE = 'clientAddress';
     private const MAX_LOGGED_VALUE_BYTES = 64;
 
     public function __construct(private JsonLogger $logger, private string $headerName) {}
@@ -41,7 +41,7 @@ final readonly class ClientIpMiddleware implements Middleware
         }
         $context = $request->attribute(RequestLogContext::ATTRIBUTE);
         if ($context instanceof RequestLogContext) {
-            $context->clientIp = $address->ip;
+            $context->recordClientIp($address->ip);
         }
 
         return $next->handle($request->withAttribute(self::ATTRIBUTE, $address));

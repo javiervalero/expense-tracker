@@ -69,7 +69,7 @@ final readonly class RequestLoggingMiddleware implements Middleware
             'requestId' => $request->attribute(Request::REQUEST_ID),
             'method' => in_array($request->method, self::KNOWN_METHODS, true) ? $request->method : self::UNKNOWN_METHOD,
             'path' => mb_strcut($request->path, 0, self::MAX_PATH_LENGTH, 'UTF-8'),
-            'clientIp' => $context->clientIp ?? self::UNKNOWN_CLIENT_IP,
+            'clientIp' => $context->clientIp() ?? self::UNKNOWN_CLIENT_IP,
             'status' => $status,
             'durationMs' => round(
                 (($this->nanoseconds)() - $start) / self::NANOSECONDS_PER_MILLISECOND,

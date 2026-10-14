@@ -117,7 +117,19 @@ final class ClientIpTest extends TestCase
         self::assertSame('missing', $address->reason);
     }
 
-    public function testASixtyFourCharacterValueIsNotTooLong(): void
+    public function testTheLongestLegitimateFormOf53CharactersIsAccepted(): void
+    {
+        // Six groups, an IPv4 tail, brackets and a 5-digit port (8 full hex groups would be only 47 characters).
+        $value = '[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:65535';
+        self::assertSame(53, strlen($value));
+
+        $address = ClientIp::parse($value);
+
+        self::assertNull($address->reason);
+        self::assertSame('ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff', $address->ip);
+    }
+
+    public function testASixtyFourCharacterValueIsInvalidNotTooLong(): void
     {
         $value = str_pad('1.1.1.1:1', 64, ' ');
 

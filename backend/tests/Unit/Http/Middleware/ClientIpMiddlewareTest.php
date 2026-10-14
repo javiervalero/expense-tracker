@@ -74,7 +74,7 @@ final class ClientIpMiddlewareTest extends TestCase
     private function address(): ClientAddress
     {
         self::assertNotNull($this->seen);
-        $address = $this->seen->attribute(ClientIpMiddleware::ATTRIBUTE);
+        $address = $this->seen->attribute('clientAddress');
         self::assertInstanceOf(ClientAddress::class, $address);
 
         return $address;
@@ -165,8 +165,9 @@ final class ClientIpMiddlewareTest extends TestCase
         self::assertSame(str_repeat('a', 63), $lines[0]['value']);
     }
 
-    public function testOnlyTheConfiguredHeaderIsRead(): void
+    public function testOnlyTheConfiguredHeaderIsReadNotTheOtherForwardingHeaders(): void
     {
+        // Request carries no server parameters (REMOTE_ADDR never reaches the middleware), so only headers can be set here.
         $request = $this->request([
             'cloudfront-viewer-address' => '203.0.113.7:1',
             'x-forwarded-for' => '198.51.100.1',
@@ -199,7 +200,12 @@ final class ClientIpMiddlewareTest extends TestCase
         $context = new RequestLogContext();
         $this->process($this->request(['cloudfront-viewer-address' => '203.0.113.7:1'])->withAttribute(RequestLogContext::ATTRIBUTE, $context));
 
-        self::assertSame('203.0.113.7', $context->clientIp);
+        self::assertSame('203.0.113.7', $context->clientIp());
+    }
+
+    public function testTheRequestAttributeIsNamedClientAddress(): void
+    {
+        self::assertSame('clientAddress', ClientIpMiddleware::ATTRIBUTE);
     }
 
     public function testTheLogContextStaysEmptyWhenTheAddressIsUnknown(): void
@@ -207,6 +213,6 @@ final class ClientIpMiddlewareTest extends TestCase
         $context = new RequestLogContext();
         $this->process($this->request()->withAttribute(RequestLogContext::ATTRIBUTE, $context));
 
-        self::assertNull($context->clientIp);
+        self::assertNull($context->clientIp());
     }
 }

@@ -191,7 +191,7 @@ final class RequestLoggingMiddlewareTest extends TestCase
         $this->middleware()->process($this->request(), $this->handler(static function (Request $request): Response {
             $context = $request->attribute(RequestLogContext::ATTRIBUTE);
             self::assertInstanceOf(RequestLogContext::class, $context);
-            $context->clientIp = '203.0.113.7';
+            $context->recordClientIp('203.0.113.7');
 
             return Response::empty(204);
         }));
@@ -205,7 +205,7 @@ final class RequestLoggingMiddlewareTest extends TestCase
             $this->middleware()->process($this->request(), $this->handler(static function (Request $request): Response {
                 $context = $request->attribute(RequestLogContext::ATTRIBUTE);
                 self::assertInstanceOf(RequestLogContext::class, $context);
-                $context->clientIp = '198.51.100.4';
+                $context->recordClientIp('198.51.100.4');
 
                 throw new RuntimeException('boom');
             }));
