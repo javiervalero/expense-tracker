@@ -55,6 +55,9 @@ final class ApiConfigTest extends TestCase
         yield 'commas only, long' => [str_repeat(',', 40)];
         yield 'empty second slot' => [self::SLOT_A . ','];
         yield 'empty first slot' => [',' . self::SLOT_A];
+        yield 'a double quote' => [str_repeat('a', 31) . '"'];
+        yield 'a backslash' => [str_repeat('a', 31) . '\\'];
+        yield 'the same slot twice' => [self::SLOT_A . ',' . self::SLOT_A];
         yield 'control character' => [str_repeat('a', 31) . "\x01"];
         yield 'non-ascii' => [str_repeat('a', 31) . 'é'];
     }

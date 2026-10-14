@@ -15,8 +15,11 @@ final readonly class ApiConfig
     private const MIN_SLOT_LENGTH = 32;
     private const MAX_SLOTS = 2;
 
-    /** One slot: visible ASCII only (no space, no control character), long enough to resist guessing. */
-    private const SLOT_PATTERN = '/\A[\x21-\x7E]{' . self::MIN_SLOT_LENGTH . ',}\z/';
+    /**
+     * One slot: visible ASCII only (no space, no control character), without `"` and `\` (which JSON escapes, and
+     * would make the secret look different in an encoded log line), long enough to resist guessing.
+     */
+    private const SLOT_PATTERN = '/\A[\x21\x23-\x5B\x5D-\x7E]{' . self::MIN_SLOT_LENGTH . ',}\z/';
 
     /**
      * @param list<string> $originVerifySecrets the accepted `X-Origin-Verify` values (slot A, then B for a rotation)
@@ -43,6 +46,7 @@ final readonly class ApiConfig
     /**
      * @param array<array-key, mixed> $env
      * @param list<string> $errors
+     * @param-out list<string> $errors
      *
      * @return list<string>
      */
@@ -68,6 +72,11 @@ final readonly class ApiConfig
         $slots = explode(',', $value);
         if (count($slots) > self::MAX_SLOTS) {
             $errors[] = $name . ' has more than ' . self::MAX_SLOTS . ' slots';
+
+            return [];
+        }
+        if (count(array_unique($slots)) !== count($slots)) {
+            $errors[] = $name . ' has the same slot twice';
 
             return [];
         }
