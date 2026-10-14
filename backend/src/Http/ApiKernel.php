@@ -4,7 +4,6 @@ declare(strict_types=1);
 
 namespace App\Http;
 
-use App\Http\Middleware\RequestLoggingMiddleware;
 use App\Http\Problem\HttpProblem;
 use App\Http\Problem\ProblemDetails;
 use App\Infrastructure\Logging\JsonLogger;
@@ -27,8 +26,7 @@ final readonly class ApiKernel
 
     /**
      * @param (Closure(): string)|null $requestIds request id generator; random 16 hex characters when omitted
-     * @param JsonLogger|null $logger where the last-resort failures and the requests rejected before the pipeline
-     *                                are logged; nothing is logged when omitted
+     * @param JsonLogger|null $logger where the last-resort failures are logged; nothing is logged when omitted
      */
     public function __construct(private Handler $handler, ?Closure $requestIds = null, private ?JsonLogger $logger = null)
     {
@@ -42,8 +40,10 @@ final readonly class ApiKernel
 
     /**
      * Builds the request from PHP's `$_SERVER` and the body, then handles it. A request that cannot even be built
-     * (a body over the JSON limit, which the caller reads one byte past; a malformed query string) gets its problem
-     * here, because it never reaches the pipeline; it still gets its request line in the log.
+     * (a body over the JSON limit, which the caller reads one byte past; a malformed query string) still goes through
+     * the pipeline as a bare request (method, path, headers) carrying its problem as {@see Request::DEFERRED_PROBLEM},
+     * so the middleware (the origin check, the request line) treat it like any other and the problem is raised
+     * where the pipeline decides.
      *
      * @param array<array-key, mixed> $server
      */
@@ -56,7 +56,7 @@ final readonly class ApiKernel
             }
             $request = RequestFactory::fromGlobals($server, $body);
         } catch (HttpProblem $problem) {
-            return $this->reject(RequestFactory::bare($server), $requestId, $problem);
+            $request = RequestFactory::bare($server)->withAttribute(Request::DEFERRED_PROBLEM, $problem);
         }
 
         return $this->dispatch($request, $requestId);
@@ -84,45 +84,6 @@ final readonly class ApiKernel
         }
 
         return self::withDefaultHeaders($response);
-    }
-
-    private function reject(Request $request, string $requestId, HttpProblem $problem): Response
-    {
-        $this->logRejection($request->withAttribute(Request::REQUEST_ID, $requestId), $problem);
-
-        try {
-            $response = Response::problem($problem->problem, $problem->headers);
-            // @codeCoverageIgnoreStart
-            // The problems raised above are fixed, encodable values; this only keeps "never throws" true.
-        } catch (Throwable $error) {
-            $this->logFailure($error, $requestId);
-            $response = self::internalError();
-        }
-        // @codeCoverageIgnoreEnd
-
-        return self::withDefaultHeaders($response);
-    }
-
-    private function logRejection(Request $request, HttpProblem $problem): void
-    {
-        if ($this->logger === null) {
-            return;
-        }
-        $rejected = new class ($problem) implements Handler {
-            public function __construct(private HttpProblem $problem) {}
-
-            public function handle(Request $request): Response
-            {
-                throw $this->problem;
-            }
-        };
-        try {
-            (new RequestLoggingMiddleware($this->logger))->process($request, $rejected);
-        } catch (HttpProblem) {
-            // Expected: the logging middleware rethrows after writing the line.
-        } catch (Throwable) {
-            // A broken log must not break the answer.
-        }
     }
 
     private function logFailure(Throwable $error, string $requestId): void

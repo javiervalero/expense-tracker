@@ -247,4 +247,22 @@ final class RequestFactoryTest extends TestCase
     {
         return $request->headers;
     }
+
+    public function testABareRequestHasNoQueryOrBodyButKeepsTheHeaders(): void
+    {
+        $request = RequestFactory::bare([
+            'REQUEST_METHOD' => 'POST',
+            'REQUEST_URI' => '/api/v1/x?a[=1',
+            'QUERY_STRING' => 'a[=1',
+            'HTTP_X_ORIGIN_VERIFY' => 'secret-value',
+            'CONTENT_TYPE' => 'application/json',
+        ]);
+
+        self::assertSame('POST', $request->method);
+        self::assertSame('/api/v1/x', $request->path);
+        self::assertSame([], $request->query);
+        self::assertSame('', $request->body);
+        self::assertSame('secret-value', $request->header('x-origin-verify'));
+        self::assertSame('application/json', $request->header('content-type'));
+    }
 }

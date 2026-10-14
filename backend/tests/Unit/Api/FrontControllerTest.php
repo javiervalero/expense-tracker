@@ -141,6 +141,8 @@ final class FrontControllerTest extends TestCase
         self::assertContains('body {"status":"ok"}', $this->calls);
     }
 
+    private const VALID_HEADER = 'frontcontroller-slot-0123456789-0123456789';
+
     public function testServeAnswers403WhenTheOriginHeaderIsMissing(): void
     {
         $log = $this->memory();
@@ -154,7 +156,55 @@ final class FrontControllerTest extends TestCase
         );
 
         self::assertSame('status 403', $this->calls[0]);
-        self::assertStringNotContainsString(self::ENV['ORIGIN_VERIFY_SECRETS'], $this->logged($log));
+    }
+
+    public function testServeAnswers403AndNeverLogsTheSecretWhenTheHeaderIsWrong(): void
+    {
+        $log = $this->memory();
+
+        FrontController::serve(
+            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health', 'HTTP_X_ORIGIN_VERIFY' => substr(self::VALID_HEADER, 0, 30)],
+            self::ENV,
+            $this->emitter(),
+            'data://text/plain,',
+            $log,
+        );
+
+        self::assertSame('status 403', $this->calls[0]);
+        self::assertStringNotContainsString(self::VALID_HEADER, $this->logged($log));
+        self::assertStringNotContainsString(substr(self::VALID_HEADER, 0, 30), $this->logged($log));
+    }
+
+    public function testServeAnswers403ForAnOversizedBodyWithoutTheOriginHeader(): void
+    {
+        $log = $this->memory();
+
+        FrontController::serve(
+            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/health'],
+            self::ENV,
+            $this->emitter(),
+            'data://text/plain,' . str_repeat('a', 70000),
+            $log,
+        );
+
+        self::assertSame('status 403', $this->calls[0]);
+        $this->assertOneRequestLineAndTheOriginWarning($log, 403);
+    }
+
+    public function testServeAnswers403ForAMalformedQueryWithoutTheOriginHeader(): void
+    {
+        $log = $this->memory();
+
+        FrontController::serve(
+            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health?a[=1', 'QUERY_STRING' => 'a[=1'],
+            self::ENV,
+            $this->emitter(),
+            'data://text/plain,',
+            $log,
+        );
+
+        self::assertSame('status 403', $this->calls[0]);
+        $this->assertOneRequestLineAndTheOriginWarning($log, 403);
     }
 
     public function testServeAnswersAnOversizedBodyWith413AndLogsItOnce(): void
@@ -162,7 +212,7 @@ final class FrontControllerTest extends TestCase
         $log = $this->memory();
 
         FrontController::serve(
-            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/health'],
+            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/health', 'HTTP_X_ORIGIN_VERIFY' => self::VALID_HEADER],
             self::ENV,
             $this->emitter(),
             'data://text/plain,' . str_repeat('a', 70000),
@@ -183,7 +233,7 @@ final class FrontControllerTest extends TestCase
         $log = $this->memory();
 
         FrontController::serve(
-            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health?a[=1', 'QUERY_STRING' => 'a[=1'],
+            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health?a[=1', 'QUERY_STRING' => 'a[=1', 'HTTP_X_ORIGIN_VERIFY' => self::VALID_HEADER],
             self::ENV,
             $this->emitter(),
             'data://text/plain,',
@@ -197,6 +247,24 @@ final class FrontControllerTest extends TestCase
         self::assertIsArray($entry);
         self::assertSame('request', $entry['message']);
         self::assertSame(400, $entry['status']);
+    }
+
+    /**
+     * @param resource $log
+     */
+    private function assertOneRequestLineAndTheOriginWarning(mixed $log, int $status): void
+    {
+        $messages = array_map(static function (string $line): array {
+            $entry = json_decode($line, true);
+            self::assertIsArray($entry);
+
+            return [$entry['message'], $entry['status'] ?? null];
+        }, $this->logLines($log));
+
+        self::assertContains(['request', $status], $messages);
+        self::assertCount(1, array_filter($messages, static fn(array $m): bool => $m[0] === 'request'));
+        self::assertCount(1, array_filter($messages, static fn(array $m): bool => $m[0] === 'origin verification failed'));
+        self::assertCount(2, $messages);
     }
 
     public function testAnyThrowableFromStartupOrReadingIsAConstant500WithTheDefaultHeaders(): void

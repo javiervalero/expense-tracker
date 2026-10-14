@@ -20,6 +20,13 @@ final readonly class Request
     public const REQUEST_ID = 'request.id';
 
     /**
+     * Attribute holding the {@see Problem\HttpProblem} of a request that could not be built (body over the limit,
+     * malformed query). The kernel sends such a request through the pipeline anyway, and DeferredProblemMiddleware
+     * raises the problem once the origin check has passed.
+     */
+    public const DEFERRED_PROBLEM = 'request.deferredProblem';
+
+    /**
      * @param array<array-key, string> $query
      * @param array<array-key, string> $headers lower-case names
      * @param array<string, mixed> $attributes

@@ -8,6 +8,7 @@ use App\Http\ApiKernel;
 use App\Http\Handler;
 use App\Http\JsonBody;
 use App\Http\Pipeline;
+use App\Http\Problem\HttpProblem;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Logging\JsonLogger;
@@ -115,7 +116,7 @@ final class ApiKernelTest extends TestCase
         );
 
         self::assertSame(200, $ok->status);
-        self::assertSame(413, $tooBig->status);
+        self::assertSame(200, $tooBig->status);
     }
 
     public function testHandleGlobalsBuildsTheRequestFromServerAndBody(): void
@@ -135,13 +136,68 @@ final class ApiKernelTest extends TestCase
         self::assertSame('payload', $seen->body);
     }
 
-    public function testHandleGlobalsTurnsAMalformedQueryIntoItsProblemWithDefaultHeaders(): void
+    public function testAMalformedQueryReachesThePipelineAsABareRequestCarryingItsProblem(): void
     {
-        $response = $this->kernel(static fn(): Response => Response::empty(200))
-            ->handleGlobals(['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/x?a=%zz', 'QUERY_STRING' => 'a=%zz'], '');
+        $seen = null;
+        $kernel = $this->kernel(static function (Request $r) use (&$seen): Response {
+            $seen = $r;
 
-        self::assertSame(400, $response->status);
+            return Response::empty(204);
+        });
+
+        $response = $kernel->handleGlobals(
+            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/x?a[=1', 'QUERY_STRING' => 'a[=1', 'HTTP_X_ORIGIN_VERIFY' => 'v'],
+            'payload',
+        );
+
+        self::assertInstanceOf(Request::class, $seen);
+        $problem = $seen->attribute(Request::DEFERRED_PROBLEM);
+        self::assertInstanceOf(HttpProblem::class, $problem);
+        self::assertSame(400, $problem->problem->status);
+        self::assertSame('GET', $seen->method);
+        self::assertSame('/api/v1/x', $seen->path);
+        self::assertSame('v', $seen->header('x-origin-verify'));
+        self::assertSame([], $seen->query);
+        self::assertSame('', $seen->body);
+        self::assertSame(204, $response->status);
         self::assertSame(['nosniff'], $response->headerValues('X-Content-Type-Options'));
+    }
+
+    public function testABodyOverTheJsonLimitReachesThePipelineCarryingA413(): void
+    {
+        $seen = null;
+        $kernel = $this->kernel(static function (Request $r) use (&$seen): Response {
+            $seen = $r;
+
+            return Response::empty(204);
+        });
+
+        $kernel->handleGlobals(
+            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/x', 'HTTP_X_ORIGIN_VERIFY' => 'v'],
+            str_repeat('a', JsonBody::MAX_BYTES + 1),
+        );
+
+        self::assertInstanceOf(Request::class, $seen);
+        $problem = $seen->attribute(Request::DEFERRED_PROBLEM);
+        self::assertInstanceOf(HttpProblem::class, $problem);
+        self::assertSame(413, $problem->problem->status);
+        self::assertSame('', $seen->body);
+        self::assertSame('v', $seen->header('x-origin-verify'));
+    }
+
+    public function testAnAcceptableRequestCarriesNoDeferredProblem(): void
+    {
+        $seen = null;
+        $kernel = $this->kernel(static function (Request $r) use (&$seen): Response {
+            $seen = $r;
+
+            return Response::empty(200);
+        });
+
+        $kernel->handleGlobals(['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/x'], '');
+
+        self::assertInstanceOf(Request::class, $seen);
+        self::assertNull($seen->attribute(Request::DEFERRED_PROBLEM));
     }
 
     /**
@@ -174,48 +230,6 @@ final class ApiKernelTest extends TestCase
         return $stream;
     }
 
-    public function testAMalformedQueryIsLoggedAsOneRequestLineWithTheRequestId(): void
-    {
-        $stream = $this->memory();
-        $kernel = new ApiKernel($this->endpoint(), static fn(): string => 'rid-early', new JsonLogger($stream));
-
-        $response = $kernel->handleGlobals(
-            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/x?a=%zz', 'QUERY_STRING' => 'a=%zz'],
-            '',
-        );
-
-        self::assertSame(400, $response->status);
-        $lines = $this->lines($stream);
-        self::assertCount(1, $lines);
-        self::assertSame('request', $lines[0]['message']);
-        self::assertSame('rid-early', $lines[0]['requestId']);
-        self::assertSame('GET', $lines[0]['method']);
-        self::assertSame('/api/v1/x', $lines[0]['path']);
-        self::assertSame(400, $lines[0]['status']);
-        self::assertStringNotContainsString('%zz', (string) json_encode($lines));
-    }
-
-    public function testABodyOverTheJsonLimitIsA413AndIsLogged(): void
-    {
-        $stream = $this->memory();
-        $reached = false;
-        $kernel = new ApiKernel($this->kernelHandler(static function () use (&$reached): Response {
-            $reached = true;
-
-            return Response::empty(200);
-        }), null, new JsonLogger($stream));
-
-        $response = $kernel->handleGlobals(
-            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/x'],
-            str_repeat('a', JsonBody::MAX_BYTES + 1),
-        );
-
-        self::assertFalse($reached);
-        self::assertSame(413, $response->status);
-        self::assertSame(['nosniff'], $response->headerValues('X-Content-Type-Options'));
-        self::assertSame(413, $this->lines($stream)[0]['status']);
-    }
-
     public function testABodyOfExactlyTheLimitPassesOn(): void
     {
         $kernel = $this->kernel(static fn(): Response => Response::empty(200));
@@ -228,14 +242,20 @@ final class ApiKernelTest extends TestCase
         self::assertSame(200, $response->status);
     }
 
-    public function testARejectedRequestWithABrokenLoggerStillGetsItsProblem(): void
+    public function testALastResortFailureRedactsTheSecretsOfItsLogger(): void
     {
-        $logger = new JsonLogger($this->memory(), static fn() => throw new RuntimeException('clock'));
-        $kernel = new ApiKernel($this->endpoint(), null, $logger);
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+        $stream = $this->memory();
+        $kernel = new ApiKernel($this->kernelHandler(static function () use ($secret): Response {
+            throw new RuntimeException(str_repeat('m', 1000) . $secret);
+        }), null, new JsonLogger($stream, null, [$secret]));
 
-        $response = $kernel->handleGlobals(['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/x'], str_repeat('a', JsonBody::MAX_BYTES + 1));
+        $kernel->handle(new Request('GET', '/api/v1/x', [], [], ''));
 
-        self::assertSame(413, $response->status);
+        rewind($stream);
+        $logged = (string) stream_get_contents($stream);
+        self::assertStringContainsString('request failed past the error handler', $logged);
+        self::assertStringNotContainsString(substr($secret, 0, 8), $logged);
     }
 
     public function testALastResortFailureIsLoggedWithoutTheTrace(): void

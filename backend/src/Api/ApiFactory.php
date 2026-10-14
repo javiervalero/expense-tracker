@@ -6,6 +6,7 @@ namespace App\Api;
 
 use App\Http\ApiKernel;
 use App\Http\Handler;
+use App\Http\Middleware\DeferredProblemMiddleware;
 use App\Http\Middleware\ErrorHandlingMiddleware;
 use App\Http\Middleware\OriginVerifyMiddleware;
 use App\Http\Middleware\RequestLoggingMiddleware;
@@ -55,12 +56,15 @@ final class ApiFactory
 
             // Order, outermost first: errors are rendered as problem+json; the request line is written for every request,
             // a 403 included; the origin check runs before routing, so no path is exempt (unknown ones get 403, not
-            // 404). ClientIp (WP7) joins right after OriginVerify, and the router comes last.
+            // 404). A request that could not be built (oversized body, malformed query) travels as a bare request and
+            // its problem is raised right after the origin check. ClientIp (WP7) joins after that, and the router
+            // comes last.
             return new ApiKernel(new Pipeline(
                 [
                     new ErrorHandlingMiddleware($requestLogger),
                     new RequestLoggingMiddleware($requestLogger),
                     new OriginVerifyMiddleware($requestLogger, $config->originVerifySecrets),
+                    new DeferredProblemMiddleware(),
                 ],
                 new RouteDispatcher(new Router($routes ?? Routes::all())),
             ), null, $requestLogger);

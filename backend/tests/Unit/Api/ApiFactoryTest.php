@@ -87,6 +87,22 @@ final class ApiFactoryTest extends TestCase
         self::assertStringNotContainsString('"level":"error"', $this->logged());
     }
 
+    public function testTheOriginCheckComesBeforeTheDeferredProblemOfAMalformedRequest(): void
+    {
+        $server = ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health?a[=1', 'QUERY_STRING' => 'a[=1'];
+        $big = str_repeat('a', 70000);
+
+        $noHeaderQuery = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handleGlobals($server, '');
+        $noHeaderBody = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handleGlobals(['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/x'], $big);
+        $withHeaderQuery = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handleGlobals($server + ['HTTP_X_ORIGIN_VERIFY' => self::SECRET_B], '');
+        $withHeaderBody = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handleGlobals(
+            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/x', 'HTTP_X_ORIGIN_VERIFY' => self::SECRET_A],
+            $big,
+        );
+
+        self::assertSame([403, 403, 400, 413], [$noHeaderQuery->status, $noHeaderBody->status, $withHeaderQuery->status, $withHeaderBody->status]);
+    }
+
     public function testARequestWithoutTheOriginHeaderIs403ForEveryPathAndIsLoggedOnce(): void
     {
         foreach (['/api/v1/health', '/api/v1/unknown', '/'] as $path) {

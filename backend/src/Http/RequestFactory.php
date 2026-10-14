@@ -51,7 +51,8 @@ final class RequestFactory
     }
 
     /**
-     * Only the method and path (nothing that can be malformed): enough to log a request that could not be built.
+     * Only the method, path and headers (nothing that can fail): enough to run a request that could not be built
+     * through the pipeline (origin check, request line) before its problem is answered.
      *
      * @param array<array-key, mixed> $server
      */
@@ -61,7 +62,7 @@ final class RequestFactory
             self::string($server, 'REQUEST_METHOD'),
             self::pathOf(self::string($server, 'REQUEST_URI')),
             [],
-            [],
+            self::headers($server),
             '',
         );
     }
