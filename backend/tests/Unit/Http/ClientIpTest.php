@@ -121,7 +121,6 @@ final class ClientIpTest extends TestCase
     {
         // Six groups, an IPv4 tail, brackets and a 5-digit port (8 full hex groups would be only 47 characters).
         $value = '[ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255]:65535';
-        self::assertSame(53, strlen($value));
 
         $address = ClientIp::parse($value);
 

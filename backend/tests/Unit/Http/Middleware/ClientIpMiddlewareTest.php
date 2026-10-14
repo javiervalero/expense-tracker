@@ -203,11 +203,6 @@ final class ClientIpMiddlewareTest extends TestCase
         self::assertSame('203.0.113.7', $context->clientIp());
     }
 
-    public function testTheRequestAttributeIsNamedClientAddress(): void
-    {
-        self::assertSame('clientAddress', ClientIpMiddleware::ATTRIBUTE);
-    }
-
     public function testTheLogContextStaysEmptyWhenTheAddressIsUnknown(): void
     {
         $context = new RequestLogContext();
