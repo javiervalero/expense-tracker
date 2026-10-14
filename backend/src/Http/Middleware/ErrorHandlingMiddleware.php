@@ -77,7 +77,7 @@ final readonly class ErrorHandlingMiddleware implements Middleware
             'requestId' => $request->attribute(Request::REQUEST_ID),
             'status' => $error instanceof HttpProblem ? $error->problem->status : 500,
             'exception' => $error::class,
-            'exceptionMessage' => JsonLogger::capMessage($error->getMessage()),
+            'exceptionMessage' => $this->logger->capMessage($error->getMessage()),
             'file' => $error->getFile(),
             'line' => $error->getLine(),
         ];

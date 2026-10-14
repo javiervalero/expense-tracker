@@ -79,7 +79,10 @@ final readonly class JsonLogger
         if (!\is_resource($this->stream)) {
             return;
         }
-        @fwrite($this->stream, json_encode($entry, self::JSON_FLAGS) . "\n");
+        // Last line of defence: whatever the walk above missed (object properties, array keys, text that was JSON
+        // encoded before it got here) is still a secret, or its JSON-escaped form, in the final line.
+        $line = $this->redactSecrets((string) json_encode($entry, self::JSON_FLAGS));
+        @fwrite($this->stream, $line . "\n");
     }
 
     /**
@@ -104,21 +107,32 @@ final readonly class JsonLogger
 
     private function redactText(string $text): string
     {
-        foreach ($this->secrets as $secret) {
-            if ($secret !== '') {
-                $text = str_replace($secret, self::REDACTED, $text);
-            }
-        }
-
-        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $text) ?? self::REDACTED;
+        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $this->redactSecrets($text)) ?? self::REDACTED;
     }
 
     /**
-     * Caps an exception message for a log field, never cutting a UTF-8 character in half.
+     * Replaces each secret, and its JSON-escaped form, by the placeholder.
      */
-    public static function capMessage(string $message): string
+    private function redactSecrets(string $text): string
     {
-        return mb_strcut($message, 0, self::MAX_MESSAGE_BYTES, 'UTF-8');
+        foreach ($this->secrets as $secret) {
+            if ($secret === '') {
+                continue;
+            }
+            $escaped = substr((string) json_encode($secret, self::JSON_FLAGS), 1, -1);
+            $text = str_replace([$secret, $escaped], self::REDACTED, $text);
+        }
+
+        return $text;
+    }
+
+    /**
+     * Caps an exception message for a log field, never cutting a UTF-8 character in half. The secrets are hidden
+     * BEFORE the cut, so a cut can never leave the first characters of one.
+     */
+    public function capMessage(string $message): string
+    {
+        return mb_strcut($this->redactText($message), 0, self::MAX_MESSAGE_BYTES, 'UTF-8');
     }
 
     /**

@@ -131,7 +131,7 @@ final readonly class ApiKernel
             $this->logger?->error('request failed past the error handler', [
                 'requestId' => $requestId,
                 'exception' => $error::class,
-                'exceptionMessage' => JsonLogger::capMessage($error->getMessage()),
+                'exceptionMessage' => $this->logger?->capMessage($error->getMessage()),
                 'file' => $error->getFile(),
                 'line' => $error->getLine(),
             ]);

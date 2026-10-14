@@ -175,9 +175,53 @@ final class JsonLoggerTest extends TestCase
 
     public function testCapMessageCutsAtTheByteLimitWithoutSplittingACharacter(): void
     {
-        $capped = JsonLogger::capMessage(str_repeat('a', 1023) . 'é');
+        $capped = $this->logger()->capMessage(str_repeat('a', 1023) . 'é');
 
         self::assertSame(str_repeat('a', 1023), $capped);
-        self::assertSame('short', JsonLogger::capMessage('short'));
+        self::assertSame('short', $this->logger()->capMessage('short'));
+    }
+
+    public function testCapMessageRedactsBeforeCuttingSoASecretOnTheCapBoundaryDoesNotLeakItsPrefix(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+
+        $capped = $this->logger([$secret])->capMessage(str_repeat('x', 1000) . $secret);
+
+        self::assertStringNotContainsString(substr($secret, 0, 8), $capped);
+        self::assertStringContainsString('[REDACTED]', $capped);
+    }
+
+    public function testASecretInAPublicPropertyOfALoggedObjectIsRedacted(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+        $object = new class ($secret) {
+            public function __construct(public string $token) {}
+        };
+
+        $this->logger([$secret])->info('object', ['value' => $object]);
+
+        self::assertStringNotContainsString($secret, $this->logged());
+        self::assertStringContainsString('[REDACTED]', $this->logged());
+    }
+
+    public function testASecretUsedAsAnArrayKeyIsRedacted(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+
+        $this->logger([$secret])->info('keyed', ['map' => [$secret => 'value']]);
+
+        self::assertStringNotContainsString($secret, $this->logged());
+    }
+
+    public function testAJsonEscapedSecretInsideAlreadyEncodedTextIsRedacted(): void
+    {
+        $secret = 'Slot-"quoted"-0123456789-0123456789\end';
+        $encoded = (string) json_encode(['header' => $secret]);
+
+        $this->logger([$secret])->info($encoded, ['again' => $encoded]);
+
+        $escaped = substr((string) json_encode($secret), 1, -1);
+        self::assertStringNotContainsString($escaped, $this->logged());
+        self::assertStringNotContainsString('0123456789-0123456789', $this->logged());
     }
 }
