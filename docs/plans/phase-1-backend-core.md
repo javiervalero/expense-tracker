@@ -493,6 +493,16 @@ Carried:
   - add a per-account limit, not only per address;
   - a CloudWatch metric filter and alarm on `"message":"client address unavailable"` (real users in the shared `unknown` bucket mean a misconfiguration).
 
+### Notes from the WP8 review (2026-10-14)
+
+From ecc:php-reviewer (sonnet) on `75d3e53..af1af01`. The fix batch covers: GSIs are compared (an extra GSI is a difference), TTL is checked and enabled on an existing table and after a concurrent create, and `make up` / the test targets fail fast with a clear message when `.env` lacks `DYNAMODB_TABLE`.
+
+Empirical (R4): DynamoDB Local 3.3.1 accepts `UpdateTimeToLive` and reports `ENABLED`; whether it actually expires items was not tested. The "TTL not supported locally" fallback stays.
+
+Carried:
+- **Phase 7, Terraform reads `infra/dynamodb/table.json`:** it is a CreateTable input, not a Terraform shape. Derive `hash_key`/`range_key` from `KeySchema` by `KeyType`, `attribute` blocks from `AttributeDefinitions`, `local_secondary_index` blocks (`name`, the RANGE key as `range_key`, `projection_type`, `non_key_attributes` via `try()` since it is absent today), and `ttl { attribute_name = TimeToLiveAttribute, enabled = true }`. Add a small check in the `terraform` CI job that `jsondecode`s the file and asserts the derived values.
+- **Existing clones:** add `DYNAMODB_TABLE=expense-tracker-local` to `.env` (WP10 puts this in `docs/local-dev.md`).
+
 ## 7. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
