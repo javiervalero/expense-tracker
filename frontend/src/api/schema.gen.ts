@@ -68,6 +68,21 @@ export interface components {
         };
     };
     responses: {
+        /**
+         * @description Returned when the `X-Origin-Verify` header is missing, empty or wrong. The body is the same generic problem in
+         *     every case, so it never says which, and it is checked before the path, so even an unknown path or another
+         *     method gets this instead of 404 or 405.
+         */
+        Forbidden: {
+            headers: {
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
         /** @description Returned for any path not listed in this spec. */
         NotFound: {
             headers: {
@@ -137,6 +152,7 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
@@ -156,6 +172,15 @@ export interface operations {
                 headers: {
                     /** @description The type the body would have (the response has no body). */
                     "Content-Type": string;
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Returned when the origin check fails (see `GET /health`). No body (HEAD). */
+            403: {
+                headers: {
                     "Cache-Control": components["headers"]["CacheControlNoStore"];
                     "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
                     [name: string]: unknown;

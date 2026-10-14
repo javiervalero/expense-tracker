@@ -7,12 +7,12 @@ namespace App\Tests\Contract;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Every operation documents the 500 problem the error middleware can answer for it (403 joins in WP6). The
+ * Every operation documents the 403 (origin check, WP6) and 500 problems the middleware can answer for it. The
  * validator fails a real response whose status the contract does not list, so this keeps that list complete.
  */
 final class EveryOperationDocumentsErrorsTest extends TestCase
 {
-    private const array REQUIRED_STATUSES = [500];
+    private const array REQUIRED_STATUSES = [403, 500];
 
     public function testEveryOperationDocumentsTheErrorStatuses(): void
     {
