@@ -123,6 +123,23 @@ final class DynamoDbBootstrapperTest extends TestCase
     }
 
     /**
+     * @param array<string, mixed> $projection
+     *
+     * @return array<string, mixed> a local secondary index on PK + $rangeKey
+     */
+    private static function localIndex(string $name, string $rangeKey, array $projection): array
+    {
+        return [
+            'IndexName' => $name,
+            'KeySchema' => [
+                ['AttributeName' => 'PK', 'KeyType' => 'HASH'],
+                ['AttributeName' => $rangeKey, 'KeyType' => 'RANGE'],
+            ],
+            'Projection' => $projection,
+        ];
+    }
+
+    /**
      * @param callable(array<string, mixed>): array<string, mixed> $change
      *
      * @return array{Table: array<string, mixed>}
@@ -491,6 +508,74 @@ final class DynamoDbBootstrapperTest extends TestCase
 
         $this->expectException(TableDiffers::class);
         $this->expectExceptionMessage('GlobalSecondaryIndexes');
+
+        $this->bootstrapper($client)->run();
+    }
+
+    public function testDetectsAnExtraLocalSecondaryIndex(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResultWith(static function (array $table): array {
+            $table['LocalSecondaryIndexes'] = [
+                self::localIndex('LSI1', 'LSI1SK', ['ProjectionType' => 'ALL']),
+                self::localIndex('LSI2', 'SK', ['ProjectionType' => 'ALL']),
+            ];
+
+            return $table;
+        })]);
+
+        $this->expectException(TableDiffers::class);
+        $this->expectExceptionMessage('LocalSecondaryIndexes');
+
+        $this->bootstrapper($client)->run();
+    }
+
+    public function testDetectsIncludeProjectionInsteadOfAll(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResultWith(static function (array $table): array {
+            $table['LocalSecondaryIndexes'] = [self::localIndex('LSI1', 'LSI1SK', ['ProjectionType' => 'INCLUDE', 'NonKeyAttributes' => ['amount']])];
+
+            return $table;
+        })]);
+
+        $this->expectException(TableDiffers::class);
+        $this->expectExceptionMessage('LocalSecondaryIndexes');
+
+        $this->bootstrapper($client)->run();
+    }
+
+    public function testDetectsExtraNonKeyAttributesOnTheIndexProjection(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResultWith(static function (array $table): array {
+            $table['LocalSecondaryIndexes'] = [self::localIndex('LSI1', 'LSI1SK', ['ProjectionType' => 'ALL', 'NonKeyAttributes' => ['amount']])];
+
+            return $table;
+        })]);
+
+        $this->expectException(TableDiffers::class);
+        $this->expectExceptionMessage('LocalSecondaryIndexes');
+
+        $this->bootstrapper($client)->run();
+    }
+
+    public function testDetectsAnExtraAttributeDefinition(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResultWith(static function (array $table): array {
+            $table['AttributeDefinitions'] = [
+                ['AttributeName' => 'LSI1SK', 'AttributeType' => 'S'],
+                ['AttributeName' => 'PK', 'AttributeType' => 'S'],
+                ['AttributeName' => 'SK', 'AttributeType' => 'S'],
+                ['AttributeName' => 'extra', 'AttributeType' => 'S'],
+            ];
+
+            return $table;
+        })]);
+
+        $this->expectException(TableDiffers::class);
+        $this->expectExceptionMessage('AttributeDefinitions');
 
         $this->bootstrapper($client)->run();
     }
