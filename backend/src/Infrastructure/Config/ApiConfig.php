@@ -16,8 +16,11 @@ final readonly class ApiConfig
     private const MAX_SLOTS = 2;
     private const CLIENT_IP_HEADER = 'CLIENT_IP_HEADER';
 
-    /** An HTTP field name is a token (RFC 9110 section 5.6.2). */
-    private const HEADER_NAME_PATTERN = "/\A[!#$%&'*+.^_`|~0-9A-Za-z-]+\z/";
+    /**
+     * The only header that may carry the caller's address, in every environment (ADR 0012 section 4.3). Any other
+     * name (Cookie, Authorization, X-Origin-Verify, the underscore spelling) would make the client choose its address.
+     */
+    private const VIEWER_ADDRESS_HEADER = 'CloudFront-Viewer-Address';
 
     /**
      * One slot: visible ASCII only (no space, no control character), without `"` and `\` (which JSON escapes, and
@@ -27,7 +30,7 @@ final readonly class ApiConfig
 
     /**
      * @param list<string> $originVerifySecrets the accepted `X-Origin-Verify` values (slot A, then B for a rotation)
-     * @param string $clientIpHeader the one header that carries the caller's address (`CloudFront-Viewer-Address`)
+     * @param string $clientIpHeader the one header that carries the caller's address (always `CloudFront-Viewer-Address`)
      */
     private function __construct(public array $originVerifySecrets, public string $clientIpHeader) {}
 
@@ -63,13 +66,13 @@ final readonly class ApiConfig
             return '';
         }
         $value = $env[$name];
-        if (!is_string($value) || preg_match(self::HEADER_NAME_PATTERN, $value) !== 1) {
-            $errors[] = $name . ' must be a valid HTTP header name';
+        if (!is_string($value) || strcasecmp($value, self::VIEWER_ADDRESS_HEADER) !== 0) {
+            $errors[] = $name . ' must be the CloudFront viewer address header';
 
             return '';
         }
 
-        return $value;
+        return self::VIEWER_ADDRESS_HEADER;
     }
 
     /**

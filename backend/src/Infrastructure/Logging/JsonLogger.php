@@ -145,7 +145,15 @@ final readonly class JsonLogger
      */
     public function capMessage(string $message): string
     {
-        return mb_strcut($this->redactText($message), 0, self::MAX_MESSAGE_BYTES, 'UTF-8');
+        return $this->capValue($message, self::MAX_MESSAGE_BYTES);
+    }
+
+    /**
+     * Like {@see self::capMessage()} with a cap of your own: redact first, then cut to at most $bytes bytes.
+     */
+    public function capValue(string $value, int $bytes): string
+    {
+        return mb_strcut($this->redactText($value), 0, $bytes, 'UTF-8');
     }
 
     /**

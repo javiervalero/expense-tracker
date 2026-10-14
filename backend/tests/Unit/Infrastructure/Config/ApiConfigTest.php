@@ -121,6 +121,12 @@ final class ApiConfigTest extends TestCase
         yield 'non-ascii' => ['Clïent-Ip'];
         yield 'a slash' => ['A/B'];
         yield 'an underscore-free but quoted name' => ['"A"'];
+        yield 'the underscore spelling' => ['CloudFront_Viewer_Address'];
+        yield 'Cookie' => ['Cookie'];
+        yield 'Authorization' => ['Authorization'];
+        yield 'the origin verify header' => ['X-Origin-Verify'];
+        yield 'X-Forwarded-For' => ['X-Forwarded-For'];
+        yield 'a valid token that is not the CloudFront header' => ['X-Custom-Client'];
     }
 
     #[DataProvider('invalidHeaderNames')]
@@ -155,10 +161,10 @@ final class ApiConfigTest extends TestCase
         }
     }
 
-    public function testAHeaderNameWithTokenPunctuationIsAccepted(): void
+    public function testTheCloudFrontHeaderNameIsAcceptedInAnyCaseAndExposedAsWritten(): void
     {
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => "X-Client_Ip.1~!#$%&'*+^`|"]);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => 'cloudfront-VIEWER-address']);
 
-        self::assertSame("X-Client_Ip.1~!#$%&'*+^`|", $config->clientIpHeader);
+        self::assertSame(self::HEADER, $config->clientIpHeader);
     }
 }

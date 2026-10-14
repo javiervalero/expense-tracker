@@ -47,7 +47,10 @@ final class ClientIpMiddlewareTest extends TestCase
         return $lines;
     }
 
-    private function process(Request $request, string $header = 'CloudFront-Viewer-Address'): Response
+    /**
+     * @param list<string> $redacted values the logger must hide
+     */
+    private function process(Request $request, string $header = 'CloudFront-Viewer-Address', array $redacted = []): Response
     {
         $next = new class ($this) implements Handler {
             public function __construct(private ClientIpMiddlewareTest $test) {}
@@ -60,7 +63,7 @@ final class ClientIpMiddlewareTest extends TestCase
             }
         };
 
-        return (new ClientIpMiddleware(new JsonLogger($this->stream), $header))->process($request, $next);
+        return (new ClientIpMiddleware(new JsonLogger($this->stream, null, $redacted), $header))->process($request, $next);
     }
 
     public function saw(Request $request): void
@@ -119,6 +122,21 @@ final class ClientIpMiddlewareTest extends TestCase
         $lines = $this->lines();
         self::assertSame('too-long', $lines[0]['reason']);
         self::assertSame(str_repeat('x', 64), $lines[0]['value']);
+    }
+
+    public function testAValueThatIsALongSecretIsRedactedBeforeItIsCutSoNoPrefixOfItIsLogged(): void
+    {
+        $fakeValue = 'Slot-' . str_repeat('0123456789abcdef', 4) . '-end-012345';
+        self::assertSame(80, strlen($fakeValue));
+
+        $this->process($this->request(['cloudfront-viewer-address' => $fakeValue]), 'CloudFront-Viewer-Address', [$fakeValue]);
+
+        rewind($this->stream);
+        $logged = (string) stream_get_contents($this->stream);
+        for ($start = 0; $start <= strlen($fakeValue) - 8; ++$start) {
+            self::assertStringNotContainsString(substr($fakeValue, $start, 8), $logged);
+        }
+        self::assertSame('too-long', $this->lines()[0]['reason']);
     }
 
     public function testAMultiValueHeaderIsLoggedWithItsReason(): void

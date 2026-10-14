@@ -15,7 +15,7 @@ use App\Infrastructure\Logging\JsonLogger;
 
 /**
  * Sets the request attribute {@see self::ATTRIBUTE} ({@see ClientAddress}) from the one header named by
- * `CLIENT_IP_HEADER`. A missing or invalid value is logged once as an error (reason and the value cut to 64 bytes;
+ * `CLIENT_IP_HEADER`. A missing or invalid value is logged once as an error (reason and the value, redacted and then cut to 64 bytes;
  * the logger JSON-encodes it, so control characters cannot forge a line) and the request carries on with the
  * `unknown` address: it is not rejected (ADR 0012 section 4.3) and there is no other source.
  *
@@ -37,7 +37,7 @@ final readonly class ClientIpMiddleware implements Middleware
             $this->logger->error('client address unavailable', [
                 'requestId' => $request->attribute(Request::REQUEST_ID),
                 'reason' => $address->reason,
-            ] + ($value === null ? [] : ['value' => mb_strcut($value, 0, self::MAX_LOGGED_VALUE_BYTES, 'UTF-8')]));
+            ] + ($value === null ? [] : ['value' => $this->logger->capValue($value, self::MAX_LOGGED_VALUE_BYTES)]));
         }
         $context = $request->attribute(RequestLogContext::ATTRIBUTE);
         if ($context instanceof RequestLogContext) {
