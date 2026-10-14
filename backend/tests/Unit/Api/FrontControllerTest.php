@@ -49,7 +49,7 @@ final class FrontControllerTest extends TestCase
      */
     private function warningStream(): string
     {
-        stream_wrapper_register(self::WARNING_SCHEME, WarningOnOpenStream::class);
+        self::assertTrue(stream_wrapper_register(self::WARNING_SCHEME, WarningOnOpenStream::class));
 
         return self::WARNING_SCHEME . '://body';
     }
