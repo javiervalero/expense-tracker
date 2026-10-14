@@ -31,7 +31,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -106,6 +106,18 @@ check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned br
 	cp .env.example .env
 	@echo "Created .env from .env.example (local, non-secret values)."
 
+# Keys that docker-compose.yml reads WITHOUT a default (a silent default would let a stale .env start a stack with an
+# empty value). `check-env` fails fast, before anything starts, naming the line to add (the example comes from .env.example).
+REQUIRED_ENV_KEYS = DYNAMODB_TABLE
+
+check-env: .env
+	@for key in $(REQUIRED_ENV_KEYS); do \
+		grep -q "^$$key=." .env || { \
+			example=$$(grep -m 1 "^$$key=" .env.example || echo "$$key=<value>"); \
+			echo "$$key is missing from .env: add '$$example' (see .env.example)" >&2; exit 1; \
+		}; \
+	done
+
 # `make up` starts the stack in three steps, so that a service that needs the bootstrap to have finished is never
 # started (or waited for) before it:
 #   1. everything except the two lists below: `up -d --wait` (returns when all are healthy);
@@ -125,7 +137,7 @@ LATE_SERVICES =
 # `up` with an empty list, which would silently start EVERY service (including the one-shot ones, out of order).
 # --build: the local-aws-init image is built from this repository, so a code change must reach it (an unchanged
 # build is instant, from the layer cache). Running the bootstrap again is safe: it logs "no changes".
-up: .env frontend-ready ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
+up: .env check-env frontend-ready ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
 	@set -e; \
 	all=$$($(COMPOSE) config --services) || { echo "make up: 'docker compose config --services' failed (see above); not starting anything." >&2; exit 1; }; \
 	first=$$(printf '%s\n' "$$all" | awk -v skip="$(ONE_SHOT_SERVICES) $(LATE_SERVICES)" 'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) s[a[i]] = 1 } NF && !($$0 in s)'); \
@@ -148,7 +160,7 @@ ps: ## Show the local stack's services
 logs: ## Follow the local stack's logs (Ctrl+C to stop)
 	$(COMPOSE) logs -f --tail=100
 
-test-conformance: .env php-image ## Conformance tests (DynamoDB Local, ElasticMQ, S3 emulator) in the php container; run `make up` first
+test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local, ElasticMQ, S3 emulator) in the php container; run `make up` first
 	$(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite conformance
 
 # The `worker-runner` service consumes the real `receipts` queue, and two suites (S3ToQueueTest, RelayHttpTest) read and
@@ -172,7 +184,7 @@ PIPE_MARKERS = build/pipe-test
 # ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
 CLIENT_IP_MARKERS = build/client-ip-test
 
-test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
+test-integration: .env check-env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
 	@set -e; \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
