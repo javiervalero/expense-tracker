@@ -22,6 +22,8 @@ final class S3ClientFactoryTest extends TestCase
             'AWS_SECRET_ACCESS_KEY' => 'localdevsecret',
             'S3_ENDPOINT' => 'http://s3:9000',
             'S3_CORS_ALLOWED_ORIGIN' => 'http://localhost:5173',
+            'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000',
+            'DYNAMODB_TABLE' => 'expense-tracker-local',
         ]);
     }
 

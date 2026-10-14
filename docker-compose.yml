@@ -347,7 +347,8 @@ services:
       api:
         condition: service_healthy
 
-  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
+  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator, and the DynamoDB table
+  # (infra/dynamodb/table.json) in DynamoDB Local (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
   local-aws-init:
     image: expense-tracker-local-aws:dev
@@ -366,10 +367,14 @@ services:
       S3_CORS_ALLOWED_ORIGIN: ${S3_CORS_ALLOWED_ORIGIN:-}
       S3_NOTIFICATION_ARN: ${S3_NOTIFICATION_ARN:-}
       S3_WEBHOOK_ENDPOINT: ${S3_WEBHOOK_ENDPOINT:-}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-}
       BOOTSTRAP_WAIT_SECONDS: ${BOOTSTRAP_WAIT_SECONDS:-}
     command: ["bin/bootstrap.php"]
     depends_on:
       s3:
+        condition: service_healthy
+      dynamodb:
         condition: service_healthy
 
   # PHP tools container on the Compose network: runs the conformance suite against the services above.
