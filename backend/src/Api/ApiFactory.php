@@ -18,11 +18,12 @@ use App\Infrastructure\Config\ApiConfig;
 use App\Infrastructure\Config\InvalidConfiguration;
 use App\Infrastructure\Logging\JsonLogger;
 use Closure;
+use Throwable;
 
 /**
  * Composition root of the API, like {@see \App\Worker\WorkerFactory} for the worker. Knows nothing about php-fpm or
- * Lambda: `public/index.php` and the Lambda entrypoint both call it. If the configuration is invalid the kernel
- * is fail-closed: it answers a generic 500 to every request instead of serving with half a configuration.
+ * Lambda: `public/index.php` and the Lambda entrypoint both call it. If the configuration is invalid, or anything else fails at
+ * startup, the kernel is fail-closed: it answers a generic 500 to every request instead of serving with half a configuration.
  */
 final class ApiFactory
 {
@@ -44,17 +45,20 @@ final class ApiFactory
         $logger = new JsonLogger($logStream ?? JsonLogger::stderrStream());
         try {
             $loadConfig();
+
+            // Later work packages slot OriginVerify and ClientIp between the two (ADR 0012), and the router comes last.
+            return new ApiKernel(new Pipeline(
+                [new ErrorHandlingMiddleware($logger), new RequestLoggingMiddleware($logger)],
+                new RouteDispatcher(new Router(Routes::all())),
+            ), null, $logger);
         } catch (InvalidConfiguration $invalid) {
             $logger->error('invalid configuration, answering 500 to every request', ['errors' => $invalid->errors]);
-
-            return new ApiKernel(self::alwaysInternalError());
+        } catch (Throwable $error) {
+            // Class name only: the message of an unexpected error may hold a secret.
+            $logger->error('startup failed, answering 500 to every request', ['exception' => $error::class]);
         }
 
-        // Later work packages slot OriginVerify and ClientIp between the two (ADR 0012), and the router comes last.
-        return new ApiKernel(new Pipeline(
-            [new ErrorHandlingMiddleware($logger), new RequestLoggingMiddleware($logger)],
-            new RouteDispatcher(new Router(Routes::all())),
-        ));
+        return new ApiKernel(self::alwaysInternalError(), null, $logger);
     }
 
     private static function alwaysInternalError(): Handler

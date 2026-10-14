@@ -87,4 +87,19 @@ final class ApiFactoryTest extends TestCase
         }
         self::assertStringContainsString('SOME_VARIABLE is missing', $this->logged());
     }
+
+    public function testAnyOtherStartupFailureIsFailClosedAndOnlyItsClassIsLogged(): void
+    {
+        foreach ([new \ValueError('hunter2-secret'), new \TypeError('hunter2-secret')] as $error) {
+            $this->setUp();
+            $kernel = ApiFactory::fromConfigLoader(static fn() => throw $error, $this->stream);
+
+            $response = $kernel->handle(new Request('GET', '/api/v1/health', [], [], ''));
+
+            self::assertSame(500, $response->status, $error::class);
+            self::assertStringNotContainsString('hunter2-secret', $this->logged());
+            self::assertStringNotContainsString('hunter2-secret', $response->body);
+            self::assertStringContainsString($error::class, $this->logged());
+        }
+    }
 }

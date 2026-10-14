@@ -51,6 +51,22 @@ final class RequestFactory
     }
 
     /**
+     * Only the method and path (nothing that can be malformed): enough to log a request that could not be built.
+     *
+     * @param array<array-key, mixed> $server
+     */
+    public static function bare(array $server): Request
+    {
+        return new Request(
+            self::string($server, 'REQUEST_METHOD'),
+            self::pathOf(self::string($server, 'REQUEST_URI')),
+            [],
+            [],
+            '',
+        );
+    }
+
+    /**
      * @param array<array-key, mixed> $server
      *
      * @return array<array-key, string>
