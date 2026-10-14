@@ -115,4 +115,12 @@ final class OpenApiDocumentTest extends TestCase
             unlink($file);
         }
     }
+
+    public function testListsEveryOperationAsAnUpperCaseMethodAndTemplate(): void
+    {
+        self::assertSame(
+            [['GET', '/expenses/{id}'], ['GET', '/expenses/summary'], ['HEAD', '/health']],
+            self::fixture()->operations(),
+        );
+    }
 }

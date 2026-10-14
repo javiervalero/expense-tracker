@@ -6,7 +6,9 @@
 # `RUN_NODE`, a pinned node image run as the host user (contract/ and frontend/).
 
 PHP_IMAGE ?= expense-tracker-php:dev
-RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
+# `-e CI` (no value) passes CI through from make's environment only when it is set, so the contract tests fail (instead
+# of skipping) when the bundle is missing in CI.
+RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -e CI -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
 COMPOSER = $(RUN_PHP) composer --working-dir=backend
 # docker/local-aws is a separate Composer project (the local-only tooling of the stack, namespace LocalAws\).
 LOCAL_AWS_COMPOSER = $(RUN_PHP) composer --working-dir=docker/local-aws
@@ -29,7 +31,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +45,12 @@ php-install: $(PHP_IMAGE_DEP) ## Install backend Composer dependencies from comp
 test-unit: $(PHP_IMAGE_DEP) ## Backend unit + architecture tests with coverage, 80% bar on src/
 	$(COMPOSER) run test:coverage
 	$(COMPOSER) run coverage:check
+
+# The contract suite: the validator against the real bundle, route parity and the documented errors. It runs in the php
+# tools container and needs no stack, but it does need contract/dist/openapi.json (`make contract-bundle`). CI sets CI,
+# so a missing bundle fails there instead of skipping.
+test-contract: $(PHP_IMAGE_DEP) ## Backend contract tests: route parity, documented errors, validator on the real bundle (needs contract-bundle)
+	$(COMPOSER) run test:contract
 
 lint-php: $(PHP_IMAGE_DEP) ## Backend: composer validate, PHP-CS-Fixer (dry run), PHPStan
 	$(COMPOSER) validate --strict
@@ -185,9 +193,11 @@ test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> E
 
 # The whole test suite (Phase 0 definition of done). Run as a sequence (not as prerequisites) so that the order holds
 # with `make -j` too: the cheap suites first, then the stack (`make up` is idempotent) for the tests that need it.
-# Needs `make php-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
+# Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
 test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
 	$(MAKE) --no-print-directory test-unit
+	$(MAKE) --no-print-directory contract-bundle
+	$(MAKE) --no-print-directory test-contract
 	$(MAKE) --no-print-directory test-local-aws
 	$(MAKE) --no-print-directory frontend-test
 	$(MAKE) --no-print-directory up

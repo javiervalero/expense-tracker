@@ -47,6 +47,25 @@ final readonly class OpenApiDocument
         return $this->raw;
     }
 
+    /**
+     * Every documented operation, in document order.
+     *
+     * @return list<array{0: string, 1: string}> upper-case method and path template
+     */
+    public function operations(): array
+    {
+        $operations = [];
+        foreach (array_keys($this->paths()) as $template) {
+            foreach (self::METHODS as $method) {
+                if ($this->operation($method, $template) !== null) {
+                    $operations[] = [strtoupper($method), $template];
+                }
+            }
+        }
+
+        return $operations;
+    }
+
     /** Spec path template (`/expenses/{id}`) for a concrete path; a literal path wins over a template. */
     public function pathTemplate(string $method, string $path): ?string
     {

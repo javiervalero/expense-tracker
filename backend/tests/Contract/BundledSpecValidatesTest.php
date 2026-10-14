@@ -5,27 +5,17 @@ declare(strict_types=1);
 namespace App\Tests\Contract;
 
 use App\Tests\Support\Contract\ContractValidator;
-use App\Tests\Support\Contract\OpenApiDocument;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Runs the validator against the real bundle (contract/dist/openapi.json), so it needs `make contract-bundle` first.
- * Locally a missing bundle skips; in CI (`CI` set) it fails, so the suite can never pass by silently skipping.
+ * Runs the validator against the real bundle (contract/dist/openapi.json), so it needs `make contract-bundle` first
+ * (see {@see BundledSpec}: a missing bundle skips locally and fails in CI).
  */
 final class BundledSpecValidatesTest extends TestCase
 {
     private static function validator(): ContractValidator
     {
-        $file = __DIR__ . '/../../../contract/dist/openapi.json';
-        if (!is_file($file)) {
-            $message = 'contract/dist/openapi.json is missing; run `make contract-bundle`.';
-            if ((string) getenv('CI') !== '') {
-                self::fail($message);
-            }
-            self::markTestSkipped($message);
-        }
-
-        return new ContractValidator(OpenApiDocument::fromFile($file));
+        return new ContractValidator(BundledSpec::document());
     }
 
     public function testLoadsTheRealBundledSpec(): void
