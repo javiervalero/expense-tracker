@@ -462,6 +462,10 @@ Deferred, with the owner WP:
   - Reject whitespace-only values; `InvalidConfiguration` names variables only.
   - Make `ApiConfig::validate()` private (or `@internal`) and test it through `fromEnvironment` once `REQUIRED` is filled.
 - **Phase 2:** add `cookie`, `set-cookie`, `x-origin-verify` and `x-csrf-token` to `JsonLogger`'s key-based redaction.
+- **Phase 7/8, Lambda packaging (round-2 security review):** the PHP hardening reaches AWS only if the package ships it. `make check-php-ini` proves Bref reads `/var/task/php/conf.d`, not that the zip contains the file.
+  - The API and worker Lambda zips use `backend/` as their root and **must** contain `php/conf.d/app.ini`.
+  - The zip build step asserts that entry (list the zip, fail if missing).
+  - The Phase 8 smoke test asserts no `X-Powered-By` header through CloudFront and API Gateway.
 - **Optional, not planned:** an `X-Request-Id` response header for support correlation.
 
 ## 7. Risks and decision points
