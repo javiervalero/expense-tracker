@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace App\Tests\Contract;
 
 use App\Api\Routes;
-use App\Tests\Support\Contract\OpenApiDocument;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -15,6 +14,17 @@ use PHPUnit\Framework\TestCase;
  */
 final class RoutesMatchContractTest extends TestCase
 {
+    public function testBothSetsAreNotEmptyAndHaveNoDuplicates(): void
+    {
+        $routes = self::routeKeys();
+        $operations = self::operationKeys();
+
+        self::assertNotSame([], $routes, 'The API serves no routes.');
+        self::assertNotSame([], $operations, 'The contract has no operations.');
+        self::assertCount(count(array_unique($routes)), $routes, 'Duplicate route keys: ' . implode(', ', $routes));
+        self::assertCount(count(array_unique($operations)), $operations, 'Duplicate operation keys: ' . implode(', ', $operations));
+    }
+
     public function testEveryRouteIsDocumentedInTheContract(): void
     {
         $undocumented = array_values(array_diff(self::routeKeys(), self::operationKeys()));
@@ -43,15 +53,10 @@ final class RoutesMatchContractTest extends TestCase
     {
         $keys = array_map(
             static fn(array $operation): string => $operation[0] . ' ' . $operation[1],
-            self::document()->operations(),
+            BundledSpec::document()->operations(),
         );
         sort($keys);
 
         return $keys;
-    }
-
-    private static function document(): OpenApiDocument
-    {
-        return BundledSpec::document();
     }
 }

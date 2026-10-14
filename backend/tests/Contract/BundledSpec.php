@@ -14,10 +14,12 @@ use PHPUnit\Framework\SkippedWithMessageException;
  */
 final class BundledSpec
 {
+    /** The one place that knows where the bundle is (also used by ApiTestCase, which never skips). */
+    public const string FILE = __DIR__ . '/../../../contract/dist/openapi.json';
+
     public static function document(): OpenApiDocument
     {
-        $file = __DIR__ . '/../../../contract/dist/openapi.json';
-        if (!is_file($file)) {
+        if (!is_file(self::FILE)) {
             $message = 'contract/dist/openapi.json is missing; run `make contract-bundle`.';
             if ((string) getenv('CI') !== '') {
                 Assert::fail($message);
@@ -25,6 +27,6 @@ final class BundledSpec
             throw new SkippedWithMessageException($message);
         }
 
-        return OpenApiDocument::fromFile($file);
+        return OpenApiDocument::fromFile(self::FILE);
     }
 }

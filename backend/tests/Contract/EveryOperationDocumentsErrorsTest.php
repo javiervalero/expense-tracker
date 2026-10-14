@@ -17,8 +17,10 @@ final class EveryOperationDocumentsErrorsTest extends TestCase
     public function testEveryOperationDocumentsTheErrorStatuses(): void
     {
         $document = BundledSpec::document();
+        $operations = $document->operations();
+        self::assertNotSame([], $operations, 'The contract has no operations.');
         $missing = [];
-        foreach ($document->operations() as [$method, $template]) {
+        foreach ($operations as [$method, $template]) {
             foreach (self::REQUIRED_STATUSES as $status) {
                 if ($document->response($method, $template, $status) === null) {
                     $missing[] = "$method $template $status";
@@ -26,7 +28,6 @@ final class EveryOperationDocumentsErrorsTest extends TestCase
             }
         }
 
-        self::assertNotSame([], $document->operations(), 'The contract has no operations.');
         self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
     }
 }
