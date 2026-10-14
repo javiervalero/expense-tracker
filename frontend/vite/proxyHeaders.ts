@@ -18,7 +18,7 @@ const IPV4_MAPPED_PREFIX = '::ffff:'
  *   IPv4 as `a.b.c.d:port`, IPv6 as `addr:port` with no brackets. An IPv4-mapped IPv6 address
  *   (`::ffff:a.b.c.d`, which Node reports for IPv4 clients on a dual-stack socket) becomes plain IPv4.
  *   Left out, never guessed, when the socket has no address.
- * - `X-Origin-Verify`: the local, non-secret value. Phase 0 only sends it; the API enforces it from Phase 1.
+ * - `X-Origin-Verify`: the local, non-secret value. The API rejects any request without it (403, ADR 0012).
  */
 export function buildForwardHeaders(
   remoteAddress: string | undefined,

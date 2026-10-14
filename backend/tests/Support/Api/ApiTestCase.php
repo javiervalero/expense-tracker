@@ -34,10 +34,14 @@ abstract class ApiTestCase extends TestCase
 
     private string $base;
 
+    /** The `X-Origin-Verify` value sent with every call; null sends none. Reset for each test. */
+    private ?string $originHeader = null;
+
     final protected function setUp(): void
     {
         $fromEnv = getenv('API_BASE_URL');
         $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
+        $this->originHeader = self::localOriginSecret();
         $this->http = new HttpClient([
             'http_errors' => false,
             'allow_redirects' => false,
@@ -47,10 +51,26 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
+     * From now on in this test, sends no `X-Origin-Verify` header (for the 403 cases).
+     */
+    final protected function withoutOriginHeader(): void
+    {
+        $this->originHeader = null;
+    }
+
+    /**
+     * From now on in this test, sends `X-Origin-Verify: $value` instead of the local value of `ORIGIN_VERIFY_LOCAL`.
+     */
+    final protected function withOriginHeader(string $value): void
+    {
+        $this->originHeader = $value;
+    }
+
+    /**
      * Calls `/api/v1{$path}` and fails the test when the response differs from the contract.
      *
      * @param string                                                      $path    relative to the server URL of the spec, as in its `paths` (`/health`)
-     * @param array{body?: string, headers?: array<string, string>} $options Guzzle request options
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options Guzzle request options
      */
     final protected function request(string $method, string $path, array $options = []): ResponseInterface
     {
@@ -66,7 +86,7 @@ abstract class ApiTestCase extends TestCase
      * although the request itself matches none (`/api/v1/unknown` as GET /health, POST /health as GET /health).
      *
      * @param string                                                      $absolutePathUnderApi `/api/v1/unknown`
-     * @param array{body?: string, headers?: array<string, string>} $options                      Guzzle request options
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options                      Guzzle request options
      */
     final protected function requestAs(
         string $operationMethod,
@@ -85,7 +105,7 @@ abstract class ApiTestCase extends TestCase
      * path under `/api/v1` that is a documented operation for the method (use request()).
      *
      * @param string                                                      $path    absolute, from the site root (`/index.php`)
-     * @param array{body?: string, headers?: array<string, string>} $options Guzzle request options
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options Guzzle request options
      */
     final protected function rawRequest(string $method, string $path, array $options = []): ResponseInterface
     {
@@ -94,15 +114,15 @@ abstract class ApiTestCase extends TestCase
             self::assertNull($documented, "$method $path is a documented operation ($documented): use request(), not rawRequest()");
         }
 
-        return $this->http->request($method, $this->base . $path, $options);
+        return $this->http->request($method, $this->base . $path, $this->withOrigin($options));
     }
 
     /**
-     * @param array{body?: string, headers?: array<string, string>} $options
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
      */
     private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
     {
-        $response = $this->http->request($method, $this->base . $url, $options);
+        $response = $this->http->request($method, $this->base . $url, $this->withOrigin($options));
         // The spec documents paths without the server prefix and without a query string.
         $violations = self::validator()->validate(
             $operationMethod,
@@ -114,6 +134,33 @@ abstract class ApiTestCase extends TestCase
         self::assertSame([], array_map(self::describe(...), $violations), "$method $url breaks the contract (as $operationMethod $template)");
 
         return $response;
+    }
+
+    /**
+     * The options plus the origin header. A header the test sets itself in the options wins.
+     *
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
+     *
+     * @return array{body?: string, headers?: array<string, string|non-empty-list<string>>}
+     */
+    private function withOrigin(array $options): array
+    {
+        if ($this->originHeader === null) {
+            return $options;
+        }
+        $options['headers'] = ($options['headers'] ?? []) + ['X-Origin-Verify' => $this->originHeader];
+
+        return $options;
+    }
+
+    /**
+     * The local, non-secret origin value that the Compose stack shares with the API (`.env`, same default as Compose).
+     */
+    private static function localOriginSecret(): string
+    {
+        $fromEnv = getenv('ORIGIN_VERIFY_LOCAL');
+
+        return is_string($fromEnv) && $fromEnv !== '' ? $fromEnv : 'local-origin-verify-not-a-secret';
     }
 
     /**

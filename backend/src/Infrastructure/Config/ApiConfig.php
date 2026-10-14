@@ -6,15 +6,22 @@ namespace App\Infrastructure\Config;
 
 /**
  * The API's configuration, read once from the process environment by the composition root. It grows with the
- * work packages that need settings (origin secret, rate limits, table names). Every problem is collected before
+ * work packages that need settings (client IP header, rate limits, table names). Every problem is collected before
  * failing, and only variable names are reported, never values.
  */
 final readonly class ApiConfig
 {
-    /** Variables the API cannot start without. None yet; later work packages add theirs here. */
-    private const REQUIRED = [];
+    private const ORIGIN_VERIFY_SECRETS = 'ORIGIN_VERIFY_SECRETS';
+    private const MIN_SLOT_LENGTH = 32;
+    private const MAX_SLOTS = 2;
 
-    private function __construct() {}
+    /** One slot: visible ASCII only (no space, no control character), long enough to resist guessing. */
+    private const SLOT_PATTERN = '/\A[\x21-\x7E]{' . self::MIN_SLOT_LENGTH . ',}\z/';
+
+    /**
+     * @param list<string> $originVerifySecrets the accepted `X-Origin-Verify` values (slot A, then B for a rotation)
+     */
+    private function __construct(public array $originVerifySecrets) {}
 
     /**
      * @param array<array-key, mixed> $env
@@ -23,44 +30,56 @@ final readonly class ApiConfig
      */
     public static function fromEnvironment(array $env): self
     {
-        return self::validate($env, self::REQUIRED);
-    }
-
-    /**
-     * @param array<array-key, mixed> $env
-     * @param list<string> $required names of the variables that must hold a non-empty string
-     *
-     * @throws InvalidConfiguration
-     */
-    public static function validate(array $env, array $required): self
-    {
         $errors = [];
-        foreach ($required as $name) {
-            $problem = self::problemWith($env, $name);
-            if ($problem !== null) {
-                $errors[] = $name . ' ' . $problem;
-            }
-        }
+        $secrets = self::originVerifySecrets($env, $errors);
         sort($errors);
         if ($errors !== []) {
             throw new InvalidConfiguration($errors);
         }
 
-        return new self();
+        return new self($secrets);
     }
 
     /**
      * @param array<array-key, mixed> $env
+     * @param list<string> $errors
+     *
+     * @return list<string>
      */
-    private static function problemWith(array $env, string $name): ?string
+    private static function originVerifySecrets(array $env, array &$errors): array
     {
+        $name = self::ORIGIN_VERIFY_SECRETS;
         if (!array_key_exists($name, $env)) {
-            return 'is missing';
+            $errors[] = $name . ' is missing';
+
+            return [];
         }
-        if (!is_string($env[$name])) {
-            return 'is not a string';
+        $value = $env[$name];
+        if (!is_string($value)) {
+            $errors[] = $name . ' is not a string';
+
+            return [];
+        }
+        if (trim($value) === '') {
+            $errors[] = $name . ' is empty';
+
+            return [];
+        }
+        $slots = explode(',', $value);
+        if (count($slots) > self::MAX_SLOTS) {
+            $errors[] = $name . ' has more than ' . self::MAX_SLOTS . ' slots';
+
+            return [];
+        }
+        foreach ($slots as $slot) {
+            if (preg_match(self::SLOT_PATTERN, $slot) !== 1) {
+                $errors[] = $name . ' must hold 1 or ' . self::MAX_SLOTS . ' comma-separated slots, each at least '
+                    . self::MIN_SLOT_LENGTH . ' visible ASCII characters with no spaces';
+
+                return [];
+            }
         }
 
-        return $env[$name] === '' ? 'is empty' : null;
+        return $slots;
     }
 }

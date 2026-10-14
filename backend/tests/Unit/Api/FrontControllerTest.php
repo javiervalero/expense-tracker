@@ -13,6 +13,8 @@ final class FrontControllerTest extends TestCase
 {
     private const WARNING_SCHEME = 'frontcontrollertest-warning';
 
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => 'frontcontroller-slot-0123456789-0123456789'];
+
     /** @var list<string> */
     private array $calls = [];
 
@@ -123,8 +125,13 @@ final class FrontControllerTest extends TestCase
     public function testServeAnswersTheKernelResponse(): void
     {
         FrontController::serve(
-            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health', 'QUERY_STRING' => ''],
-            [],
+            [
+                'REQUEST_METHOD' => 'GET',
+                'REQUEST_URI' => '/api/v1/health',
+                'QUERY_STRING' => '',
+                'HTTP_X_ORIGIN_VERIFY' => self::ENV['ORIGIN_VERIFY_SECRETS'],
+            ],
+            self::ENV,
             $this->emitter(),
             'data://text/plain,',
             $this->memory(),
@@ -134,13 +141,29 @@ final class FrontControllerTest extends TestCase
         self::assertContains('body {"status":"ok"}', $this->calls);
     }
 
+    public function testServeAnswers403WhenTheOriginHeaderIsMissing(): void
+    {
+        $log = $this->memory();
+
+        FrontController::serve(
+            ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health', 'QUERY_STRING' => ''],
+            self::ENV,
+            $this->emitter(),
+            'data://text/plain,',
+            $log,
+        );
+
+        self::assertSame('status 403', $this->calls[0]);
+        self::assertStringNotContainsString(self::ENV['ORIGIN_VERIFY_SECRETS'], $this->logged($log));
+    }
+
     public function testServeAnswersAnOversizedBodyWith413AndLogsItOnce(): void
     {
         $log = $this->memory();
 
         FrontController::serve(
             ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/health'],
-            [],
+            self::ENV,
             $this->emitter(),
             'data://text/plain,' . str_repeat('a', 70000),
             $log,
@@ -161,7 +184,7 @@ final class FrontControllerTest extends TestCase
 
         FrontController::serve(
             ['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/health?a[=1', 'QUERY_STRING' => 'a[=1'],
-            [],
+            self::ENV,
             $this->emitter(),
             'data://text/plain,',
             $log,

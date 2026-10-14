@@ -7,11 +7,13 @@ namespace App\Api;
 use App\Http\ApiKernel;
 use App\Http\Handler;
 use App\Http\Middleware\ErrorHandlingMiddleware;
+use App\Http\Middleware\OriginVerifyMiddleware;
 use App\Http\Middleware\RequestLoggingMiddleware;
 use App\Http\Pipeline;
 use App\Http\Problem\ProblemDetails;
 use App\Http\Request;
 use App\Http\Response;
+use App\Http\Routing\Route;
 use App\Http\Routing\RouteDispatcher;
 use App\Http\Routing\Router;
 use App\Infrastructure\Config\ApiConfig;
@@ -39,18 +41,29 @@ final class ApiFactory
     /**
      * @param Closure(): ApiConfig $loadConfig
      * @param resource|null $logStream
+     * @param list<Route>|null $routes the route table; {@see Routes::all()} when omitted (a seam for tests)
      */
-    public static function fromConfigLoader(Closure $loadConfig, mixed $logStream = null): ApiKernel
+    public static function fromConfigLoader(Closure $loadConfig, mixed $logStream = null, ?array $routes = null): ApiKernel
     {
-        $logger = new JsonLogger($logStream ?? JsonLogger::stderrStream());
+        $logStream ??= JsonLogger::stderrStream();
+        // Until the configuration is valid there are no secrets to hide, and the line is about variable names only.
+        $logger = new JsonLogger($logStream);
         try {
-            $loadConfig();
+            $config = $loadConfig();
+            // The request-path logger is built from the VALIDATED config: the origin secrets are on its redaction list.
+            $requestLogger = new JsonLogger($logStream, null, $config->originVerifySecrets);
 
-            // Later work packages slot OriginVerify and ClientIp between the two (ADR 0012), and the router comes last.
+            // Order, outermost first: errors are rendered as problem+json; the request line is written for every request,
+            // a 403 included; the origin check runs before routing, so no path is exempt (unknown ones get 403, not
+            // 404). ClientIp (WP7) joins right after OriginVerify, and the router comes last.
             return new ApiKernel(new Pipeline(
-                [new ErrorHandlingMiddleware($logger), new RequestLoggingMiddleware($logger)],
-                new RouteDispatcher(new Router(Routes::all())),
-            ), null, $logger);
+                [
+                    new ErrorHandlingMiddleware($requestLogger),
+                    new RequestLoggingMiddleware($requestLogger),
+                    new OriginVerifyMiddleware($requestLogger, $config->originVerifySecrets),
+                ],
+                new RouteDispatcher(new Router($routes ?? Routes::all())),
+            ), null, $requestLogger);
         } catch (InvalidConfiguration $invalid) {
             $logger->error('invalid configuration, answering 500 to every request', ['errors' => $invalid->errors]);
         } catch (Throwable $error) {
