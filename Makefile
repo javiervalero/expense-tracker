@@ -29,7 +29,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -85,6 +85,14 @@ WORKER_DOCKERFILE = docker/worker/Dockerfile
 check-platform: ## composer.json config.platform.php equals the PHP in the pinned bref/php-85 layer
 	$(MAKE) --no-print-directory php-image
 	PHP_IMAGE=$(PHP_IMAGE) scripts/check-php-platform.sh --with-vendor $(WORKER_DOCKERFILE)
+
+# The ini file that Lambda gets (backend/php/conf.d/app.ini, copied to /var/task/php/conf.d by the worker Dockerfile)
+# is loaded by the pinned bref/php-85 image itself and the three hardening values are asserted there.
+BREF_IMAGE = $(shell sed -nE 's/^[[:space:]]*FROM[[:space:]]+(bref\/php-85:[^@[:space:]]+@sha256:[0-9a-f]{64}).*$$/\1/Ip' $(WORKER_DOCKERFILE) | head -n 1)
+
+check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned bref/php-85 image with the hardened values
+	@test -n "$(BREF_IMAGE)" || { echo "check-php-ini: no pinned bref/php-85 FROM line in $(WORKER_DOCKERFILE)" >&2; exit 1; }
+	docker run --rm --entrypoint php --mount "type=bind,src=$(CURDIR)/backend/php/conf.d,dst=/var/task/php/conf.d,readonly" $(BREF_IMAGE) -r '$$want = ["zend.exception_ignore_args" => "1", "expose_php" => "", "enable_post_data_reading" => ""]; $$bad = []; foreach ($$want as $$key => $$value) { if ((string) ini_get($$key) !== $$value) { $$bad[] = $$key . "=" . var_export(ini_get($$key), true); } } if ($$bad) { fwrite(STDERR, "check-php-ini: unexpected values: " . implode(", ", $$bad) . "\n"); exit(1); } echo "check-php-ini: ok\n";'
 
 .env:
 	cp .env.example .env
@@ -192,7 +200,7 @@ test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
 # guards, and the dependency audits. (The Bref boundary is an architecture test, so it runs in `make test-unit`.)
 # Needs the three `*-install` targets once. Each part is a target of its own, so a failure names the check.
-LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
+LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
 
 lint: ## ALL static checks and audits (no stack needed): PHP, front-end, contract, Terraform, platform + image pins
 	@set -e; for t in $(LINT_TARGETS); do \

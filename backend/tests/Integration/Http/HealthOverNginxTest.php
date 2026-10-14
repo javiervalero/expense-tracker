@@ -124,9 +124,9 @@ final class HealthOverNginxTest extends TestCase
         self::assertSame(['type' => 'about:blank', 'title' => 'Not Found', 'status' => 404], $this->problemBody($response));
     }
 
-    public function testABodyOverOneMebibyteIsAProblemJson413FromNginx(): void
+    public function testABodyOver65KibIsAProblemJson413FromNginx(): void
     {
-        $response = $this->request('POST', '/api/v1/health', ['body' => str_repeat('a', 1024 * 1024 + 1)]);
+        $response = $this->request('POST', '/api/v1/health', ['body' => str_repeat('a', 65 * 1024 + 1)]);
 
         self::assertSame(413, $response->getStatusCode());
         self::assertSame('application/problem+json', $response->getHeaderLine('Content-Type'));
