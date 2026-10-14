@@ -419,7 +419,7 @@ WP1 ─► WP2 ─► WP3 ─► WP4 ─► WP5 ─► WP6 ─► WP7 ─┐
   - a forged `CloudFront-Viewer-Address` is replaced by CloudFront;
   - the IPv6 format through CloudFront (R2);
   - API Gateway v2 joining duplicate headers (R3);
-  - Bref FPM does not split long JSON log lines.
+  - ~~Bref FPM does not split long JSON log lines.~~ Closed by the WP4 security review: the pinned Bref image's `php-fpm.conf` already sets `log_limit = 256000`.
 
 ### Security notes from the WP3 review (2026-10-13)
 
@@ -446,6 +446,23 @@ From the security review of the WP3 HTTP primitives (opus/high).
 - **Phase 3, money:** amounts must be integer cents or a decimal string in the schema, never JSON floats, which lose precision silently.
 - **Phase 2, sessions:** Bref rebuilds `Cookie` from v2 `cookies[]`, so duplicate cookie names are possible (cookie tossing). Define which session cookie wins, or reject duplicates.
 - **Validators:** JSON objects with numeric keys decode to PHP lists. Never use `array_is_list` to tell objects from arrays. Reject control characters in string fields.
+
+### Notes from the WP4 reviews (2026-10-14)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `3605388..5705d1d`. No CRITICAL or HIGH security findings. The fix batch (tdd-guide) covers:
+- 4xx `HttpProblem`s logged with their real status, not 500;
+- fail closed on **any** startup `Throwable` (factory logs the class only), a `try/catch` and `set_error_handler` in the front controller, and a logged last-resort catch in `ApiKernel`;
+- Lambda ini parity: `backend/php/conf.d/app.ini` (`zend.exception_ignore_args`, `expose_php = Off`, `enable_post_data_reading = Off`), copied into the worker image and checked by `make check-php-ini` in the pinned Bref image;
+- caps on logged `exceptionMessage` and `method`; generic body for 5xx `HttpProblem`s; explicit 413 when the raw body exceeds `JsonBody::MAX_BYTES`; requests rejected in `handleGlobals` are logged; nginx `client_max_body_size` lowered toward 64k (closes the WP3 note).
+
+Deferred, with the owner WP:
+- **WP6:**
+  - Build the request-path `JsonLogger` **after** config validation and pass the `ORIGIN_VERIFY_SECRETS` slots to its redaction list. Test: an exception whose message contains a slot is logged as `[REDACTED]`.
+  - Use the validated `ApiConfig` returned by the loader; never re-read `$env`.
+  - Reject whitespace-only values; `InvalidConfiguration` names variables only.
+  - Make `ApiConfig::validate()` private (or `@internal`) and test it through `fromEnvironment` once `REQUIRED` is filled.
+- **Phase 2:** add `cookie`, `set-cookie`, `x-origin-verify` and `x-csrf-token` to `JsonLogger`'s key-based redaction.
+- **Optional, not planned:** an `X-Request-Id` response header for support correlation.
 
 ## 7. Risks and decision points
 
