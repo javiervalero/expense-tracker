@@ -479,6 +479,20 @@ Carried:
 - **Keep it that way:** with `clear_env = no`, `ORIGIN_VERIFY_SECRETS` is in `$_SERVER` on every request. Never log `$_SERVER`.
 - **Later (ops):** every rejected request writes two lines (warning + request line). If scanner traffic against the origin floods CloudWatch, sample or drop the warning; note it in the runbook.
 
+### Notes from the WP7 reviews (2026-10-14)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `98151a7..c3d0adb`. No CRITICAL or HIGH findings; the parser rejected every hostile form probed. The fix batch covers: redact before cutting the logged header value, `CLIENT_IP_HEADER` accepts only `CloudFront-Viewer-Address` (case-insensitive), a canonical IPv6 marker in the integration test (was a ~12% flake), specific and loud Makefile log checks, the attribute renamed to `clientAddress`, a write-once `RequestLogContext`.
+
+Design note: `RequestLogContext` is a small per-request mutable holder, a deliberate exception to the immutability rule. `RequestLogging` must stay outside the origin check, and the request is immutable and flows inward, so the outer logger cannot otherwise see the address that `ClientIp` derives. `"clientIp":"unknown"` in a request line means "failed **or never evaluated**" (403, deferred 413/400); a consumer must not read it as proof that the header was parsed.
+
+Carried:
+- **Phase 7, Terraform:** a test/check that the API origin request policy's `header_behavior` is an **allow-list** (never "all viewer headers") and lists no underscore names. Bref maps `CloudFront_Viewer_Address` and `CloudFront-Viewer-Address` to the same FastCGI variable, so the allow-list is what keeps a client from choosing its own address.
+- **Phase 7/8 smoke test:** send a spoofed `CloudFront-Viewer-Address`, a `CloudFront_Viewer_Address`, and both; assert the logged `clientIp` is the real source address.
+- **Phase 2, throttling:**
+  - add a coarser IPv6 tier (`/56` or `/48`) next to the `/64` key: a holder of a `/48` (hosting, 6to4) spreads over 65,536 `/64` keys; Teredo users collapse into their relay's `/64`;
+  - add a per-account limit, not only per address;
+  - a CloudWatch metric filter and alarm on `"message":"client address unavailable"` (real users in the shared `unknown` bucket mean a misconfiguration).
+
 ## 7. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
