@@ -91,6 +91,17 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
+        /** @description Returned when the API fails unexpectedly. The body is a generic problem and never says why; the cause is only in the server log. */
+        InternalServerError: {
+            headers: {
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
     };
     parameters: never;
     requestBodies: never;
@@ -128,6 +139,7 @@ export interface operations {
             };
             404: components["responses"]["NotFound"];
             405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
         };
     };
     headHealth: {
@@ -163,6 +175,15 @@ export interface operations {
             405: {
                 headers: {
                     Allow: components["headers"]["Allow"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Returned when the API fails unexpectedly. The body never says why. No body (HEAD). */
+            500: {
+                headers: {
                     "Cache-Control": components["headers"]["CacheControlNoStore"];
                     "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
                     [name: string]: unknown;
