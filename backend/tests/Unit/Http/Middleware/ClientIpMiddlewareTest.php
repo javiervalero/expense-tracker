@@ -127,13 +127,12 @@ final class ClientIpMiddlewareTest extends TestCase
     public function testAValueThatIsALongSecretIsRedactedBeforeItIsCutSoNoPrefixOfItIsLogged(): void
     {
         $fakeValue = 'Slot-' . str_repeat('0123456789abcdef', 4) . '-end-012345';
-        self::assertSame(80, strlen($fakeValue));
 
         $this->process($this->request(['cloudfront-viewer-address' => $fakeValue]), 'CloudFront-Viewer-Address', [$fakeValue]);
 
         rewind($this->stream);
         $logged = (string) stream_get_contents($this->stream);
-        for ($start = 0; $start <= strlen($fakeValue) - 8; ++$start) {
+        for ($start = 0; $start <= 72; ++$start) {
             self::assertStringNotContainsString(substr($fakeValue, $start, 8), $logged);
         }
         self::assertSame('too-long', $this->lines()[0]['reason']);
