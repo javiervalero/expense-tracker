@@ -468,6 +468,17 @@ Deferred, with the owner WP:
   - The Phase 8 smoke test asserts no `X-Powered-By` header through CloudFront and API Gateway.
 - **Optional, not planned:** an `X-Request-Id` response header for support correlation.
 
+### Notes from the WP6 reviews (2026-10-14)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `6ba0699..262c8fd`. No CRITICAL or HIGH findings. The fix batch covers: the origin check now runs before the 413/400 pre-pipeline rejections (a caller without the header always gets 403), redaction before capping plus a pass over the encoded log line (objects, array keys, JSON-escaped secrets), `"` and `\` no longer allowed in secret slots, duplicate slots rejected.
+
+Carried:
+- **Phase 7, Terraform:** the generated `ORIGIN_VERIFY_SECRETS` slots must match `ApiConfig::SLOT_PATTERN` (visible ASCII, no space, comma, `"` or `\`): set `random_password.override_special` accordingly.
+- **Phase 7/8 smoke test:** also send `X_Origin_Verify: junk` through CloudFront and expect 200 (the allow-list policy must not forward it, and CloudFront overwrites the same-named custom header).
+- **WP10, ADR 0012 §4.2 wording:** the check is the first middleware after error handling **and request logging** (logging reads no headers, and keeping it outside gives every 403 a request line).
+- **Keep it that way:** with `clear_env = no`, `ORIGIN_VERIFY_SECRETS` is in `$_SERVER` on every request. Never log `$_SERVER`.
+- **Later (ops):** every rejected request writes two lines (warning + request line). If scanner traffic against the origin floods CloudWatch, sample or drop the warning; note it in the runbook.
+
 ## 7. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
