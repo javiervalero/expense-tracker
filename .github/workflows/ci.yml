@@ -244,6 +244,17 @@ jobs:
       - name: Install front-end dependencies from package-lock.json
         run: make frontend-install
 
+      # The API tests validate every response against the bundled spec, so the bundle must exist before them. All
+      # three targets run in pinned containers (CI is passed into the php one, so a missing bundle fails, not skips).
+      - name: Install contract dependencies from package-lock.json
+        run: make contract-install
+
+      - name: Bundle the contract (contract/dist/openapi.json)
+        run: make contract-bundle
+
+      - name: Contract tests (route parity, documented errors, validator on the real bundle)
+        run: make test-contract
+
       # Also builds the local-aws image and runs the idempotent S3 bootstrap (buckets, CORS, notification rule).
       - name: Start the local stack, bootstrap it and wait until it is healthy
         run: make up
