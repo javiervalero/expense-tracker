@@ -130,6 +130,10 @@ jobs:
       - name: composer.json platform equals the PHP of the pinned bref/php-85 layer
         run: make check-platform
 
+      # The Lambda ini (backend/php/conf.d) is loaded by the pinned bref/php-85 image with the hardened values.
+      - name: Lambda php.ini hardening is loaded by the pinned bref/php-85 image
+        run: make check-php-ini
+
       # backend/ and docker/local-aws/ each keep a copy of the S3 event fixtures; they must stay identical.
       - name: S3 event fixtures are identical in both copies
         run: make check-fixtures
