@@ -6,6 +6,7 @@ namespace App\Http\Routing;
 
 use App\Http\Handler;
 use App\Http\Request;
+use App\Http\Problem\HttpProblem;
 use App\Http\Response;
 
 /**
@@ -18,6 +19,12 @@ final readonly class RouteDispatcher implements Handler
 
     public function handle(Request $request): Response
     {
+        // Fail closed even if the pipeline was assembled without DeferredProblemMiddleware.
+        $deferred = $request->attribute(Request::DEFERRED_PROBLEM);
+        if ($deferred instanceof HttpProblem) {
+            throw $deferred;
+        }
+
         $result = $this->router->match($request);
         $route = $result->route;
         if ($route === null) {

@@ -80,6 +80,11 @@ final readonly class ApiConfig
 
             return [];
         }
+        if (count($slots) === 2 && (str_contains($slots[0], $slots[1]) || str_contains($slots[1], $slots[0]))) {
+            $errors[] = $name . ' has one slot inside the other';
+
+            return [];
+        }
         foreach ($slots as $slot) {
             if (preg_match(self::SLOT_PATTERN, $slot) !== 1) {
                 $errors[] = $name . ' must hold 1 or ' . self::MAX_SLOTS . ' comma-separated slots, each at least '
