@@ -9,7 +9,7 @@ use App\Tests\Support\Api\ApiTestCase;
 /**
  * The nginx-level cases, on the Compose network: what nginx itself answers or sets, outside the contract (a path
  * outside `/api`, the 413 for an oversized body, the `Server` header) and the isolation of php-fpm. They use
- * rawRequest(); the API cases are in {@see HealthApiTest}. Run it through `make test-integration` (the stack must be up).
+ * rawRequest() (request() for the one documented case); the API cases are in {@see HealthApiTest}. Run it through `make test-integration` (the stack must be up).
  *
  * What it does NOT cover: the CloudFront-Viewer-Address fill-in. Nothing in Phase 0 exposes that value, and a
  * test-only route is not allowed in src/ or public/. The map is checked by scripts/tests/nginx-viewer-address.test.sh
@@ -19,9 +19,13 @@ final class HealthOverNginxTest extends ApiTestCase
 {
     public function testNeitherPhpNorNginxAdvertiseTheirVersion(): void
     {
-        foreach (['/api/v1/health', '/api/v1/nope', '/elsewhere'] as $path) {
-            $response = $this->rawRequest('GET', $path);
+        $responses = [
+            '/api/v1/health' => $this->request('GET', '/health'),
+            '/api/v1/nope' => $this->rawRequest('GET', '/api/v1/nope'),
+            '/elsewhere' => $this->rawRequest('GET', '/elsewhere'),
+        ];
 
+        foreach ($responses as $path => $response) {
             self::assertFalse($response->hasHeader('X-Powered-By'), $path);
             self::assertSame('nginx', $response->getHeaderLine('Server'), $path);
         }

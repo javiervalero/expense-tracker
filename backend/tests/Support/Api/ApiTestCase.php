@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Support\Api;
 
+use App\Tests\Contract\BundledSpec;
 use App\Tests\Support\Contract\ContractValidator;
 use App\Tests\Support\Contract\ContractViolation;
 use App\Tests\Support\Contract\OpenApiDocument;
@@ -24,7 +25,8 @@ abstract class ApiTestCase extends TestCase
 {
     private const string DEFAULT_BASE = 'http://api:8080';
     private const string API_PREFIX = '/api/v1';
-    private const string BUNDLE = __DIR__ . '/../../../../contract/dist/openapi.json';
+
+    private static ?OpenApiDocument $document = null;
 
     private static ?ContractValidator $validator = null;
 
@@ -32,11 +34,16 @@ abstract class ApiTestCase extends TestCase
 
     private string $base;
 
-    protected function setUp(): void
+    final protected function setUp(): void
     {
         $fromEnv = getenv('API_BASE_URL');
         $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
-        $this->http = new HttpClient(['http_errors' => false, 'timeout' => 10]);
+        $this->http = new HttpClient([
+            'http_errors' => false,
+            'allow_redirects' => false,
+            'connect_timeout' => 3,
+            'timeout' => 10,
+        ]);
     }
 
     /**
@@ -47,29 +54,66 @@ abstract class ApiTestCase extends TestCase
      */
     final protected function request(string $method, string $path, array $options = []): ResponseInterface
     {
-        $response = $this->rawRequest($method, self::API_PREFIX . $path, $options);
-        // The spec documents paths without the server prefix and without a query string.
-        $violations = self::validator()->validate(
-            $method,
-            $path,
-            $response->getStatusCode(),
-            self::flatHeaders($response),
-            (string) $response->getBody(),
-        );
-        self::assertSame([], array_map(self::describe(...), $violations), "$method $path breaks the contract");
+        self::assertStringStartsWith('/', $path, 'request() takes a path relative to the server URL of the spec');
+        self::assertFalse(str_starts_with($path, '/api/'), "request() adds the /api/v1 prefix itself; got $path");
 
-        return $response;
+        return $this->sendAs($method, $path, $method, self::API_PREFIX . $path, $options);
     }
 
     /**
-     * Calls any path on the nginx front, with no contract check. Only for what is not in the spec.
+     * Calls an absolute path under `/api/v1` and validates the response as the documented operation
+     * ($operationMethod, $template): for the 404 and 405 answers, which the contract documents on an operation
+     * although the request itself matches none (`/api/v1/unknown` as GET /health, POST /health as GET /health).
+     *
+     * @param string                                                      $absolutePathUnderApi `/api/v1/unknown`
+     * @param array{body?: string, headers?: array<string, string>} $options                      Guzzle request options
+     */
+    final protected function requestAs(
+        string $operationMethod,
+        string $template,
+        string $method,
+        string $absolutePathUnderApi,
+        array $options = [],
+    ): ResponseInterface {
+        self::assertStringStartsWith(self::API_PREFIX . '/', $absolutePathUnderApi);
+
+        return $this->sendAs($operationMethod, $template, $method, $absolutePathUnderApi, $options);
+    }
+
+    /**
+     * Calls any path on the nginx front, with no contract check. Only for what is not in the spec: it fails for a
+     * path under `/api/v1` that is a documented operation for the method (use request()).
      *
      * @param string                                                      $path    absolute, from the site root (`/index.php`)
      * @param array{body?: string, headers?: array<string, string>} $options Guzzle request options
      */
     final protected function rawRequest(string $method, string $path, array $options = []): ResponseInterface
     {
+        if (str_starts_with($path, self::API_PREFIX . '/')) {
+            $documented = self::document()->pathTemplate(strtoupper($method), substr($path, strlen(self::API_PREFIX)));
+            self::assertNull($documented, "$method $path is a documented operation ($documented): use request(), not rawRequest()");
+        }
+
         return $this->http->request($method, $this->base . $path, $options);
+    }
+
+    /**
+     * @param array{body?: string, headers?: array<string, string>} $options
+     */
+    private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
+    {
+        $response = $this->http->request($method, $this->base . $url, $options);
+        // The spec documents paths without the server prefix and without a query string.
+        $violations = self::validator()->validate(
+            $operationMethod,
+            $template,
+            $response->getStatusCode(),
+            self::flatHeaders($response),
+            (string) $response->getBody(),
+        );
+        self::assertSame([], array_map(self::describe(...), $violations), "$method $url breaks the contract (as $operationMethod $template)");
+
+        return $response;
     }
 
     /**
@@ -85,14 +129,19 @@ abstract class ApiTestCase extends TestCase
 
     private static function validator(): ContractValidator
     {
-        if (self::$validator === null) {
-            if (!is_file(self::BUNDLE)) {
+        return self::$validator ??= new ContractValidator(self::document());
+    }
+
+    private static function document(): OpenApiDocument
+    {
+        if (self::$document === null) {
+            if (!is_file(BundledSpec::FILE)) {
                 self::fail('contract/dist/openapi.json is missing; run `make contract-bundle` (API tests never run without the contract).');
             }
-            self::$validator = new ContractValidator(OpenApiDocument::fromFile(self::BUNDLE));
+            self::$document = OpenApiDocument::fromFile(BundledSpec::FILE);
         }
 
-        return self::$validator;
+        return self::$document;
     }
 
     /**
