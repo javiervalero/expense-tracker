@@ -112,7 +112,7 @@ REQUIRED_ENV_KEYS = DYNAMODB_TABLE
 
 check-env: .env
 	@for key in $(REQUIRED_ENV_KEYS); do \
-		grep -q "^$$key=." .env || { \
+		tr -d '\r' < .env | grep -Eq "^[[:space:]]*(export[[:space:]]+)?$$key=[[:space:]]*[^[:space:]\"'#]" || { \
 			example=$$(grep -m 1 "^$$key=" .env.example || echo "$$key=<value>"); \
 			echo "$$key is missing from .env: add '$$example' (see .env.example)" >&2; exit 1; \
 		}; \
