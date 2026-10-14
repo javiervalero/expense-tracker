@@ -28,6 +28,14 @@ final class DynamoDbBootstrapperTest extends TestCase
     /** @var list<array<string, mixed>> */
     private array $logged = [];
 
+    protected function tearDown(): void
+    {
+        // A response nobody asked for means the bootstrapper sent fewer commands than the test expects.
+        if (isset($this->mock)) {
+            self::assertCount(0, $this->mock, 'The mock handler still holds responses that the bootstrapper never asked for');
+        }
+    }
+
     private function dynamoDb(): DynamoDbClient
     {
         $this->mock = new MockHandler();
@@ -107,6 +115,14 @@ final class DynamoDbBootstrapperTest extends TestCase
     }
 
     /**
+     * @return array{TimeToLiveDescription: array<string, string>} what DescribeTimeToLive returns
+     */
+    private static function ttlResult(string $status, ?string $attribute = null): array
+    {
+        return ['TimeToLiveDescription' => ['TimeToLiveStatus' => $status] + ($attribute === null ? [] : ['AttributeName' => $attribute])];
+    }
+
+    /**
      * @param callable(array<string, mixed>): array<string, mixed> $change
      *
      * @return array{Table: array<string, mixed>}
@@ -143,20 +159,21 @@ final class DynamoDbBootstrapperTest extends TestCase
             self::error('DescribeTable', 'ResourceNotFoundException'),
             [],
             self::describeResult(),
+            self::ttlResult('DISABLED'),
             [],
         ]);
 
         $changes = $this->bootstrapper($client)->run();
 
         self::assertSame(2, $changes);
-        self::assertSame(['DescribeTable', 'CreateTable', 'DescribeTable', 'UpdateTimeToLive'], $this->calls);
+        self::assertSame(['DescribeTable', 'CreateTable', 'DescribeTable', 'DescribeTimeToLive', 'UpdateTimeToLive'], $this->calls);
         self::assertSame(['created table', 'enabled TTL', 'bootstrap finished'], $this->messages());
     }
 
     public function testCreatesTheTableFromTheSchemaFileUnderTheConfiguredName(): void
     {
         $client = $this->dynamoDb();
-        $this->queue([self::error('DescribeTable', 'ResourceNotFoundException'), [], self::describeResult(), []]);
+        $this->queue([self::error('DescribeTable', 'ResourceNotFoundException'), [], self::describeResult(), self::ttlResult('DISABLED'), []]);
 
         $this->bootstrapper($client)->run();
 
@@ -180,13 +197,101 @@ final class DynamoDbBootstrapperTest extends TestCase
     public function testOnlyDescribesAnExistingTableThatMatches(): void
     {
         $client = $this->dynamoDb();
-        $this->queue([self::describeResult()]);
+        $this->queue([self::describeResult(), self::ttlResult('ENABLED', 'expiresAt')]);
 
         $changes = $this->bootstrapper($client)->run();
 
         self::assertSame(0, $changes);
-        self::assertSame(['DescribeTable'], $this->calls);
+        self::assertSame(['DescribeTable', 'DescribeTimeToLive'], $this->calls);
         self::assertSame(['no changes'], $this->messages());
+    }
+
+    public function testEnablesTtlOnAnExistingTableWhereItIsDisabled(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::ttlResult('DISABLED'), []]);
+
+        $changes = $this->bootstrapper($client)->run();
+
+        self::assertSame(1, $changes);
+        self::assertSame(['DescribeTable', 'DescribeTimeToLive', 'UpdateTimeToLive'], $this->calls);
+        self::assertSame(['enabled TTL', 'bootstrap finished'], $this->messages());
+        self::assertSame(['Enabled' => true, 'AttributeName' => 'expiresAt'], $this->lastParams['UpdateTimeToLive']['TimeToLiveSpecification'] ?? null);
+    }
+
+    public function testEnablesTtlWhenTheTableHasNoTtlAttributeAtAll(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), ['TimeToLiveDescription' => []], []]);
+
+        self::assertSame(1, $this->bootstrapper($client)->run());
+        self::assertContains('UpdateTimeToLive', $this->calls);
+    }
+
+    public function testLeavesTtlAloneWhileItIsBeingEnabled(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::ttlResult('ENABLING', 'expiresAt')]);
+
+        self::assertSame(0, $this->bootstrapper($client)->run());
+        self::assertNotContains('UpdateTimeToLive', $this->calls);
+    }
+
+    public function testFailsWhenTtlIsEnabledOnAnotherAttribute(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::ttlResult('ENABLED', 'ttl')]);
+
+        try {
+            $this->bootstrapper($client)->run();
+            self::fail('TTL on another attribute cannot be switched in place, so the bootstrap must fail');
+        } catch (TableDiffers $e) {
+            self::assertStringContainsString('TimeToLive', $e->getMessage());
+            self::assertStringContainsString('ttl', $e->getMessage());
+            self::assertStringContainsString('make down && make up', $e->getMessage());
+        }
+
+        self::assertNotContains('UpdateTimeToLive', $this->calls);
+    }
+
+    public function testRetriesTtlOnTheNextRunAfterItFailedOnce(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::ttlResult('DISABLED'), self::error('UpdateTimeToLive', 'InternalServerError')]);
+        try {
+            $this->bootstrapper($client)->run();
+            self::fail('The first run must fail on the TTL error');
+        } catch (DynamoDbException) {
+            // expected
+        }
+
+        $this->queue([self::describeResult(), self::ttlResult('DISABLED'), []]);
+        $changes = $this->bootstrapper($client)->run();
+
+        self::assertSame(1, $changes);
+        self::assertSame('UpdateTimeToLive', end($this->calls));
+    }
+
+    public function testLogsAndContinuesWhenDescribeTimeToLiveIsNotSupported(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::error('DescribeTimeToLive', 'UnsupportedOperationException')]);
+
+        $changes = $this->bootstrapper($client)->run();
+
+        self::assertSame(0, $changes);
+        self::assertNotContains('UpdateTimeToLive', $this->calls);
+        self::assertSame(['TTL not supported locally', 'no changes'], $this->messages());
+    }
+
+    public function testStillFailsOnAnyOtherErrorWhileDescribingTtl(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResult(), self::error('DescribeTimeToLive', 'AccessDeniedException')]);
+
+        $this->expectException(DynamoDbException::class);
+
+        $this->bootstrapper($client)->run();
     }
 
     public function testFailsWithTheRemedyAndNeverDeletesWhenTheTableDiffers(): void
@@ -296,6 +401,7 @@ final class DynamoDbBootstrapperTest extends TestCase
             self::error('DescribeTable', 'ResourceNotFoundException'),
             [],
             self::describeResult(),
+            self::ttlResult('DISABLED'),
             self::error('UpdateTimeToLive', 'UnknownOperationException'),
         ]);
 
@@ -312,6 +418,7 @@ final class DynamoDbBootstrapperTest extends TestCase
             self::error('DescribeTable', 'ResourceNotFoundException'),
             [],
             self::describeResult(),
+            self::ttlResult('DISABLED'),
             self::error('UpdateTimeToLive', 'InternalServerError'),
         ]);
 
@@ -333,18 +440,58 @@ final class DynamoDbBootstrapperTest extends TestCase
         }
     }
 
-    public function testToleratesAConcurrentCreation(): void
+    public function testToleratesAConcurrentCreationAndStillWaitsAndEnsuresTtl(): void
     {
         $client = $this->dynamoDb();
         $this->queue([
             self::error('DescribeTable', 'ResourceNotFoundException'),
             self::error('CreateTable', 'ResourceInUseException'),
             self::describeResult(),
+            self::describeResult(),
+            self::ttlResult('DISABLED'),
+            [],
         ]);
 
         $changes = $this->bootstrapper($client)->run();
 
-        self::assertSame(0, $changes);
-        self::assertSame(['DescribeTable', 'CreateTable', 'DescribeTable'], $this->calls);
+        self::assertSame(1, $changes);
+        self::assertSame(['DescribeTable', 'CreateTable', 'DescribeTable', 'DescribeTable', 'DescribeTimeToLive', 'UpdateTimeToLive'], $this->calls);
+        self::assertSame(['enabled TTL', 'bootstrap finished'], $this->messages());
+    }
+
+    public function testAConcurrentCreationOfADifferentTableFails(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([
+            self::error('DescribeTable', 'ResourceNotFoundException'),
+            self::error('CreateTable', 'ResourceInUseException'),
+            self::describeResultWith(static fn(array $table): array => ['LocalSecondaryIndexes' => []] + $table),
+        ]);
+
+        $this->expectException(TableDiffers::class);
+
+        $this->bootstrapper($client)->run();
+    }
+
+    public function testDetectsAnExtraGlobalSecondaryIndex(): void
+    {
+        $client = $this->dynamoDb();
+        $this->queue([self::describeResultWith(static function (array $table): array {
+            $table['GlobalSecondaryIndexes'] = [[
+                'IndexName' => 'GSI1',
+                'KeySchema' => [
+                    ['AttributeName' => 'SK', 'KeyType' => 'HASH'],
+                    ['AttributeName' => 'PK', 'KeyType' => 'RANGE'],
+                ],
+                'Projection' => ['ProjectionType' => 'ALL'],
+            ]];
+
+            return $table;
+        })]);
+
+        $this->expectException(TableDiffers::class);
+        $this->expectExceptionMessage('GlobalSecondaryIndexes');
+
+        $this->bootstrapper($client)->run();
     }
 }

@@ -75,7 +75,7 @@ final readonly class TableSchema
 
     /**
      * Compares a DescribeTable `Table` with the schema on what the schema sets: attribute types, keys, the local
-     * secondary indexes with their projections, and the billing mode. Order of lists that DynamoDB may reorder and
+     * secondary indexes (local and global) with their projections, and the billing mode. Order of lists that DynamoDB may reorder and
      * the extra fields it adds (sizes, ARNs, status) do not count.
      *
      * @param array<array-key, mixed> $table
@@ -107,6 +107,7 @@ final readonly class TableSchema
             'AttributeDefinitions' => self::attributeTypes($source['AttributeDefinitions'] ?? null),
             'KeySchema' => self::keySchema($source['KeySchema'] ?? null),
             'LocalSecondaryIndexes' => self::indexes($source['LocalSecondaryIndexes'] ?? null),
+            'GlobalSecondaryIndexes' => self::indexes($source['GlobalSecondaryIndexes'] ?? null),
             'BillingMode' => $billingMode,
         ];
     }

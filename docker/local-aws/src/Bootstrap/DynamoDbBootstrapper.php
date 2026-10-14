@@ -31,13 +31,13 @@ final readonly class DynamoDbBootstrapper
     /**
      * @return int the number of changes made (0 when everything already matched)
      *
-     * @throws TableDiffers when the table exists but differs from the schema
+     * @throws TableDiffers when the table exists but differs from the schema (TTL on another attribute included)
      * @throws DynamoDbException on any unexpected answer from the emulator
      */
     public function run(): int
     {
         $existing = $this->describe();
-        $changes = $existing === null ? $this->createTable() : $this->verify($existing);
+        $changes = $existing === null ? $this->createTable() : $this->verify($existing) + (int) $this->ensureTimeToLive();
 
         if ($changes === 0) {
             $this->logger->info('no changes');
@@ -85,6 +85,7 @@ final readonly class DynamoDbBootstrapper
 
     private function createTable(): int
     {
+        $created = 1;
         try {
             // The parameters come from a JSON file, so they are passed as a generic command (the typed method wants literals).
             $this->dynamoDb->execute($this->dynamoDb->getCommand('CreateTable', $this->schema->createTableParameters($this->tableName)));
@@ -93,21 +94,45 @@ final readonly class DynamoDbBootstrapper
                 throw $e;
             }
 
-            // Created by someone else between the check and the create: it must still be the table we want.
-            return $this->verify($this->describe() ?? throw $e);
+            // Created by someone else between the check and the create: it must still be the table we want, and it
+            // may not be ACTIVE yet nor have TTL, so the wait and the TTL step below still apply.
+            $created = $this->verify($this->describe() ?? throw $e);
         }
         $this->dynamoDb->waitUntil('TableExists', ['TableName' => $this->tableName]);
-        $this->logger->info('created table', ['table' => $this->tableName]);
+        if ($created === 1) {
+            $this->logger->info('created table', ['table' => $this->tableName]);
+        }
 
-        return 1 + (int) $this->enableTimeToLive();
+        return $created + (int) $this->ensureTimeToLive();
     }
 
     /**
-     * @return bool whether TTL was enabled (false when the emulator does not support it)
+     * Makes sure TTL is on for the schema's attribute, also on a table that already existed (an earlier run may have
+     * failed at this step). TTL on another attribute cannot be moved in place (DynamoDB has to disable it first and the
+     * old one lingers), so it is a difference like any other and the developer decides.
+     *
+     * @return bool whether TTL was enabled now (false when it already was, or when the emulator does not support it)
+     *
+     * @throws TableDiffers when TTL is on for another attribute
      */
-    private function enableTimeToLive(): bool
+    private function ensureTimeToLive(): bool
     {
         try {
+            $ttl = $this->dynamoDb->describeTimeToLive(['TableName' => $this->tableName])->get('TimeToLiveDescription');
+            $ttl = is_array($ttl) ? $ttl : [];
+            $isOn = in_array($ttl['TimeToLiveStatus'] ?? null, ['ENABLED', 'ENABLING'], true);
+            if ($isOn && ($ttl['AttributeName'] ?? null) !== $this->schema->timeToLiveAttribute) {
+                throw new TableDiffers(sprintf(
+                    'Table %s already exists but differs from infra/dynamodb/table.json in: TimeToLive (on %s instead of %s). '
+                    . 'The bootstrap never deletes a table or switches TTL; DynamoDB Local is in memory, so run `make down && make up` to start from an empty one.',
+                    $this->tableName,
+                    is_string($ttl['AttributeName'] ?? null) ? $ttl['AttributeName'] : 'another attribute',
+                    $this->schema->timeToLiveAttribute,
+                ));
+            }
+            if ($isOn) {
+                return false;
+            }
             $this->dynamoDb->updateTimeToLive([
                 'TableName' => $this->tableName,
                 'TimeToLiveSpecification' => ['Enabled' => true, 'AttributeName' => $this->schema->timeToLiveAttribute],
