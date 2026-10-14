@@ -14,6 +14,10 @@ final readonly class ApiConfig
     private const ORIGIN_VERIFY_SECRETS = 'ORIGIN_VERIFY_SECRETS';
     private const MIN_SLOT_LENGTH = 32;
     private const MAX_SLOTS = 2;
+    private const CLIENT_IP_HEADER = 'CLIENT_IP_HEADER';
+
+    /** An HTTP field name is a token (RFC 9110 section 5.6.2). */
+    private const HEADER_NAME_PATTERN = "/\A[!#$%&'*+.^_`|~0-9A-Za-z-]+\z/";
 
     /**
      * One slot: visible ASCII only (no space, no control character), without `"` and `\` (which JSON escapes, and
@@ -23,8 +27,9 @@ final readonly class ApiConfig
 
     /**
      * @param list<string> $originVerifySecrets the accepted `X-Origin-Verify` values (slot A, then B for a rotation)
+     * @param string $clientIpHeader the one header that carries the caller's address (`CloudFront-Viewer-Address`)
      */
-    private function __construct(public array $originVerifySecrets) {}
+    private function __construct(public array $originVerifySecrets, public string $clientIpHeader) {}
 
     /**
      * @param array<array-key, mixed> $env
@@ -35,12 +40,36 @@ final readonly class ApiConfig
     {
         $errors = [];
         $secrets = self::originVerifySecrets($env, $errors);
+        $clientIpHeader = self::clientIpHeader($env, $errors);
         sort($errors);
         if ($errors !== []) {
             throw new InvalidConfiguration($errors);
         }
 
-        return new self($secrets);
+        return new self($secrets, $clientIpHeader);
+    }
+
+    /**
+     * @param array<array-key, mixed> $env
+     * @param list<string> $errors
+     * @param-out list<string> $errors
+     */
+    private static function clientIpHeader(array $env, array &$errors): string
+    {
+        $name = self::CLIENT_IP_HEADER;
+        if (!array_key_exists($name, $env)) {
+            $errors[] = $name . ' is missing';
+
+            return '';
+        }
+        $value = $env[$name];
+        if (!is_string($value) || preg_match(self::HEADER_NAME_PATTERN, $value) !== 1) {
+            $errors[] = $name . ' must be a valid HTTP header name';
+
+            return '';
+        }
+
+        return $value;
     }
 
     /**

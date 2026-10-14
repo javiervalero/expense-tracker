@@ -169,6 +169,8 @@ PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):
 # One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
 EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
 PIPE_MARKERS = build/pipe-test
+# ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
+CLIENT_IP_MARKERS = build/client-ip-test
 
 test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
 	@set -e; \
@@ -176,7 +178,23 @@ test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> E
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
 	$(COMPOSE) stop worker-runner; \
+	rm -rf $(CLIENT_IP_MARKERS); \
+	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
+	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
+	marker() { sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(CLIENT_IP_MARKERS)/markers.json; }; \
+	valid=$$(marker validIp); duplicate=$$(marker duplicateValue); \
+	[ -n "$$valid" ] && [ -n "$$duplicate" ] || fail "the client IP test left no markers in $(CLIENT_IP_MARKERS)/markers.json"; \
+	apilogs=$$($(COMPOSE) logs --no-log-prefix --since "$$ip_since" api-php); \
+	requests=$$(printf '%s\n' "$$apilogs" | grep -F '"message":"request"'); \
+	printf '%s\n' "$$requests" | grep -qF "\"clientIp\":\"$$valid\"" || fail "no request line with clientIp $$valid (the valid CloudFront-Viewer-Address)"; \
+	errorline=$$(printf '%s\n' "$$apilogs" | grep -F '"message":"client address unavailable"' | grep -F '"reason":"multiple-values"' | grep -F "\"value\":\"$$duplicate\"" | head -n 1); \
+	[ -n "$$errorline" ] || fail "no 'client address unavailable' line (multiple-values) for the duplicated header $$duplicate"; \
+	requestid=$$(printf '%s' "$$errorline" | sed -n 's/.*"requestId":"\([0-9a-f]*\)".*/\1/p'); \
+	[ -n "$$requestid" ] || fail "the 'client address unavailable' line has no request id"; \
+	printf '%s\n' "$$requests" | grep -F "\"requestId\":\"$$requestid\"" | grep -qF '"clientIp":"unknown"' || fail "the request $$requestid (duplicated header) was not logged with clientIp unknown"; \
+	printf '%s\n' "$$requests" | grep -qE '"clientIp":"(172|10)\.[0-9]+\.[0-9]+\.[0-9]+"' || fail "no request line with a 172.x or 10.x clientIp (the socket address nginx fills in when the header is absent)"; \
+	echo "make test-integration: client IP log checks passed"; \
 	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
 	rm -rf $(PIPE_MARKERS); \
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \

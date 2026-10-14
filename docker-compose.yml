@@ -232,6 +232,8 @@ services:
     environment:
       APP_ENV: local
       ORIGIN_VERIFY_SECRETS: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
+      # The one header the API reads the caller's address from (nginx fills it from the socket when it is absent).
+      CLIENT_IP_HEADER: CloudFront-Viewer-Address
     # Same hardening as the other services. Not root, so php-fpm runs its workers as that user (the pool `user` and
     # `group` of the image are only for a root master). The one writable place is /tmp.
     user: "10001:10001"

@@ -11,9 +11,9 @@ use App\Tests\Support\Api\ApiTestCase;
  * outside `/api`, the 413 for an oversized body, the `Server` header) and the isolation of php-fpm. They use
  * rawRequest() (request() for the one documented case); the API cases are in {@see HealthApiTest}. Run it through `make test-integration` (the stack must be up).
  *
- * What it does NOT cover: the CloudFront-Viewer-Address fill-in. Nothing in Phase 0 exposes that value, and a
- * test-only route is not allowed in src/ or public/. The map is checked by scripts/tests/nginx-viewer-address.test.sh
- * (nginx alone); the end-to-end check, through ClientIp, comes with Phase 1.
+ * What it does NOT cover: the CloudFront-Viewer-Address fill-in. No route exposes that value, and a test-only route
+ * is not allowed in src/ or public/. The map is checked by scripts/tests/nginx-viewer-address.test.sh (nginx alone);
+ * the end-to-end check, through ClientIp and the request log, is {@see ClientIpOverNginxTest}.
  */
 final class HealthOverNginxTest extends ApiTestCase
 {

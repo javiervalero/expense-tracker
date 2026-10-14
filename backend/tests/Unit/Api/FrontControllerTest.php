@@ -13,7 +13,7 @@ final class FrontControllerTest extends TestCase
 {
     private const WARNING_SCHEME = 'frontcontrollertest-warning';
 
-    private const ENV = ['ORIGIN_VERIFY_SECRETS' => 'frontcontroller-slot-0123456789-0123456789'];
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => 'frontcontroller-slot-0123456789-0123456789', 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address'];
 
     /** @var list<string> */
     private array $calls = [];

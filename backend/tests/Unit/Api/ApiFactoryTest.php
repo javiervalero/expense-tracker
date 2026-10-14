@@ -17,7 +17,7 @@ final class ApiFactoryTest extends TestCase
 {
     private const SECRET_A = 'factory-slot-a-0123456789-0123456789';
     private const SECRET_B = 'factory-slot-b-0123456789-0123456789';
-    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B];
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address'];
 
     /** @var resource */
     private $stream;
@@ -41,7 +41,7 @@ final class ApiFactoryTest extends TestCase
      */
     private static function origin(string $secret = self::SECRET_A): array
     {
-        return ['x-origin-verify' => $secret];
+        return ['x-origin-verify' => $secret, 'cloudfront-viewer-address' => '198.51.100.20:5000'];
     }
 
     public function testTheKernelServesHealthForGetAndHead(): void
@@ -158,7 +158,7 @@ final class ApiFactoryTest extends TestCase
     public function testTheFactoryUsesTheLoadedConfigAndNeverReadsTheEnvironmentItself(): void
     {
         $other = 'loader-slot-0123456789-0123456789-xx';
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other]);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address']);
         $kernel = ApiFactory::fromConfigLoader(static fn(): ApiConfig => $config, $this->stream);
 
         self::assertSame(200, $kernel->handle(new Request('GET', '/api/v1/health', [], self::origin($other), ''))->status);
@@ -212,5 +212,57 @@ final class ApiFactoryTest extends TestCase
             self::assertStringNotContainsString('hunter2-secret', $response->body);
             self::assertStringContainsString($error::class, $this->logged());
         }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private function lines(): array
+    {
+        $lines = [];
+        foreach (explode("\n", trim($this->logged())) as $raw) {
+            $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            self::assertIsArray($decoded);
+            /** @var array<string, mixed> $decoded */
+            $lines[] = $decoded;
+        }
+
+        return $lines;
+    }
+
+    public function testTheRequestLineCarriesTheClientIpFromTheConfiguredHeader(): void
+    {
+        $kernel = ApiFactory::fromEnvironment(self::ENV, $this->stream);
+
+        $kernel->handle(new Request('GET', '/api/v1/health', [], ['cloudfront-viewer-address' => '203.0.113.7:4711'] + self::origin(), ''));
+
+        $lines = $this->lines();
+        self::assertCount(1, $lines);
+        self::assertSame('203.0.113.7', $lines[0]['clientIp']);
+    }
+
+    public function testAnUnusableClientAddressIsServedLoggedAsAnErrorAndShownAsUnknown(): void
+    {
+        $kernel = ApiFactory::fromEnvironment(self::ENV, $this->stream);
+
+        $response = $kernel->handle(new Request('GET', '/api/v1/health', [], ['cloudfront-viewer-address' => '1.1.1.1:1, 2.2.2.2:2'] + self::origin(), ''));
+
+        self::assertSame(200, $response->status);
+        $lines = $this->lines();
+        self::assertSame('client address unavailable', $lines[0]['message']);
+        self::assertSame('multiple-values', $lines[0]['reason']);
+        self::assertSame('unknown', $lines[1]['clientIp']);
+    }
+
+    public function testARequestRejectedByTheOriginCheckNeverReachesClientIp(): void
+    {
+        $kernel = ApiFactory::fromEnvironment(self::ENV, $this->stream);
+
+        $kernel->handle(new Request('GET', '/api/v1/health', [], ['cloudfront-viewer-address' => '203.0.113.7:4711'], ''));
+
+        $lines = $this->lines();
+        self::assertSame(['origin verification failed', 'request'], array_column($lines, 'message'));
+        self::assertSame(403, $lines[1]['status']);
+        self::assertSame('unknown', $lines[1]['clientIp']);
     }
 }

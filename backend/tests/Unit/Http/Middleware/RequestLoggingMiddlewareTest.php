@@ -8,6 +8,7 @@ use App\Http\Handler;
 use App\Http\Middleware\RequestLoggingMiddleware;
 use App\Http\Problem\HttpProblem;
 use App\Http\Request;
+use App\Http\RequestLogContext;
 use App\Http\Response;
 use App\Infrastructure\Logging\JsonLogger;
 use PHPUnit\Framework\TestCase;
@@ -176,5 +177,47 @@ final class RequestLoggingMiddlewareTest extends TestCase
         $middleware->process(new Request('GET', '/api/v1/x', [], [], ''), $this->handler(static fn(): Response => Response::empty(200)));
 
         self::assertGreaterThanOrEqual(0, $this->line()['durationMs']);
+    }
+
+    public function testClientIpIsUnknownWhenNothingBelowSetIt(): void
+    {
+        $this->middleware()->process($this->request(), $this->handler(static fn(): Response => Response::empty(204)));
+
+        self::assertSame('unknown', $this->line()['clientIp']);
+    }
+
+    public function testClientIpIsTheOneThatAMiddlewareBelowRecorded(): void
+    {
+        $this->middleware()->process($this->request(), $this->handler(static function (Request $request): Response {
+            $context = $request->attribute(RequestLogContext::ATTRIBUTE);
+            self::assertInstanceOf(RequestLogContext::class, $context);
+            $context->clientIp = '203.0.113.7';
+
+            return Response::empty(204);
+        }));
+
+        self::assertSame('203.0.113.7', $this->line()['clientIp']);
+    }
+
+    public function testClientIpIsLoggedWhenTheRequestFails(): void
+    {
+        try {
+            $this->middleware()->process($this->request(), $this->handler(static function (Request $request): Response {
+                $context = $request->attribute(RequestLogContext::ATTRIBUTE);
+                self::assertInstanceOf(RequestLogContext::class, $context);
+                $context->clientIp = '198.51.100.4';
+
+                throw new RuntimeException('boom');
+            }));
+            self::fail('Expected the exception to propagate.');
+        } catch (RuntimeException) {
+        }
+
+        self::assertSame('198.51.100.4', $this->line()['clientIp']);
+    }
+
+    private function request(): Request
+    {
+        return new Request('GET', '/api/v1/health', [], [], '');
     }
 }
