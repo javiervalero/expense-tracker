@@ -6,10 +6,10 @@ namespace App\Http\Middleware;
 
 use App\Http\Handler;
 use App\Http\Middleware;
+use App\Http\Problem\HttpProblem;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Logging\JsonLogger;
-use App\Http\Problem\HttpProblem;
 use Closure;
 use Throwable;
 

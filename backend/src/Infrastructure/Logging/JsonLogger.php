@@ -19,6 +19,8 @@ namespace App\Infrastructure\Logging;
  */
 final readonly class JsonLogger
 {
+    /** Longest exception message written to a log line, in bytes. */
+    private const MAX_MESSAGE_BYTES = 1024;
     private const REDACTED = '[REDACTED]';
     private const AUTHORIZATION_KEY = '/^authorization$/i';
     private const AUTHORIZATION_IN_TEXT = '/(authorization\s*[:=]\s*)[^\r\n",]*/i';
@@ -109,6 +111,14 @@ final readonly class JsonLogger
         }
 
         return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $text) ?? self::REDACTED;
+    }
+
+    /**
+     * Caps an exception message for a log field, never cutting a UTF-8 character in half.
+     */
+    public static function capMessage(string $message): string
+    {
+        return mb_strcut($message, 0, self::MAX_MESSAGE_BYTES, 'UTF-8');
     }
 
     /**

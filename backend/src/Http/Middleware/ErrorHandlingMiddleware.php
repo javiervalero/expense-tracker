@@ -25,7 +25,6 @@ use Throwable;
  */
 final readonly class ErrorHandlingMiddleware implements Middleware
 {
-    private const MAX_MESSAGE_BYTES = 1024;
     private const SERVER_PROBLEM_HEADERS = ['retry-after'];
 
     public function __construct(private JsonLogger $logger) {}
@@ -78,7 +77,7 @@ final readonly class ErrorHandlingMiddleware implements Middleware
             'requestId' => $request->attribute(Request::REQUEST_ID),
             'status' => $error instanceof HttpProblem ? $error->problem->status : 500,
             'exception' => $error::class,
-            'exceptionMessage' => mb_strcut($error->getMessage(), 0, self::MAX_MESSAGE_BYTES, 'UTF-8'),
+            'exceptionMessage' => JsonLogger::capMessage($error->getMessage()),
             'file' => $error->getFile(),
             'line' => $error->getLine(),
         ];

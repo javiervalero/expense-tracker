@@ -87,6 +87,37 @@ final class ApiKernelTest extends TestCase
         self::assertSame(['no-store'], $response->headerValues('Cache-Control'));
     }
 
+    public function testAThrowingIdGeneratorFallsBackToAFixedIdInHandle(): void
+    {
+        $seen = null;
+        $response = $this->kernel(static function (Request $r) use (&$seen): Response {
+            $seen = $r->attribute(Request::REQUEST_ID);
+
+            return Response::empty(200);
+        }, static fn(): string => throw new RuntimeException('no entropy'))
+            ->handle(new Request('GET', '/api/v1/x', [], [], ''));
+
+        self::assertSame(200, $response->status);
+        self::assertSame('unknown', $seen);
+    }
+
+    public function testAThrowingIdGeneratorStillAnswersInHandleGlobals(): void
+    {
+        $kernel = $this->kernel(
+            static fn(): Response => Response::empty(200),
+            static fn(): string => throw new RuntimeException('no entropy'),
+        );
+
+        $ok = $kernel->handleGlobals(['REQUEST_METHOD' => 'GET', 'REQUEST_URI' => '/api/v1/x'], '');
+        $tooBig = $kernel->handleGlobals(
+            ['REQUEST_METHOD' => 'POST', 'REQUEST_URI' => '/api/v1/x'],
+            str_repeat('a', JsonBody::MAX_BYTES + 1),
+        );
+
+        self::assertSame(200, $ok->status);
+        self::assertSame(413, $tooBig->status);
+    }
+
     public function testHandleGlobalsBuildsTheRequestFromServerAndBody(): void
     {
         $seen = null;

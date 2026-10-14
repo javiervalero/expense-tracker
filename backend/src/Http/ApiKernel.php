@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace App\Http;
 
-use App\Http\Problem\HttpProblem;
 use App\Http\Middleware\RequestLoggingMiddleware;
+use App\Http\Problem\HttpProblem;
 use App\Http\Problem\ProblemDetails;
 use App\Infrastructure\Logging\JsonLogger;
 use Closure;
@@ -20,7 +20,7 @@ use Throwable;
 final readonly class ApiKernel
 {
     private const REQUEST_ID_BYTES = 8;
-    private const MAX_MESSAGE_BYTES = 1024;
+    private const FALLBACK_REQUEST_ID = 'unknown';
 
     /** @var Closure(): string */
     private Closure $requestIds;
@@ -37,7 +37,7 @@ final readonly class ApiKernel
 
     public function handle(Request $request): Response
     {
-        return $this->dispatch($request, ($this->requestIds)());
+        return $this->dispatch($request, $this->newRequestId());
     }
 
     /**
@@ -49,7 +49,7 @@ final readonly class ApiKernel
      */
     public function handleGlobals(array $server, string $body): Response
     {
-        $requestId = ($this->requestIds)();
+        $requestId = $this->newRequestId();
         try {
             if (strlen($body) > JsonBody::MAX_BYTES) {
                 throw HttpProblem::of(413, 'The request body is larger than ' . JsonBody::MAX_BYTES . ' bytes.');
@@ -60,6 +60,18 @@ final readonly class ApiKernel
         }
 
         return $this->dispatch($request, $requestId);
+    }
+
+    /**
+     * A broken generator (no entropy, a bad injected closure) must not break the "never throws" promise.
+     */
+    private function newRequestId(): string
+    {
+        try {
+            return ($this->requestIds)();
+        } catch (Throwable) {
+            return self::FALLBACK_REQUEST_ID;
+        }
     }
 
     private function dispatch(Request $request, string $requestId): Response
@@ -119,7 +131,7 @@ final readonly class ApiKernel
             $this->logger?->error('request failed past the error handler', [
                 'requestId' => $requestId,
                 'exception' => $error::class,
-                'exceptionMessage' => mb_strcut($error->getMessage(), 0, self::MAX_MESSAGE_BYTES, 'UTF-8'),
+                'exceptionMessage' => JsonLogger::capMessage($error->getMessage()),
                 'file' => $error->getFile(),
                 'line' => $error->getLine(),
             ]);

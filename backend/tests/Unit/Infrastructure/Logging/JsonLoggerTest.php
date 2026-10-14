@@ -172,4 +172,12 @@ final class JsonLoggerTest extends TestCase
 
         $this->addToAssertionCount(1);
     }
+
+    public function testCapMessageCutsAtTheByteLimitWithoutSplittingACharacter(): void
+    {
+        $capped = JsonLogger::capMessage(str_repeat('a', 1023) . 'é');
+
+        self::assertSame(str_repeat('a', 1023), $capped);
+        self::assertSame('short', JsonLogger::capMessage('short'));
+    }
 }
