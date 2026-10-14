@@ -123,6 +123,50 @@ final class ErrorHandlingMiddlewareTest extends TestCase
         self::assertStringNotContainsString('inner-secret', json_encode($line, JSON_THROW_ON_ERROR));
     }
 
+    public function testA4xxHttpProblemKeepsItsAllowHeaderAndIsNotLogged(): void
+    {
+        $response = $this->process(static function (): Response {
+            throw HttpProblem::of(405, null, null, ['Allow' => ['GET, HEAD']]);
+        });
+
+        self::assertSame(405, $response->status);
+        self::assertSame(['GET, HEAD'], $response->headerValues('Allow'));
+        self::assertSame('', $this->logged());
+    }
+
+    public function testAServerSideHttpProblemShowsNoDetailExtensionsOrUnlistedHeaders(): void
+    {
+        $response = $this->process(static function (): Response {
+            throw new HttpProblem(
+                new \App\Http\Problem\ProblemDetails(503, 'Service Unavailable', detail: 'db-host-secret', extensions: ['x' => 'ext-secret']),
+                null,
+                ['Retry-After' => ['5'], 'X-Internal' => ['hdr-secret']],
+            );
+        });
+
+        self::assertSame(503, $response->status);
+        self::assertSame(['5'], $response->headerValues('Retry-After'));
+        self::assertSame([], $response->headerValues('X-Internal'));
+        self::assertSame(
+            ['type' => 'about:blank', 'title' => 'Service Unavailable', 'status' => 503],
+            json_decode($response->body, true, 512, JSON_THROW_ON_ERROR),
+        );
+        self::assertStringContainsString('db-host-secret', $this->logged(), 'the detail still goes to the log');
+    }
+
+    public function testTheLoggedExceptionMessageIsCutTo1024Bytes(): void
+    {
+        $this->process(static function (): Response {
+            throw new RuntimeException(str_repeat('é', 1000));
+        });
+
+        $line = json_decode($this->logged(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($line);
+        self::assertIsString($line['exceptionMessage']);
+        self::assertSame(1024, strlen($line['exceptionMessage']));
+        self::assertTrue(mb_check_encoding($line['exceptionMessage'], 'UTF-8'));
+    }
+
     public function testAProblemThatCannotBeEncodedFallsBackToTheGeneric500(): void
     {
         $response = $this->process(static function (): Response {

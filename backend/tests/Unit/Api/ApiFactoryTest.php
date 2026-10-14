@@ -61,6 +61,16 @@ final class ApiFactoryTest extends TestCase
         self::assertStringContainsString('"requestId":"', $this->logged());
     }
 
+    public function testAClientErrorIsLoggedExactlyOnceWithItsRealStatus(): void
+    {
+        $response = ApiFactory::fromEnvironment([], $this->stream)->handle(new Request('POST', '/api/v1/health', [], [], ''));
+
+        self::assertSame(405, $response->status);
+        self::assertSame(1, substr_count($this->logged(), "\n"));
+        self::assertStringContainsString('"status":405', $this->logged());
+        self::assertStringNotContainsString('"level":"error"', $this->logged());
+    }
+
     public function testInvalidConfigurationYieldsAFailClosedKernelThatAnswers500ToEverything(): void
     {
         $kernel = ApiFactory::fromConfigLoader(

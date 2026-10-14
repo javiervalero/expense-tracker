@@ -6,6 +6,7 @@ namespace App\Tests\Unit\Http\Middleware;
 
 use App\Http\Handler;
 use App\Http\Middleware\RequestLoggingMiddleware;
+use App\Http\Problem\HttpProblem;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Logging\JsonLogger;
@@ -98,7 +99,7 @@ final class RequestLoggingMiddlewareTest extends TestCase
         }
     }
 
-    public function testThePathIsTruncatedTo256Characters(): void
+    public function testThePathIsTruncatedTo256Bytes(): void
     {
         $request = new Request('GET', '/api/v1/' . str_repeat('a', 400), [], [], '');
 
@@ -123,6 +124,49 @@ final class RequestLoggingMiddlewareTest extends TestCase
         }
 
         self::assertSame(500, $this->line()['status']);
+    }
+
+    public function testAnHttpProblemIsLoggedWithItsOwnStatus(): void
+    {
+        foreach ([401, 413] as $status) {
+            $this->setUp();
+            try {
+                $this->middleware()->process(
+                    new Request('POST', '/api/v1/things', [], [], ''),
+                    $this->handler(static function () use ($status): Response {
+                        throw HttpProblem::of($status);
+                    }),
+                );
+                self::fail('Expected the problem to propagate.');
+            } catch (HttpProblem $problem) {
+                self::assertSame($status, $problem->problem->status);
+            }
+
+            self::assertSame($status, $this->line()['status']);
+        }
+    }
+
+    public function testAnUnknownMethodIsLoggedAsOther(): void
+    {
+        $this->middleware()->process(
+            new Request('BREW' . str_repeat('x', 500), '/api/v1/x', [], [], ''),
+            $this->handler(static fn(): Response => Response::empty(405)),
+        );
+
+        self::assertSame('OTHER', $this->line()['method']);
+    }
+
+    public function testEveryKnownMethodIsLoggedAsItself(): void
+    {
+        foreach (['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as $method) {
+            $this->setUp();
+            $this->middleware()->process(
+                new Request($method, '/api/v1/x', [], [], ''),
+                $this->handler(static fn(): Response => Response::empty(200)),
+            );
+
+            self::assertSame($method, $this->line()['method']);
+        }
     }
 
     public function testTheDefaultClockIsMonotonicAndNonNegative(): void

@@ -9,17 +9,21 @@ use App\Http\Middleware;
 use App\Http\Request;
 use App\Http\Response;
 use App\Infrastructure\Logging\JsonLogger;
+use App\Http\Problem\HttpProblem;
 use Closure;
 use Throwable;
 
 /**
- * One JSON log line per request: request id, method, path (no query string, at most 256 characters), status and
+ * One JSON log line per request: request id, method, path (no query string, at most 256 bytes), status and
  * duration. Headers, cookies, query values and the body are never logged. If something below throws, the line
- * says 500 (the error middleware outside this one answers that way) and the exception goes on.
+ * says 500 (the error middleware outside this one answers that way) and the exception goes on; an HttpProblem is
+ * logged with its own status. The method is logged only if it is a known one, else "OTHER".
  */
 final readonly class RequestLoggingMiddleware implements Middleware
 {
     private const MAX_PATH_LENGTH = 256;
+    private const KNOWN_METHODS = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'];
+    private const UNKNOWN_METHOD = 'OTHER';
     private const NANOSECONDS_PER_MILLISECOND = 1_000_000;
     private const DURATION_DECIMALS = 3;
 
@@ -39,6 +43,10 @@ final readonly class RequestLoggingMiddleware implements Middleware
         $start = ($this->nanoseconds)();
         try {
             $response = $next->handle($request);
+        } catch (HttpProblem $problem) {
+            $this->log($request, $problem->problem->status, $start);
+
+            throw $problem;
         } catch (Throwable $error) {
             $this->log($request, 500, $start);
 
@@ -53,7 +61,7 @@ final readonly class RequestLoggingMiddleware implements Middleware
     {
         $this->logger->info('request', [
             'requestId' => $request->attribute(Request::REQUEST_ID),
-            'method' => $request->method,
+            'method' => in_array($request->method, self::KNOWN_METHODS, true) ? $request->method : self::UNKNOWN_METHOD,
             'path' => mb_strcut($request->path, 0, self::MAX_PATH_LENGTH, 'UTF-8'),
             'status' => $status,
             'durationMs' => round(
