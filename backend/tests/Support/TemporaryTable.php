@@ -29,7 +29,7 @@ final class TemporaryTable
         unset($schema['TimeToLiveAttribute']);
         $name = self::NAME_PREFIX . bin2hex(random_bytes(8));
 
-        $client->createTable(['TableName' => $name] + $schema);
+        $client->execute($client->getCommand('CreateTable', ['TableName' => $name] + $schema));
         $client->waitUntil('TableExists', ['TableName' => $name]);
 
         return new self($client, $name);

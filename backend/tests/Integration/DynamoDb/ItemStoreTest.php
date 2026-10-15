@@ -62,8 +62,13 @@ final class ItemStoreTest extends TestCase
         $this->store->putItem($item);
 
         $read = $this->store->getItem([TableLayout::PK => 'USER#1', TableLayout::SK => 'EXP#a']);
+
+        // DynamoDB does not keep attribute order. assertSame is strict about types: 123456789012 must come back as
+        // an int (not a float or a string) and '' as an empty string.
+        self::assertNotNull($read);
+        ksort($read);
+        ksort($item);
         self::assertSame($item, $read);
-        self::assertIsInt($read['amountCents'] ?? null);
     }
 
     public function testGetItemOfAMissingItemIsNull(): void

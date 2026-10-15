@@ -6,7 +6,6 @@ namespace App\Tests\Unit\Infrastructure\DynamoDb;
 
 use App\Infrastructure\DynamoDb\ConditionFailed;
 use App\Infrastructure\DynamoDb\ItemStore;
-use App\Infrastructure\DynamoDb\QueryPage;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
 use App\Infrastructure\DynamoDb\TransactionOperation;
@@ -23,7 +22,7 @@ final class ItemStoreTest extends TestCase
     private const TABLE = 'expense-tracker-test';
     private const PRIVATE_NOTE = 'private-note-xyz-123';
 
-    /** @var list<array{name: string, args: array<string, mixed>}> */
+    /** @var list<array{name: string, args: array<array-key, mixed>}> */
     private array $sent = [];
     private MockHandler $mock;
 
@@ -40,9 +39,10 @@ final class ItemStoreTest extends TestCase
             'region' => 'eu-west-1',
             'credentials' => ['key' => 'localdev', 'secret' => 'localdevsecret'],
             'handler' => $this->mock,
+            'retries' => 0,
         ]);
         $client->getHandlerList()->appendInit(function (callable $next): callable {
-            return function (CommandInterface $command) use ($next) {
+            return function (CommandInterface $command) use ($next): mixed {
                 $this->sent[] = ['name' => $command->getName(), 'args' => $command->toArray()];
 
                 return $next($command);
@@ -52,13 +52,16 @@ final class ItemStoreTest extends TestCase
         return new ItemStore($client, self::TABLE);
     }
 
+    /**
+     * @param array<string, mixed> $body
+     */
     private function failure(string $code, string $message = 'boom', array $body = []): DynamoDbException
     {
         return new DynamoDbException($message, new Command('X'), ['code' => $code, 'body' => $body]);
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<array-key, mixed>
      */
     private function onlyRequest(string $name): array
     {
@@ -168,7 +171,6 @@ final class ItemStoreTest extends TestCase
             exclusiveStartKey: ['PK' => 'USER#1', 'SK' => 'EXP#z', 'LSI1SK' => 'EXP#2026-02-01#z'],
         );
 
-        self::assertInstanceOf(QueryPage::class, $page);
         self::assertCount(2, $page->items);
         self::assertSame('EXP#2026-01-02#b', $page->items[0]['LSI1SK']);
         self::assertSame(['PK' => 'USER#1', 'SK' => 'EXP#a', 'LSI1SK' => 'EXP#2026-01-01#a'], $page->lastEvaluatedKey);
@@ -211,8 +213,8 @@ final class ItemStoreTest extends TestCase
         ]);
 
         $args = $this->onlyRequest('TransactWriteItems');
+        /** @var list<array<string, array<string, mixed>>> $items */
         $items = $args['TransactItems'];
-        self::assertIsArray($items);
         self::assertCount(4, $items);
         self::assertSame(self::TABLE, $items[0]['Put']['TableName']);
         self::assertSame(['PK' => ['S' => 'USER#1'], 'SK' => ['S' => 'PROFILE']], $items[0]['Put']['Item']);

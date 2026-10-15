@@ -34,7 +34,7 @@ final class DynamoDbSettingsTest extends TestCase
 
     public function testEmptyOptionalValuesCountAsAbsent(): void
     {
-        $settings = DynamoDbSettings::fromEnvironment(['DYNAMODB_TABLE' => 't', 'DYNAMODB_ENDPOINT' => '', 'AWS_REGION' => '']);
+        $settings = DynamoDbSettings::fromEnvironment(['DYNAMODB_TABLE' => 'tbl', 'DYNAMODB_ENDPOINT' => '', 'AWS_REGION' => '']);
 
         self::assertNull($settings->endpoint);
         self::assertNull($settings->region);
