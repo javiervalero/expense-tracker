@@ -442,8 +442,7 @@ final class ItemStoreTest extends TestCase
 
     public function testAnUnmarshalableValueBecomesAStorageFailureWithoutItemData(): void
     {
-        $resource = fopen('php://memory', 'rb');
-        self::assertIsResource($resource);
+        $resource = static fn(): int => 1; // an object the marshaler cannot represent
 
         try {
             $this->store()->putItem(['PK' => 'A', 'SK' => 'B', self::PRIVATE_NOTE => $resource]);
@@ -454,15 +453,12 @@ final class ItemStoreTest extends TestCase
             self::assertNull($e->getPrevious());
             self::assertStringNotContainsString(self::PRIVATE_NOTE, $e->getMessage());
             self::assertSame([], $this->sent);
-        } finally {
-            fclose($resource);
         }
     }
 
     public function testAnUnmarshalableKeyAndTransactionValueAreMappedToo(): void
     {
-        $resource = fopen('php://memory', 'rb');
-        self::assertIsResource($resource);
+        $resource = static fn(): int => 1; // an object the marshaler cannot represent
         $store = $this->store();
 
         try {
@@ -476,8 +472,6 @@ final class ItemStoreTest extends TestCase
             self::fail('Expected StorageFailure');
         } catch (StorageFailure $e) {
             self::assertSame('TransactWriteItems', $e->operation);
-        } finally {
-            fclose($resource);
         }
     }
 

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\DynamoDb;
 
 use App\Infrastructure\Config\InvalidConfiguration;
+use App\Infrastructure\Config\LocalEndpoint;
 
 /**
  * Where the data lives: the table (required), plus an endpoint (only for the local stand-in) and a region (on Lambda
@@ -16,6 +17,8 @@ final readonly class DynamoDbSettings
     private const ENDPOINT = 'DYNAMODB_ENDPOINT';
     private const REGION = 'AWS_REGION';
     /** DynamoDB's own rule for table names: 3 to 255 of letters, digits, underscore, hyphen and dot. */
+    /** An AWS region name such as `eu-west-1` or `us-gov-west-1`. */
+    private const REGION_PATTERN = '/\A[a-z]{2}(-[a-z]+)+-\d\z/';
     private const TABLE_NAME_PATTERN = '/\A[A-Za-z0-9_.-]{3,255}\z/';
 
     private function __construct(public string $tableName, public ?string $endpoint, public ?string $region) {}
@@ -29,8 +32,13 @@ final readonly class DynamoDbSettings
     {
         $errors = [];
         $table = self::table($env, $errors);
-        $endpoint = self::optionalString($env, self::ENDPOINT, $errors);
-        $region = self::optionalString($env, self::REGION, $errors);
+        $endpoint = self::optionalString($env, self::ENDPOINT, $errors, static fn(string $value): ?string => LocalEndpoint::violation($value));
+        $region = self::optionalString(
+            $env,
+            self::REGION,
+            $errors,
+            static fn(string $value): ?string => preg_match(self::REGION_PATTERN, $value) === 1 ? null : 'is not a valid region',
+        );
         sort($errors);
         if ($errors !== []) {
             throw new InvalidConfiguration($errors);
@@ -75,8 +83,9 @@ final readonly class DynamoDbSettings
      * @param array<array-key, mixed> $env
      * @param list<string> $errors
      * @param-out list<string> $errors
+     * @param callable(string): ?string $violation the reason a present value is refused (never containing it), or null
      */
-    private static function optionalString(array $env, string $name, array &$errors): ?string
+    private static function optionalString(array $env, string $name, array &$errors, callable $violation): ?string
     {
         $value = $env[$name] ?? null;
         if ($value === null || $value === '') {
@@ -84,6 +93,12 @@ final readonly class DynamoDbSettings
         }
         if (!is_string($value)) {
             $errors[] = $name . ' is not a string';
+
+            return null;
+        }
+        $reason = $violation($value);
+        if ($reason !== null) {
+            $errors[] = $name . ' ' . $reason;
 
             return null;
         }

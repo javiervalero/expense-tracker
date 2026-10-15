@@ -51,7 +51,7 @@ final class TemporaryTableTest extends TestCase
             TemporaryTable::create($this->client($mock));
             self::fail('Expected the waiter failure');
         } catch (\Throwable $e) {
-            self::assertStringNotContainsString('DeleteTable', $e->getMessage());
+            self::assertStringContainsString('describe failed', $e->getMessage());
         }
 
         self::assertSame(['CreateTable', 'DescribeTable', 'DeleteTable'], $this->sent);
@@ -68,8 +68,9 @@ final class TemporaryTableTest extends TestCase
         try {
             TemporaryTable::create($this->client($mock));
             self::fail('Expected the waiter failure');
-        } catch (DynamoDbException $e) {
-            self::assertSame('AccessDeniedException', $e->getAwsErrorCode());
+        } catch (\RuntimeException $e) {
+            self::assertStringContainsString('describe failed', $e->getMessage());
+            self::assertStringNotContainsString('delete failed', $e->getMessage());
         }
     }
 }

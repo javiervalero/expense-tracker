@@ -15,8 +15,11 @@ final class TransactionCancelled extends RuntimeException
     /**
      * @param list<string> $reasons
      */
-    public function __construct(public readonly array $reasons)
-    {
+    public function __construct(
+        public readonly array $reasons,
+        public readonly ?string $awsRequestId = null,
+        public readonly ?int $httpStatusCode = null,
+    ) {
         parent::__construct('DynamoDB transaction cancelled: [' . implode(', ', $reasons) . ']');
     }
 }

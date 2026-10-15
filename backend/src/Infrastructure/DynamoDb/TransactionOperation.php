@@ -6,7 +6,8 @@ namespace App\Infrastructure\DynamoDb;
 
 /**
  * One write inside {@see ItemStore::transactWrite()}. Values are plain PHP values (the store marshals them) and are
- * only ever passed as expression values, never spliced into an expression.
+ * only ever passed as expression values, never spliced into an expression. Every expression string and attribute-name
+ * map is typed `literal-string`, so PHPStan rejects one built from input.
  */
 final readonly class TransactionOperation
 {
@@ -17,7 +18,9 @@ final readonly class TransactionOperation
 
     /**
      * @param array<string, mixed> $keyOrItem the full item for a put, the key otherwise
-     * @param array<string, string> $names
+     * @param literal-string|null $updateExpression
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      */
     private function __construct(
@@ -31,7 +34,8 @@ final readonly class TransactionOperation
 
     /**
      * @param array<string, mixed> $item
-     * @param array<string, string> $names
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      */
     public static function put(array $item, ?string $condition = null, array $names = [], array $values = []): self
@@ -41,8 +45,10 @@ final readonly class TransactionOperation
 
     /**
      * @param array<string, mixed> $key
-     * @param array<string, string> $names
+     * @param literal-string $updateExpression
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
+     * @param literal-string|null $condition
      */
     public static function update(array $key, string $updateExpression, array $names, array $values, ?string $condition = null): self
     {
@@ -51,7 +57,8 @@ final readonly class TransactionOperation
 
     /**
      * @param array<string, mixed> $key
-     * @param array<string, string> $names
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      */
     public static function delete(array $key, ?string $condition = null, array $names = [], array $values = []): self
@@ -61,7 +68,8 @@ final readonly class TransactionOperation
 
     /**
      * @param array<string, mixed> $key
-     * @param array<string, string> $names
+     * @param literal-string $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      */
     public static function conditionCheck(array $key, string $condition, array $names = [], array $values = []): self

@@ -30,7 +30,17 @@ final class TemporaryTable
         $name = self::NAME_PREFIX . bin2hex(random_bytes(8));
 
         $client->execute($client->getCommand('CreateTable', ['TableName' => $name] + $schema));
-        $client->waitUntil('TableExists', ['TableName' => $name]);
+        try {
+            $client->waitUntil('TableExists', ['TableName' => $name]);
+        } catch (\Throwable $failure) {
+            // The table exists but never became usable: do not leave it behind. A failed cleanup must not mask the cause.
+            try {
+                $client->deleteTable(['TableName' => $name]);
+            } catch (\Throwable) {
+            }
+
+            throw $failure;
+        }
 
         return new self($client, $name);
     }

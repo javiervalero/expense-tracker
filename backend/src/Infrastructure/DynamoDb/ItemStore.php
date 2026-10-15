@@ -7,19 +7,30 @@ namespace App\Infrastructure\DynamoDb;
 use Aws\DynamoDb\DynamoDbClient;
 use Aws\DynamoDb\Marshaler;
 use Aws\Exception\AwsException;
+use Aws\Exception\CredentialsException;
+use Aws\Exception\UnresolvedEndpointException;
+use InvalidArgumentException;
+use UnexpectedValueException;
 
 /**
  * A thin, typed adapter over the SDK. Items, keys and expression values are plain PHP arrays (integers stay
  * integers); expressions use `#name` and `:value` placeholders only, with the names and values passed alongside.
  * Reads are always strongly consistent (ADR 0002: a just-saved expense must show up in the next list).
  *
+ * Every expression string is a `literal-string` and every expression-attribute-name map holds literal strings, so
+ * PHPStan rejects an expression built from input; values travel only in the values maps.
+ *
  * SDK failures become {@see ConditionFailed}, {@see TransactionCancelled} or {@see StorageFailure}; none of their
- * messages contain item data.
+ * messages contain item data, and none chains the original exception. Client-side failures (credentials, endpoint
+ * resolution, SDK validation, marshalling a value) become a StorageFailure with the code `ClientError`.
  */
 final readonly class ItemStore
 {
     private const CONDITION_FAILED = 'ConditionalCheckFailedException';
     private const TRANSACTION_CANCELLED = 'TransactionCanceledException';
+    private const CLIENT_ERROR = 'ClientError';
+    /** DynamoDB's own cap on `Limit` is the table size; 1000 keeps one page well inside the 1 MB response cap. */
+    public const int MAX_QUERY_LIMIT = 1000;
 
     private Marshaler $marshaler;
 
@@ -37,7 +48,7 @@ final readonly class ItemStore
      */
     public function getItem(array $key): ?array
     {
-        $result = $this->send('GetItem', [
+        $result = $this->send('GetItem', fn(): array => [
             'TableName' => $this->tableName,
             'Key' => $this->marshaler->marshalItem($key),
             'ConsistentRead' => true,
@@ -49,7 +60,8 @@ final readonly class ItemStore
 
     /**
      * @param array<string, mixed> $item
-     * @param array<string, string> $names
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      *
      * @throws ConditionFailed
@@ -57,14 +69,16 @@ final readonly class ItemStore
      */
     public function putItem(array $item, ?string $condition = null, array $names = [], array $values = []): void
     {
-        $this->send('PutItem', ['TableName' => $this->tableName, 'Item' => $this->marshaler->marshalItem($item)]
+        $this->send('PutItem', fn(): array => ['TableName' => $this->tableName, 'Item' => $this->marshaler->marshalItem($item)]
             + $this->expressions($condition, $names, $values));
     }
 
     /**
      * @param array<string, mixed> $key
-     * @param array<string, string> $names
+     * @param literal-string $updateExpression
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
+     * @param literal-string|null $condition
      *
      * @return array<string, mixed> the whole item after the update
      *
@@ -73,7 +87,7 @@ final readonly class ItemStore
      */
     public function updateItem(array $key, string $updateExpression, array $names, array $values, ?string $condition = null): array
     {
-        $result = $this->send('UpdateItem', [
+        $result = $this->send('UpdateItem', fn(): array => [
             'TableName' => $this->tableName,
             'Key' => $this->marshaler->marshalItem($key),
             'UpdateExpression' => $updateExpression,
@@ -86,7 +100,8 @@ final readonly class ItemStore
 
     /**
      * @param array<string, mixed> $key
-     * @param array<string, string> $names
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      *
      * @throws ConditionFailed
@@ -94,16 +109,19 @@ final readonly class ItemStore
      */
     public function deleteItem(array $key, ?string $condition = null, array $names = [], array $values = []): void
     {
-        $this->send('DeleteItem', ['TableName' => $this->tableName, 'Key' => $this->marshaler->marshalItem($key)]
+        $this->send('DeleteItem', fn(): array => ['TableName' => $this->tableName, 'Key' => $this->marshaler->marshalItem($key)]
             + $this->expressions($condition, $names, $values));
     }
 
     /**
-     * @param array<string, string> $names
+     * @param literal-string $keyCondition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
-     * @param string|null $indexName a local secondary index (`TableLayout::LSI1`), or null for the base table
+     * @param string|null $indexName `TableLayout::LSI1`, or null for the base table
+     * @param int|null $limit 1 to {@see self::MAX_QUERY_LIMIT} items, or null for no limit
      * @param array<string, mixed>|null $exclusiveStartKey the previous page's `lastEvaluatedKey`
      *
+     * @throws InvalidArgumentException for an unknown index or a limit outside the range (nothing is sent)
      * @throws StorageFailure
      */
     public function query(
@@ -115,6 +133,36 @@ final readonly class ItemStore
         ?int $limit = null,
         ?array $exclusiveStartKey = null,
     ): QueryPage {
+        if ($indexName !== null && $indexName !== TableLayout::LSI1) {
+            throw new InvalidArgumentException('Unknown index.');
+        }
+        if ($limit !== null && ($limit < 1 || $limit > self::MAX_QUERY_LIMIT)) {
+            throw new InvalidArgumentException(sprintf('The limit must be between 1 and %d.', self::MAX_QUERY_LIMIT));
+        }
+
+        $result = $this->send('Query', fn(): array => $this->queryRequest($keyCondition, $names, $values, $indexName, $scanForward, $limit, $exclusiveStartKey));
+        $rawItems = $result['Items'] ?? [];
+        $items = [];
+        foreach (is_array($rawItems) ? $rawItems : [] as $rawItem) {
+            if (is_array($rawItem)) {
+                $items[] = $this->unmarshal($rawItem);
+            }
+        }
+        $lastKey = $result['LastEvaluatedKey'] ?? null;
+
+        return new QueryPage($items, is_array($lastKey) ? $this->unmarshal($lastKey) : null);
+    }
+
+    /**
+     * @param literal-string $keyCondition
+     * @param array<string, literal-string> $names
+     * @param array<string, mixed> $values
+     * @param array<string, mixed>|null $exclusiveStartKey
+     *
+     * @return array<string, mixed>
+     */
+    private function queryRequest(string $keyCondition, array $names, array $values, ?string $indexName, bool $scanForward, ?int $limit, ?array $exclusiveStartKey): array
+    {
         $request = [
             'TableName' => $this->tableName,
             'KeyConditionExpression' => $keyCondition,
@@ -131,17 +179,7 @@ final readonly class ItemStore
             $request['ExclusiveStartKey'] = $this->marshaler->marshalItem($exclusiveStartKey);
         }
 
-        $result = $this->send('Query', $request);
-        $rawItems = $result['Items'] ?? [];
-        $items = [];
-        foreach (is_array($rawItems) ? $rawItems : [] as $rawItem) {
-            if (is_array($rawItem)) {
-                $items[] = $this->unmarshal($rawItem);
-            }
-        }
-        $lastKey = $result['LastEvaluatedKey'] ?? null;
-
-        return new QueryPage($items, is_array($lastKey) ? $this->unmarshal($lastKey) : null);
+        return $request;
     }
 
     /**
@@ -149,22 +187,23 @@ final readonly class ItemStore
      *
      * @param list<TransactionOperation> $operations
      *
-     * @throws \InvalidArgumentException when there is nothing to write
-     * @throws ConditionFailed
+     * @throws InvalidArgumentException when there is nothing to write
      * @throws TransactionCancelled
      * @throws StorageFailure
      */
     public function transactWrite(array $operations): void
     {
         if ($operations === []) {
-            throw new \InvalidArgumentException('A transaction needs at least one operation.');
+            throw new InvalidArgumentException('A transaction needs at least one operation.');
         }
-        $items = [];
-        foreach ($operations as $operation) {
-            $items[] = [$operation->kind => $this->transactionBody($operation)];
-        }
+        $this->send('TransactWriteItems', function () use ($operations): array {
+            $items = [];
+            foreach ($operations as $operation) {
+                $items[] = [$operation->kind => $this->transactionBody($operation)];
+            }
 
-        $this->send('TransactWriteItems', ['TransactItems' => $items]);
+            return ['TransactItems' => $items];
+        });
     }
 
     /**
@@ -185,7 +224,8 @@ final readonly class ItemStore
     }
 
     /**
-     * @param array<string, string> $names
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
      *
      * @return array<string, mixed>
@@ -218,30 +258,42 @@ final readonly class ItemStore
     }
 
     /**
-     * @param array<string, mixed> $request
+     * Builds the request inside the mapped region, so a value the marshaler refuses is reported like any other
+     * client-side failure.
+     *
+     * @param callable(): array<string, mixed> $buildRequest
      *
      * @return array<array-key, mixed>
+     *
+     * @throws ConditionFailed
+     * @throws TransactionCancelled
+     * @throws StorageFailure
      */
-    private function send(string $operation, array $request): array
+    private function send(string $operation, callable $buildRequest): array
     {
         try {
-            return $this->client->execute($this->client->getCommand($operation, $request))->toArray();
+            return $this->client->execute($this->client->getCommand($operation, $buildRequest()))->toArray();
         } catch (AwsException $e) {
             throw $this->mapped($operation, $e);
+        } catch (CredentialsException|UnresolvedEndpointException|InvalidArgumentException|UnexpectedValueException) {
+            // Not chained, and the message is dropped: it can quote the offending value.
+            throw new StorageFailure($operation, self::CLIENT_ERROR);
         }
     }
 
     private function mapped(string $operation, AwsException $e): ConditionFailed|TransactionCancelled|StorageFailure
     {
         $code = $e->getAwsErrorCode();
+        $requestId = $e->getAwsRequestId();
+        $status = $e->getStatusCode();
         if ($code === self::CONDITION_FAILED) {
-            return new ConditionFailed($operation);
+            return new ConditionFailed($operation, $requestId, $status);
         }
         if ($code === self::TRANSACTION_CANCELLED) {
-            return new TransactionCancelled($this->cancellationCodes($e));
+            return new TransactionCancelled($this->cancellationCodes($e), $requestId, $status);
         }
 
-        return new StorageFailure($operation, $code);
+        return new StorageFailure($operation, $code, $requestId, $status);
     }
 
     /**

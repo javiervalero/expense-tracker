@@ -12,8 +12,11 @@ use RuntimeException;
  */
 final class ConditionFailed extends RuntimeException
 {
-    public function __construct(public readonly string $operation)
-    {
+    public function __construct(
+        public readonly string $operation,
+        public readonly ?string $awsRequestId = null,
+        public readonly ?int $httpStatusCode = null,
+    ) {
         parent::__construct('DynamoDB ' . $operation . ' condition failed');
     }
 }
