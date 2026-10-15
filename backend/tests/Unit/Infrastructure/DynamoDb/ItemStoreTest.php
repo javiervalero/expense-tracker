@@ -7,14 +7,19 @@ namespace App\Tests\Unit\Infrastructure\DynamoDb;
 use App\Infrastructure\DynamoDb\ConditionFailed;
 use App\Infrastructure\DynamoDb\ItemStore;
 use App\Infrastructure\DynamoDb\StorageFailure;
+use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
 use App\Infrastructure\DynamoDb\TransactionOperation;
 use Aws\CommandInterface;
 use Aws\DynamoDb\DynamoDbClient;
 use Aws\DynamoDb\Exception\DynamoDbException;
-use Aws\Result;
 use Aws\Command;
+use Aws\Exception\CredentialsException;
+use Aws\Exception\UnresolvedEndpointException;
 use Aws\MockHandler;
+use Aws\Result;
+use GuzzleHttp\Psr7\Response;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ItemStoreTest extends TestCase
@@ -331,26 +336,214 @@ final class ItemStoreTest extends TestCase
         } catch (StorageFailure $e) {
             self::assertSame('GetItem', $e->operation);
             self::assertNull($e->awsErrorCode);
+            self::assertNull($e->awsRequestId);
+            self::assertNull($e->getPrevious());
             self::assertStringNotContainsString('connection refused', $e->getMessage());
         }
     }
 
-    public function testQueryAndGetFailuresAreMapped(): void
+    public function testQueryFailureIsMappedToStorageFailure(): void
     {
-        $this->mock->append($this->failure('InternalServerError'), $this->failure('ConditionalCheckFailedException'));
-        $store = $this->store();
+        $this->mock->append($this->failure('InternalServerError'));
 
         try {
-            $store->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x']);
+            $this->store()->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x']);
             self::fail('Expected StorageFailure');
         } catch (StorageFailure $e) {
             self::assertSame('Query', $e->operation);
         }
+    }
+
+    public function testTransactWriteMapsAnyOtherFailureToStorageFailure(): void
+    {
+        $this->mock->append($this->failure('InternalServerError'));
+
         try {
-            $store->transactWrite([TransactionOperation::put(['PK' => 'A', 'SK' => 'B'])]);
+            $this->store()->transactWrite([TransactionOperation::put(['PK' => 'A', 'SK' => 'B'])]);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('TransactWriteItems', $e->operation);
+            self::assertSame('InternalServerError', $e->awsErrorCode);
+        }
+    }
+
+    public function testStorageFailureKeepsTheRequestIdAndStatusOutOfTheMessage(): void
+    {
+        $this->mock->append(new DynamoDbException('slow down ' . self::PRIVATE_NOTE, new Command('PutItem'), [
+            'code' => 'ThrottlingException',
+            'request_id' => 'REQ-ABC-123',
+            'response' => new Response(400),
+        ]));
+
+        try {
+            $this->store()->putItem(['PK' => 'A', 'SK' => 'B']);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('REQ-ABC-123', $e->awsRequestId);
+            self::assertSame(400, $e->httpStatusCode);
+            self::assertStringNotContainsString('REQ-ABC-123', $e->getMessage());
+            self::assertStringNotContainsString('400', $e->getMessage());
+        }
+    }
+
+    public function testTransactionCancelledAndConditionFailedKeepTheRequestId(): void
+    {
+        $context = ['request_id' => 'REQ-XYZ', 'response' => new Response(400)];
+        $this->mock->append(
+            new DynamoDbException('x', new Command('PutItem'), ['code' => 'ConditionalCheckFailedException'] + $context),
+            new DynamoDbException('x', new Command('TransactWriteItems'), ['code' => 'TransactionCanceledException'] + $context),
+        );
+        $store = $this->store();
+
+        try {
+            $store->putItem(['PK' => 'A', 'SK' => 'B'], 'attribute_not_exists(#pk)', ['#pk' => 'PK']);
             self::fail('Expected ConditionFailed');
         } catch (ConditionFailed $e) {
-            self::assertSame('TransactWriteItems', $e->operation);
+            self::assertSame('REQ-XYZ', $e->awsRequestId);
+            self::assertSame(400, $e->httpStatusCode);
         }
+        try {
+            $store->transactWrite([TransactionOperation::put(['PK' => 'A', 'SK' => 'B'])]);
+            self::fail('Expected TransactionCancelled');
+        } catch (TransactionCancelled $e) {
+            self::assertSame('REQ-XYZ', $e->awsRequestId);
+            self::assertSame(400, $e->httpStatusCode);
+        }
+    }
+
+    /**
+     * @return iterable<string, array{\Throwable}>
+     */
+    public static function clientSideFailures(): iterable
+    {
+        yield 'credentials' => [new CredentialsException('no credentials ' . self::PRIVATE_NOTE)];
+        yield 'unresolved endpoint' => [new UnresolvedEndpointException('bad endpoint ' . self::PRIVATE_NOTE)];
+        yield 'invalid argument' => [new \InvalidArgumentException('bad argument ' . self::PRIVATE_NOTE)];
+        yield 'unexpected value' => [new \UnexpectedValueException('bad value ' . self::PRIVATE_NOTE)];
+    }
+
+    #[DataProvider('clientSideFailures')]
+    public function testClientSideFailuresBecomeAnUnchainedStorageFailure(\Throwable $failure): void
+    {
+        $this->mock->append($failure);
+
+        try {
+            $this->store()->putItem(['PK' => 'A', 'SK' => 'B', 'note' => self::PRIVATE_NOTE]);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('PutItem', $e->operation);
+            self::assertSame('ClientError', $e->awsErrorCode);
+            self::assertNull($e->awsRequestId);
+            self::assertNull($e->httpStatusCode);
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString(self::PRIVATE_NOTE, $e->getMessage());
+        }
+    }
+
+    public function testAnUnmarshalableValueBecomesAStorageFailureWithoutItemData(): void
+    {
+        $resource = fopen('php://memory', 'rb');
+        self::assertIsResource($resource);
+
+        try {
+            $this->store()->putItem(['PK' => 'A', 'SK' => 'B', self::PRIVATE_NOTE => $resource]);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('PutItem', $e->operation);
+            self::assertSame('ClientError', $e->awsErrorCode);
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString(self::PRIVATE_NOTE, $e->getMessage());
+            self::assertSame([], $this->sent);
+        } finally {
+            fclose($resource);
+        }
+    }
+
+    public function testAnUnmarshalableKeyAndTransactionValueAreMappedToo(): void
+    {
+        $resource = fopen('php://memory', 'rb');
+        self::assertIsResource($resource);
+        $store = $this->store();
+
+        try {
+            $store->getItem(['PK' => $resource]);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('GetItem', $e->operation);
+        }
+        try {
+            $store->transactWrite([TransactionOperation::put(['PK' => $resource])]);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('TransactWriteItems', $e->operation);
+        } finally {
+            fclose($resource);
+        }
+    }
+
+    public function testAnSdkValidationFailureBecomesAStorageFailure(): void
+    {
+        $client = new DynamoDbClient([
+            'version' => '2012-08-10',
+            'region' => 'eu-west-1',
+            'credentials' => ['key' => 'localdev', 'secret' => 'localdevsecret'],
+            'handler' => $this->mock,
+        ]);
+        $store = new ItemStore($client, '');
+
+        try {
+            $store->getItem(['PK' => self::PRIVATE_NOTE, 'SK' => 'B']);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('ClientError', $e->awsErrorCode);
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString(self::PRIVATE_NOTE, $e->getMessage());
+        }
+    }
+
+    public function testQueryAcceptsOnlyTheBaseTableOrTheFirstLocalIndex(): void
+    {
+        $this->mock->append(new Result(['Items' => []]));
+
+        try {
+            $this->store()->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], indexName: 'GSI1');
+            self::fail('Expected InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            self::assertSame([], $this->sent);
+        }
+        $this->store()->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], indexName: TableLayout::LSI1);
+        self::assertSame(TableLayout::LSI1, $this->onlyRequest('Query')['IndexName']);
+    }
+
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function invalidLimits(): iterable
+    {
+        yield 'zero' => [0];
+        yield 'negative' => [-1];
+        yield 'above the maximum' => [ItemStore::MAX_QUERY_LIMIT + 1];
+    }
+
+    #[DataProvider('invalidLimits')]
+    public function testQueryRejectsALimitOutsideTheAllowedRangeBeforeAnyCall(int $limit): void
+    {
+        try {
+            $this->store()->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], limit: $limit);
+            self::fail('Expected InvalidArgumentException');
+        } catch (\InvalidArgumentException) {
+            self::assertSame([], $this->sent);
+        }
+    }
+
+    public function testQueryAcceptsTheLimitBoundaries(): void
+    {
+        $this->mock->append(new Result(['Items' => []]), new Result(['Items' => []]));
+        $store = $this->store();
+
+        $store->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], limit: 1);
+        $store->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], limit: ItemStore::MAX_QUERY_LIMIT);
+
+        self::assertSame([1, 1000], array_map(static fn(array $call): mixed => $call['args']['Limit'], $this->sent));
     }
 }
