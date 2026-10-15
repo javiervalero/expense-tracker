@@ -12,8 +12,8 @@ namespace App\Infrastructure\Config;
  * account. Reasons never contain the endpoint itself: it may hold credentials.
  *
  * KEEP IN SYNC: the allowlist (LOCAL_HOSTS, COMPOSE_SERVICE_NAME, REAL_AWS_SUFFIXES) mirrors
- * docker/local-aws/src/Support/LocalEndpoint.php and backend/tests/Support/LocalAws.php. They are separate on purpose
- * (separate Composer projects); a change to one must be made in the others.
+ * docker/local-aws/src/Support/LocalEndpoint.php and backend/tests/Support/LocalAws.php (all three list each
+ * other). They are separate on purpose (separate Composer projects); a change to one must be made in the others.
  */
 final class LocalEndpoint
 {

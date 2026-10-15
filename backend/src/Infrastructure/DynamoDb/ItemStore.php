@@ -8,6 +8,7 @@ use Aws\DynamoDb\DynamoDbClient;
 use Aws\DynamoDb\Marshaler;
 use Aws\Exception\AwsException;
 use Aws\Exception\CredentialsException;
+use Aws\Api\Parser\Exception\ParserException;
 use Aws\Exception\UnresolvedEndpointException;
 use InvalidArgumentException;
 use UnexpectedValueException;
@@ -29,6 +30,7 @@ final readonly class ItemStore
     private const CONDITION_FAILED = 'ConditionalCheckFailedException';
     private const TRANSACTION_CANCELLED = 'TransactionCanceledException';
     private const CLIENT_ERROR = 'ClientError';
+    private const ATTRIBUTE_TYPES = ['S', 'N', 'B', 'BOOL', 'NULL', 'SS', 'NS', 'BS', 'L', 'M'];
     /** DynamoDB's own cap on `Limit` is the table size; 1000 keeps one page well inside the 1 MB response cap. */
     public const int MAX_QUERY_LIMIT = 1000;
 
@@ -55,7 +57,7 @@ final readonly class ItemStore
         ]);
         $item = $result['Item'] ?? null;
 
-        return is_array($item) ? $this->unmarshal($item) : null;
+        return is_array($item) ? $this->unmarshal('GetItem', $item) : null;
     }
 
     /**
@@ -95,7 +97,7 @@ final readonly class ItemStore
         ] + $this->expressions($condition, $names, $values));
         $attributes = $result['Attributes'] ?? [];
 
-        return is_array($attributes) ? $this->unmarshal($attributes) : [];
+        return is_array($attributes) ? $this->unmarshal('UpdateItem', $attributes) : [];
     }
 
     /**
@@ -145,12 +147,12 @@ final readonly class ItemStore
         $items = [];
         foreach (is_array($rawItems) ? $rawItems : [] as $rawItem) {
             if (is_array($rawItem)) {
-                $items[] = $this->unmarshal($rawItem);
+                $items[] = $this->unmarshal('Query', $rawItem);
             }
         }
         $lastKey = $result['LastEvaluatedKey'] ?? null;
 
-        return new QueryPage($items, is_array($lastKey) ? $this->unmarshal($lastKey) : null);
+        return new QueryPage($items, is_array($lastKey) ? $this->unmarshal('Query', $lastKey) : null);
     }
 
     /**
@@ -250,11 +252,45 @@ final readonly class ItemStore
      * @param array<array-key, mixed> $item
      *
      * @return array<string, mixed>
+     *
+     * @throws StorageFailure
      */
-    private function unmarshal(array $item): array
+    private function unmarshal(string $operation, array $item): array
     {
-        /** @var array<string, mixed> */
-        return $this->marshaler->unmarshalItem($item);
+        try {
+            // The SDK raises PHP warnings (not only exceptions) on malformed values, so check the shape first.
+            foreach ($item as $value) {
+                self::assertAttributeValue($value);
+            }
+            /** @var array<string, mixed> */
+            return $this->marshaler->unmarshalItem($item);
+        } catch (UnexpectedValueException|InvalidArgumentException) {
+            // Not chained, and the message is dropped: it can quote the response data.
+            throw new StorageFailure($operation, self::CLIENT_ERROR);
+        }
+    }
+
+    /**
+     * @throws UnexpectedValueException when the value is not a DynamoDB typed attribute value
+     */
+    private static function assertAttributeValue(mixed $value): void
+    {
+        if (!is_array($value) || count($value) !== 1) {
+            throw new UnexpectedValueException('Malformed attribute value.');
+        }
+        $type = array_key_first($value);
+        $inner = $value[$type];
+        if (!in_array($type, self::ATTRIBUTE_TYPES, true)) {
+            throw new UnexpectedValueException('Unknown attribute type.');
+        }
+        if ($type === 'L' || $type === 'M') {
+            if (!is_array($inner)) {
+                throw new UnexpectedValueException('Malformed attribute value.');
+            }
+            foreach ($inner as $child) {
+                self::assertAttributeValue($child);
+            }
+        }
     }
 
     /**
@@ -275,7 +311,7 @@ final readonly class ItemStore
             return $this->client->execute($this->client->getCommand($operation, $buildRequest()))->toArray();
         } catch (AwsException $e) {
             throw $this->mapped($operation, $e);
-        } catch (CredentialsException|UnresolvedEndpointException|InvalidArgumentException|UnexpectedValueException) {
+        } catch (CredentialsException|UnresolvedEndpointException|ParserException|InvalidArgumentException|UnexpectedValueException) {
             // Not chained, and the message is dropped: it can quote the offending value.
             throw new StorageFailure($operation, self::CLIENT_ERROR);
         }

@@ -16,9 +16,9 @@ final readonly class DynamoDbSettings
     private const TABLE = 'DYNAMODB_TABLE';
     private const ENDPOINT = 'DYNAMODB_ENDPOINT';
     private const REGION = 'AWS_REGION';
-    /** DynamoDB's own rule for table names: 3 to 255 of letters, digits, underscore, hyphen and dot. */
     /** An AWS region name such as `eu-west-1` or `us-gov-west-1`. */
     private const REGION_PATTERN = '/\A[a-z]{2}(-[a-z]+)+-\d\z/';
+    /** DynamoDB's own rule for table names: 3 to 255 of letters, digits, underscore, hyphen and dot. */
     private const TABLE_NAME_PATTERN = '/\A[A-Za-z0-9_.-]{3,255}\z/';
 
     private function __construct(public string $tableName, public ?string $endpoint, public ?string $region) {}

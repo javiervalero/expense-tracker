@@ -16,8 +16,9 @@ use Aws\Sqs\SqsClient;
  * explicitly, so the SDK never falls back to the default provider chain (profiles, instance metadata).
  *
  * KEEP IN SYNC: the endpoint allowlist (LOCAL_HOSTS, COMPOSE_SERVICE_NAME and the real-AWS suffixes) mirrors the
- * one in docker/local-aws/src/Bootstrap/BootstrapSettings.php. They are separate on purpose (separate Composer
- * projects); a change to one must be made in the other.
+ * ones in backend/src/Infrastructure/Config/LocalEndpoint.php and docker/local-aws/src/Support/LocalEndpoint.php (all
+ * three list each other). They are separate on purpose (separate Composer projects); a change to one must be made in
+ * the others.
  */
 final readonly class LocalAws
 {
