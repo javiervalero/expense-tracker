@@ -503,6 +503,36 @@ Carried:
 - **Phase 7, Terraform reads `infra/dynamodb/table.json`:** it is a CreateTable input, not a Terraform shape. Derive `hash_key`/`range_key` from `KeySchema` by `KeyType`, `attribute` blocks from `AttributeDefinitions`, `local_secondary_index` blocks (`name`, the RANGE key as `range_key`, `projection_type`, `non_key_attributes` via `try()` since it is absent today), and `ttl { attribute_name = TimeToLiveAttribute, enabled = true }`. Add a small check in the `terraform` CI job that `jsondecode`s the file and asserts the derived values.
 - **Existing clones:** add `DYNAMODB_TABLE=expense-tracker-local` to `.env` (WP10 puts this in `docs/local-dev.md`).
 
+### Notes from the WP9 reviews (2026-10-15)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `7e66558..01c886d`. Both approved with no CRITICAL or HIGH findings. The fix batch covers:
+- expression strings and name maps are typed `literal-string`, so PHPStan rejects an expression built from input;
+- `DYNAMODB_ENDPOINT` uses the local-endpoint allowlist, and `AWS_REGION` is format-checked;
+- credential, endpoint, SDK-validation and marshalling errors map to `StorageFailure` (never chained);
+- `StorageFailure` keeps the AWS request id and status code, but not the AWS message;
+- `query()` limits the index to `LSI1` and `limit` to 1..1000;
+- `TemporaryTable` no longer leaks a table when the wait fails.
+
+Note: `ErrorHandlingMiddleware` logs the exception **message** (capped), file and line, not only the class. So every exception message reachable from `ItemStore` must stay free of item data.
+
+Carried:
+- **Phase 2:**
+  - key builders take PK from the session principal, never from the request;
+  - creates use `attribute_not_exists(PK)` and build items field by field (no request arrays into `putItem`);
+  - the register handler must not turn `TransactionCancelled` reasons into an account-enumeration signal beyond what the product decides;
+  - map `ProvisionedThroughputExceeded`/`ThrottlingException`/`RequestLimitExceeded` to 503 with `Retry-After`;
+  - a conditional put that times out, is retried, and then gets `ConditionFailed` may be a false duplicate (re-read before reporting it);
+  - once `api-php` uses DynamoDB locally, `check-env` requires `DYNAMODB_ENDPOINT`, so an empty value never silently means real AWS.
+- **Phase 3:**
+  - the list cursor follows ADR 0002 (opaque, SK/LSI1SK only, PK from the session), validated before calling DynamoDB, so tampering gives 400, not 500;
+  - page `limit` ≤ 100 and the 1,000-item examination cap;
+  - non-idempotent updates (`ADD`) are guarded by a version condition.
+- **Phase 7:**
+  - the Lambda role is least privilege on the table and `/index/LSI1` ARNs only: Get/Put/Update/Delete/Query/ConditionCheckItem, with no Scan and no table administration;
+  - a Terraform check that the production Lambda environment never sets `*_ENDPOINT`;
+  - the Lambda timeout is above ~12 s per DynamoDB call (1 s connect + 3 s request × 3 attempts) and below API Gateway's 30 s.
+- **Duplication:** the endpoint allowlist now lives in `docker/local-aws/src/Support/LocalEndpoint.php` and `backend/src/Infrastructure/Config/LocalEndpoint.php` (separate Composer projects). Keep them in sync, or consider a shared check later.
+
 ## 7. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
