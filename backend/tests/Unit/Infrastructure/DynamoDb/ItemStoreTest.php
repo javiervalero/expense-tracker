@@ -18,6 +18,8 @@ use Aws\Exception\CredentialsException;
 use Aws\Exception\UnresolvedEndpointException;
 use Aws\MockHandler;
 use Aws\Result;
+use GuzzleHttp\Promise\Create;
+use GuzzleHttp\Promise\PromiseInterface;
 use GuzzleHttp\Psr7\Response;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -30,22 +32,26 @@ final class ItemStoreTest extends TestCase
     /** @var list<array{name: string, args: array<array-key, mixed>}> */
     private array $sent = [];
     private MockHandler $mock;
+    private ?string $rawBody = null;
 
     protected function setUp(): void
     {
         $this->sent = [];
         $this->mock = new MockHandler();
+        $this->rawBody = null;
     }
 
     private function store(): ItemStore
     {
+        $transport = $this->rawBody === null
+            ? ['handler' => $this->mock]
+            : ['http_handler' => fn(): PromiseInterface => Create::promiseFor(new Response(200, ['Content-Type' => 'application/x-amz-json-1.0'], $this->rawBody))];
         $client = new DynamoDbClient([
             'version' => '2012-08-10',
             'region' => 'eu-west-1',
             'credentials' => ['key' => 'localdev', 'secret' => 'localdevsecret'],
-            'handler' => $this->mock,
             'retries' => 0,
-        ]);
+        ] + $transport);
         $client->getHandlerList()->appendInit(function (callable $next): callable {
             return function (CommandInterface $command) use ($next): mixed {
                 $this->sent[] = ['name' => $command->getName(), 'args' => $command->toArray()];
@@ -539,5 +545,79 @@ final class ItemStoreTest extends TestCase
         $store->query('#pk = :pk', ['#pk' => 'PK'], [':pk' => 'x'], limit: ItemStore::MAX_QUERY_LIMIT);
 
         self::assertSame([1, 1000], array_map(static fn(array $call): mixed => $call['args']['Limit'], $this->sent));
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function corruptBodies(): array
+    {
+        return ['lone brace' => ['{'], 'truncated json' => ['{"Item":{"PK":{"S":"sec']];
+    }
+
+    #[DataProvider('corruptBodies')]
+    public function testACorruptSuccessBodyBecomesAnUnchainedStorageFailure(string $body): void
+    {
+        $this->rawBody = $body;
+
+        try {
+            $this->store()->getItem(['PK' => 'a']);
+            self::fail('Expected a StorageFailure.');
+        } catch (StorageFailure $e) {
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString('sec', $e->getMessage());
+            self::assertStringContainsString('ClientError', $e->getMessage());
+        }
+    }
+
+    public function testAnUnknownAttributeTypeInAResponseBecomesAnUnchainedStorageFailure(): void
+    {
+        $this->rawBody = '{"Item":{"PK":{"ZZ":"x"}}}';
+
+        try {
+            $this->store()->getItem(['PK' => 'a']);
+            self::fail('Expected a StorageFailure.');
+        } catch (StorageFailure $e) {
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString('ZZ', $e->getMessage());
+            self::assertStringContainsString('ClientError', $e->getMessage());
+        }
+    }
+
+    public function testAnUnknownAttributeTypeInAQueryResponseBecomesAStorageFailure(): void
+    {
+        $this->rawBody = '{"Items":[{"PK":{"ZZ":"x"}}]}';
+
+        $this->expectException(StorageFailure::class);
+        $this->store()->query('#p = :p', ['#p' => 'PK'], [':p' => 'a']);
+    }
+
+    /**
+     * @return array<string, array{string}>
+     */
+    public static function malformedItems(): array
+    {
+        return [
+            'value not an object' => ['{"Item":{"PK":"x"}}'],
+            'two types in one value' => ['{"Item":{"PK":{"S":"x","N":"1"}}}'],
+            'map holding an unknown type' => ['{"Item":{"PK":{"M":{"a":{"ZZ":"x"}}}}}'],
+            'list holding a scalar' => ['{"Item":{"PK":{"L":["x"]}}}'],
+        ];
+    }
+
+    #[DataProvider('malformedItems')]
+    public function testAMalformedResponseItemBecomesAStorageFailure(string $body): void
+    {
+        $this->rawBody = $body;
+
+        $this->expectException(StorageFailure::class);
+        $this->store()->getItem(['PK' => 'a']);
+    }
+
+    public function testAWellFormedNestedResponseItemIsStillUnmarshalled(): void
+    {
+        $this->rawBody = '{"Item":{"PK":{"S":"a"},"tags":{"L":[{"S":"x"},{"M":{"n":{"N":"2"}}}]}}}';
+
+        self::assertSame(['PK' => 'a', 'tags' => ['x', ['n' => 2]]], $this->store()->getItem(['PK' => 'a']));
     }
 }
