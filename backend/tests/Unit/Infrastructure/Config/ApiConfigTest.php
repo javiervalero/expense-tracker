@@ -14,17 +14,19 @@ final class ApiConfigTest extends TestCase
     private const SLOT_A = 'slot-a-0123456789-0123456789-abcdef';
     private const SLOT_B = 'slot-b-0123456789-0123456789-abcdef';
     private const HEADER = 'CloudFront-Viewer-Address';
+    private const TABLE = 'expense-tracker-test';
+    private const DYNAMODB = ['DYNAMODB_TABLE' => self::TABLE];
 
     public function testOneSlotIsAccepted(): void
     {
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER]);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB);
 
         self::assertSame([self::SLOT_A], $config->originVerifySecrets);
     }
 
     public function testTwoSlotsAreAcceptedInOrder(): void
     {
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A . ',' . self::SLOT_B, 'CLIENT_IP_HEADER' => self::HEADER]);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A . ',' . self::SLOT_B, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB);
 
         self::assertSame([self::SLOT_A, self::SLOT_B], $config->originVerifySecrets);
     }
@@ -33,7 +35,7 @@ final class ApiConfigTest extends TestCase
     {
         $slot = str_repeat('~', 32);
 
-        self::assertSame([$slot], ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $slot, 'CLIENT_IP_HEADER' => self::HEADER])->originVerifySecrets);
+        self::assertSame([$slot], ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $slot, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB)->originVerifySecrets);
     }
 
     /**
@@ -68,7 +70,7 @@ final class ApiConfigTest extends TestCase
     #[DataProvider('invalidValues')]
     public function testAnInvalidValueFailsAndOnlyTheVariableNameIsReported(mixed $value): void
     {
-        $env = ['CLIENT_IP_HEADER' => self::HEADER] + ($value === null ? [] : ['ORIGIN_VERIFY_SECRETS' => $value]);
+        $env = ['CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB + ($value === null ? [] : ['ORIGIN_VERIFY_SECRETS' => $value]);
 
         try {
             ApiConfig::fromEnvironment($env);
@@ -88,7 +90,7 @@ final class ApiConfigTest extends TestCase
         $value = self::SLOT_A . ',' . self::SLOT_B . ',' . 'third-hunter2-hunter2-hunter2-hunter2';
 
         try {
-            ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $value, 'CLIENT_IP_HEADER' => self::HEADER]);
+            ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $value, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB);
             self::fail('Expected InvalidConfiguration.');
         } catch (InvalidConfiguration $e) {
             foreach ([self::SLOT_A, self::SLOT_B, 'hunter2'] as $fragment) {
@@ -100,7 +102,7 @@ final class ApiConfigTest extends TestCase
 
     public function testTheClientIpHeaderNameIsExposed(): void
     {
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER]);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB);
 
         self::assertSame(self::HEADER, $config->clientIpHeader);
     }
@@ -132,7 +134,7 @@ final class ApiConfigTest extends TestCase
     #[DataProvider('invalidHeaderNames')]
     public function testAnInvalidClientIpHeaderFailsAndOnlyTheVariableNameIsReported(mixed $value): void
     {
-        $env = ['ORIGIN_VERIFY_SECRETS' => self::SLOT_A] + ($value === null ? [] : ['CLIENT_IP_HEADER' => $value]);
+        $env = ['ORIGIN_VERIFY_SECRETS' => self::SLOT_A] + self::DYNAMODB + ($value === null ? [] : ['CLIENT_IP_HEADER' => $value]);
 
         try {
             ApiConfig::fromEnvironment($env);
@@ -152,7 +154,7 @@ final class ApiConfigTest extends TestCase
             ApiConfig::fromEnvironment([]);
             self::fail('Expected InvalidConfiguration.');
         } catch (InvalidConfiguration $e) {
-            self::assertCount(2, $e->errors);
+            self::assertCount(3, $e->errors);
             self::assertSame($e->errors, array_values(array_unique($e->errors)));
             $sorted = $e->errors;
             sort($sorted);
@@ -163,8 +165,79 @@ final class ApiConfigTest extends TestCase
 
     public function testTheCloudFrontHeaderNameIsAcceptedInAnyCaseAndExposedAsWritten(): void
     {
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => 'cloudfront-VIEWER-address']);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => 'cloudfront-VIEWER-address'] + self::DYNAMODB);
 
         self::assertSame(self::HEADER, $config->clientIpHeader);
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function validEnv(): array
+    {
+        return ['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER] + self::DYNAMODB;
+    }
+
+    public function testTheDynamoDbSettingsAreExposed(): void
+    {
+        $config = ApiConfig::fromEnvironment(self::validEnv() + ['DYNAMODB_ENDPOINT' => 'http://dynamodb:8000', 'AWS_REGION' => 'eu-west-1']);
+
+        self::assertSame(self::TABLE, $config->dynamoDb->tableName);
+        self::assertSame('http://dynamodb:8000', $config->dynamoDb->endpoint);
+        self::assertSame('eu-west-1', $config->dynamoDb->region);
+    }
+
+    public function testAMissingTableAndABadRegionAreBothReportedByNameAlongsideTheOthers(): void
+    {
+        $env = ['ORIGIN_VERIFY_SECRETS' => 'too-short-hunter2', 'CLIENT_IP_HEADER' => self::HEADER, 'AWS_REGION' => 'mars-central-hunter2'];
+
+        try {
+            ApiConfig::fromEnvironment($env);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            $joined = implode("\n", $e->errors);
+            self::assertStringContainsString('DYNAMODB_TABLE is missing', $joined);
+            self::assertStringContainsString('AWS_REGION ', $joined);
+            self::assertStringContainsString('ORIGIN_VERIFY_SECRETS ', $joined);
+            self::assertStringNotContainsString('hunter2', $joined);
+            $sorted = $e->errors;
+            sort($sorted);
+            self::assertSame($sorted, $e->errors);
+        }
+    }
+
+    public function testALocalEnvironmentWithoutAnEndpointFailsClosed(): void
+    {
+        foreach ([[], ['DYNAMODB_ENDPOINT' => '']] as $extra) {
+            try {
+                ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local'] + $extra);
+                self::fail('Expected InvalidConfiguration.');
+            } catch (InvalidConfiguration $e) {
+                self::assertCount(1, $e->errors);
+                self::assertStringStartsWith('DYNAMODB_ENDPOINT ', $e->errors[0]);
+            }
+        }
+    }
+
+    public function testALocalEnvironmentWithAnEndpointAndANonLocalOneWithoutAreAccepted(): void
+    {
+        $local = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000']);
+        $production = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'production']);
+        $unset = ApiConfig::fromEnvironment(self::validEnv());
+
+        self::assertSame('http://dynamodb:8000', $local->dynamoDb->endpoint);
+        self::assertNull($production->dynamoDb->endpoint);
+        self::assertNull($unset->dynamoDb->endpoint);
+    }
+
+    public function testARealAwsEndpointIsRefusedByNameWithoutEchoingIt(): void
+    {
+        try {
+            ApiConfig::fromEnvironment(self::validEnv() + ['DYNAMODB_ENDPOINT' => 'https://dynamodb.eu-west-1.amazonaws.com']);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            self::assertStringStartsWith('DYNAMODB_ENDPOINT ', $e->errors[0]);
+            self::assertStringNotContainsString('amazonaws', implode(' ', $e->errors));
+        }
     }
 }

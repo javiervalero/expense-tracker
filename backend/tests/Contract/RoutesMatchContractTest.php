@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Contract;
 
 use App\Api\Routes;
+use App\Tests\Support\Api\OfflineServices;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -42,7 +43,7 @@ final class RoutesMatchContractTest extends TestCase
     /** @return list<string> */
     private static function routeKeys(): array
     {
-        $keys = array_map(static fn($route): string => $route->method . ' ' . $route->template, Routes::all());
+        $keys = array_map(static fn($route): string => $route->method . ' ' . $route->template, Routes::all(OfflineServices::create()));
         sort($keys);
 
         return $keys;
