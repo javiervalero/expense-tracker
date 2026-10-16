@@ -25,18 +25,52 @@ reachable only from other containers on the Compose network.
 
 | AWS service | Local stand-in (compose service) | Image | Host port (container port) | Notes |
 |---|---|---|---|---|
-| DynamoDB | DynamoDB Local (`dynamodb`) | `amazon/dynamodb-local:3.3.1` | `8000` (8000) | In-memory, shared database |
+| DynamoDB | DynamoDB Local (`dynamodb`) | `amazon/dynamodb-local:3.3.1` | `8000` (8000) | In memory. `make up` creates the app table `expense-tracker-local` (from `infra/dynamodb/table.json`, with `LSI1` and TTL on `expiresAt`) |
 | SQS and its DLQ | ElasticMQ (`sqs`) | `softwaremill/elasticmq-native:1.7.1` | `9324` (9324) | Queues `receipts` and `receipts-dlq` from `docker/elasticmq/elasticmq.conf`; redrive after 3 receives |
 | S3 | pgsty/silo (`s3`) | `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` | `9000` (9000) | Buckets, CORS and notification rules are created by `local-aws-init`. Presigned URLs need `localhost:9000`, hence the fixed port |
 | S3 event notifications to SQS | Emulator webhook to the relay (`s3-events-relay`) | `expense-tracker-local-aws:dev` (built here) | none (8080 internal) | Bearer token required |
 | Lambda (receipt worker) | Bref PHP 8.5 image under the Runtime Interface Emulator (`worker`) | `expense-tracker-worker:dev` (built here) | none (8080 internal) | No AWS access or credentials; Phase 0 only logs what it receives |
 | SQS event source mapping | Local runner (`worker-runner`) | `expense-tracker-local-aws:dev` | none | Polls `receipts`, invokes the worker, deletes only the messages that succeeded |
-| API Gateway + Lambda (API) | nginx (`api`) in front of php-fpm (`api-php`) | `nginxinc/nginx-unprivileged:1.30.5-alpine`, `expense-tracker-php:fpm` | `8080` (8080) for nginx; php-fpm on 9000, internal only | Same PHP code as Lambda. php-fpm is on the internal network `api-internal` only: FastCGI has no authentication |
+| API Gateway + Lambda (API) | nginx (`api`) in front of php-fpm (`api-php`) | `nginxinc/nginx-unprivileged:1.30.5-alpine`, `expense-tracker-php:fpm` | `8080` (8080) for nginx; php-fpm on 9000, internal only | Same PHP code as Lambda. php-fpm is on the internal network `api-internal` only: FastCGI has no authentication. Every request needs the `X-Origin-Verify` header (see "Calling the API directly") |
 | CloudFront (one origin for app and API) | Vite dev server (`frontend`) | `node:24.21.0-alpine` | `5173` (5173) | Proxies `/api` to nginx, adds `X-Origin-Verify` and `CloudFront-Viewer-Address`, as CloudFront will |
 | S3 static site (front-end) | Vite dev server (`frontend`) | same | `5173` | Hot reload from the mounted `frontend/` |
 
-Open the app at http://localhost:5173 and the API directly at http://localhost:8080/api/v1/health. The Phase 0 page
-shows "API: ok" when the chain Vite, nginx and php-fpm works.
+Open the app at http://localhost:5173. The API also answers directly on http://localhost:8080, but see
+[Calling the API directly](#calling-the-api-directly). The Phase 0 page shows "API: ok" when the chain Vite, nginx and
+php-fpm works.
+
+## Calling the API directly
+
+The API rejects any request without the origin header, as on AWS (ADR 0012). The Vite proxy adds it for you, so
+http://localhost:5173/api/v1/health works with no header. Direct calls to port 8080 must send it. The local value is
+`ORIGIN_VERIFY_LOCAL` in `.env` (default `local-origin-verify-not-a-secret`, not a secret).
+
+```bash
+curl -i http://localhost:8080/api/v1/health
+# 403, body {"type":"about:blank","title":"Forbidden","status":403}
+
+curl -i -H "X-Origin-Verify: local-origin-verify-not-a-secret" http://localhost:8080/api/v1/health
+# 200, body {"status":"ok"}
+```
+
+### Reading the request log
+
+`make logs` follows all services. For the API only, use `docker compose -p expense-tracker logs -f api-php`. Each
+request writes one JSON line, for example:
+
+```text
+{"time":"2026-10-16T12:45:01+00:00","level":"info","message":"request","requestId":"695216dd6b56745c","method":"GET","path":"/api/v1/health","clientIp":"172.19.0.1","status":200,"durationMs":0.079}
+```
+
+The non-JSON lines in between are php-fpm's own access log.
+
+`clientIp` comes only from the `CloudFront-Viewer-Address` header. On AWS, CloudFront sets it. Locally, the Vite proxy
+sets it from the browser's address, and nginx fills it from the caller's socket address for direct calls.
+`"clientIp":"unknown"` means the header was missing or invalid, or the request was rejected before the address was read
+(for example a 403). An invalid header also writes an error line `client address unavailable` with a reason.
+
+A rejected origin check writes a warning `origin verification failed` with the reason `missing` or `mismatch`. The
+header value is never logged.
 
 ## Receipt pipeline (local)
 
@@ -89,7 +123,8 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make test-local-aws` | `docker/local-aws` unit tests, 80% coverage bar |
 | `make frontend-test` | Front-end Vitest with coverage, 80% bar |
 | `make test-conformance` | Conformance tests against DynamoDB Local, ElasticMQ and the S3 emulator (needs `make up`) |
-| `make test-integration` | Pipeline integration tests: S3 → relay → ElasticMQ → runner → worker (needs `make up`) |
+| `make test-contract` | Contract tests: route parity, every operation documents its errors, and the validator against the real bundled spec (run `make contract-bundle` first) |
+| `make test-integration` | Integration tests (needs `make up`): the receipt pipeline S3 → relay → ElasticMQ → runner → worker, the API through nginx (contract-validated), and the DynamoDB item store against DynamoDB Local |
 | `make test-shell` | Tests of the shell guards (`scripts/tests/*.test.sh`) |
 | `make tf-test` | Tests of the Terraform check (needs Docker, about 50 s) |
 
@@ -116,6 +151,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make check-image-pins` | Every image used to build or run the stack is pinned by digest |
 | `make lint-workflows` | zizmor over the GitHub workflows and actions: hash-pinned `uses:`, pinned images, security audits |
 | `make secrets-scan` | gitleaks over the full git history. Needs a full clone, not a shallow one |
+| `make check-php-ini` | The Lambda PHP ini (`backend/php/conf.d`) is loaded by the pinned `bref/php-85` image with the hardened values |
 
 **Terraform (Phase 0 has no AWS resources; these need no credentials)**
 
@@ -166,7 +202,10 @@ bash scripts/tests/check-fixtures.test.sh
 
 - `make down` removes this project's containers and network. The stack defines no named volumes: the emulators keep
   their data in memory (DynamoDB Local runs with `-inMemory`; the S3 emulator and the relay queue use tmpfs), so a
-  stack that was stopped starts empty.
+  stack that was stopped starts empty. The DynamoDB table is recreated by the next `make up`.
+- If the table definition in `infra/dynamodb/table.json` changes, `make up` stops with "Table ... already exists but
+  differs from infra/dynamodb/table.json". The bootstrap never deletes a table, so run `make down && make up` (the data
+  is in memory anyway). A second `make up` on an unchanged table logs "no changes".
 - `.env` is kept; it is git-ignored.
 - **Do not add `-v`.** `make down` never passes it. `docker compose -p expense-tracker down -v` also deletes volumes;
   today that affects only this project's anonymous volumes, but it is destructive by habit, so ask the owner first.
@@ -176,6 +215,13 @@ bash scripts/tests/check-fixtures.test.sh
 
 ## Troubleshooting
 
+- **`make up` stops with "DYNAMODB_TABLE is missing from .env".** Clones made before Phase 1 have an older `.env`. Add
+  the line `DYNAMODB_TABLE=expense-tracker-local` (from `.env.example`) to `.env`.
+- **A direct API call returns 403.** The origin header is missing or wrong; see "Calling the API directly".
+- **`DYNAMODB_ENDPOINT` must stay unset outside local development.** The back-end's DynamoDB settings accept it only
+  for a local stand-in (`localhost`, loopback, `host.docker.internal` or a Compose service name such as `dynamodb`) and
+  fail with a configuration error for anything else, real AWS hosts included. On AWS it is not set, and the SDK uses
+  the regional endpoint.
 - **`make up` stops with "frontend/node_modules is missing".** Run `make frontend-install`. Vite runs from that folder.
 - **`api-php` is unhealthy, or the API returns nothing.** Run `make php-install`. The API mounts `backend/vendor`, which
   is empty until then.

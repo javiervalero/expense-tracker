@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved by the owner, 2026-10-13** (gate G1, including the three WP4 deletions; section 9 answered with the recommended defaults) |
+| Status | **Done, 2026-10-16** (WP1–WP10, PR #4). Approved by the owner on 2026-10-13 (gate G1, including the three WP4 deletions; section 9 answered with the recommended defaults) |
 | Phase | 1 (PLAN §12, essential track) |
 | Branch | `feat/phase-1-backend-core`, from `main` (Phase 0 merged in PR #3, commit 4911635) |
 | Inputs | PLAN §5, §6, §9, §10, §12, §13; ADR 0002, 0003, 0005, 0007, 0011, 0012; the Phase 0 code (`backend/`, `docker/`, `contract/`, `Makefile`, `ci.yml`) |

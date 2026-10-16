@@ -5,7 +5,7 @@
 - Amends: [0001](0001-serverless-aws-php-on-lambda-with-bref.md), [0003](0003-vanilla-php-backend-structure.md),
   [0004](0004-server-side-sessions-with-cookies.md), [0005](0005-single-origin-through-cloudfront.md),
   [0007](0007-local-development-with-docker-compose.md), [0009](0009-terraform-for-infrastructure.md)
-- Updated: 2026-10-09 (verified in Phase 0, gate G1)
+- Updated: 2026-10-09 (verified in Phase 0, gate G1); 2026-10-16 (implemented in Phase 1)
 
 ## Context
 
@@ -82,8 +82,9 @@ decisions.
      `Origin`, `X-Requested-With`, `Content-Type`, `Accept` and `CloudFront-Viewer-Address`.
    - `Host` is not forwarded, so API Gateway still sees its own host name.
    - A custom origin header, `X-Origin-Verify: <secret>`, is added to every API request.
-2. **Origin check in PHP.** The first middleware after error handling compares `X-Origin-Verify` against the
-   configured values with `hash_equals`.
+2. **Origin check in PHP.** The first middleware after error handling and request logging compares
+   `X-Origin-Verify` against the configured values with `hash_equals` (wording clarified in Phase 1, see
+   "Implemented in Phase 1").
    - A missing or wrong header gets `403` problem details, and the header value is never logged.
    - No route is exempt, including `/health`.
    - The setting is required: an empty `ORIGIN_VERIFY_SECRETS` stops the app at startup (fail closed). There is no
@@ -231,6 +232,52 @@ bref/bref 3.0.12
 ```
 
 There are **no Symfony polyfill packages** in this tree. `symfony/process` is locked at 8.x, which is fine on PHP 8.5 but would not run on 8.3.
+
+## Implemented in Phase 1 (2026-10-14, PR #4)
+
+Decision §4.2 and §4.3 are built and tested locally (WP6, WP7 in
+[the Phase 1 plan](../plans/phase-1-backend-core.md)). The points below **clarify** the accepted decision; none of
+them changes it.
+
+**Middleware order.** `ErrorHandling` → `RequestLogging` → `OriginVerify` → the deferred 413/400 rejections →
+`ClientIp` → router. Request logging reads no headers and stays outside the origin check, so every 403 still gets a
+request line. The origin check runs before the malformed-request rejections, so a caller without the header always
+gets 403 and learns nothing else about the API. §4.2 now says "after error handling and request logging".
+
+**Origin check (§4.2).**
+- `ORIGIN_VERIFY_SECRETS` holds one or two comma-separated slots. Each is at least 32 characters of visible ASCII,
+  with no space, comma, `"` or `\`; duplicate slots are rejected. Anything else fails closed at startup (500, and the
+  log names the variable only).
+- Comparison: `hash_equals(sha256(slot), sha256(given))` for **every** slot, with no early exit. The fixed-length
+  digests stop the time from depending on the secret's length. The **whole** header value is compared: it is never
+  split on commas, because API Gateway joins repeated headers.
+- A missing, empty or wrong header gets the same `403` problem body. A warning `origin verification failed` logs
+  method, path and reason (`missing` / `mismatch`), never the value. The slots are also on the logger's redaction list.
+
+**Client IP (§4.3), the R-CIP rules.**
+- Only the header named by `CLIENT_IP_HEADER` is read, and the only accepted name is `CloudFront-Viewer-Address`
+  (case-insensitive). `REMOTE_ADDR`, `X-Forwarded-For`, `Forwarded` and `X-Real-IP` are never read.
+- The value must be exactly one `host:port`, at most 64 characters, with no trimming or repair. A comma (a joined
+  duplicate header), whitespace, a zone id or any character outside hex digits, `.`, `:` and brackets is rejected.
+- Accepted forms: `a.b.c.d:port`, `[ipv6]:port` and unbracketed `ipv6:port` (CloudFront's form, split at the last
+  `:`). The host must pass `FILTER_VALIDATE_IP` with no range flags; the port is decimal 1–65535 with no sign or
+  leading zero.
+- The address is canonicalised; IPv4-mapped IPv6 becomes IPv4. The throttle key is the IPv4 address or the IPv6 `/64`.
+- Fail closed: anything else gives the shared key `unknown` and an error line `client address unavailable` with the
+  reason. The request is not rejected, and there is no fallback source.
+- Known and accepted: unbracketed IPv6 with no port whose last group is all digits (`2001:db8::1:2`) reads as host
+  `2001:db8::1`, port `2`. The `/64` key is the same, so throttling is unaffected.
+- The request log line carries `clientIp` (the address, or `unknown` when it was invalid **or never evaluated**, for
+  example on a 403).
+
+**Bref normalises the query string on Lambda** (found in the WP3 security review). Bref rebuilds `QUERY_STRING`
+from API Gateway's `rawQueryString`: a repeated name keeps the last value, an invalid `%` escape is kept as text, and
+an empty name is dropped. The strict `QueryString` rules therefore hold only locally behind nginx;
+`QueryStringBrefTest` pins the Lambda behaviour. Accepted: handlers validate their own parameters. Switching to
+`BREF_RUNTIME=function` for the API would change Decision §2 and is not planned.
+
+Still open for AWS: the Phase 8 checks below, and the Phase 7 Terraform checks recorded in the Phase 1 plan (origin
+request policy is an allow-list with no underscore header names; generated slots match the slot rule).
 
 ## To verify on first deployment (Phase 8)
 

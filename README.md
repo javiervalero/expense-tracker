@@ -5,8 +5,10 @@ production application would be. Users sign in, record expenses with categories,
 summaries. The front end is a Vue single-page app, the API is a JSON API in vanilla PHP (no framework), and the
 target is a fully serverless AWS deployment. The whole system also runs locally with Docker and no AWS account.
 
-Phase 0 (foundations) is the current state: the repository, the local stack, the checks and CI. The API serves only
-a health endpoint so far; the features arrive in later phases.
+Phases 0 (foundations) and 1 (back-end core) are done: the repository, the local stack, the checks and CI, and the
+API's core: router, middleware (origin check, trusted client IP, request logging), problem-details errors, the DynamoDB
+access layer and the OpenAPI contract tests. The API serves only a health endpoint so far; the features arrive in later
+phases.
 
 ## Prerequisites
 
@@ -27,7 +29,7 @@ make up                 # creates .env, starts the stack and waits until it is h
 Then open:
 
 - the app: http://localhost:5173 (Vite, which proxies `/api` to the API)
-- the API health check: http://localhost:8080/api/v1/health
+- the API health check: http://localhost:5173/api/v1/health (through the proxy, which adds the origin header; a direct call to port 8080 needs it too, see [docs/local-dev.md](docs/local-dev.md#calling-the-api-directly))
 
 Stop the stack with `make down`. It removes the containers and never removes volumes; see
 [docs/local-dev.md](docs/local-dev.md) before deleting anything.
@@ -44,7 +46,7 @@ The full local guide, with the service table, the make targets, how to run one t
 | `contract/` | The OpenAPI contract (`openapi.yaml`) and the tooling that lints it and generates the front-end types |
 | `docker/` | Dockerfiles and config for the local stack: PHP, nginx, ElasticMQ, the worker, and `local-aws/` (bootstrap, S3 event relay, worker runner) |
 | `docker-compose.yml` | The local stack: emulators, the API, the worker and the front-end dev server |
-| `infra/` | Terraform: the state bootstrap and the `dev` environment (no AWS resources applied yet) |
+| `infra/` | Terraform: the state bootstrap and the `dev` environment (no AWS resources applied yet), and `dynamodb/table.json`, the one table definition used locally and by Terraform |
 | `scripts/` | Guards and checks run by `make` and CI (image pins, workflow audit, fixtures, Terraform wrapper) and their tests in `scripts/tests/` |
 | `docs/` | Requirements (`BRIEF.md`), the plan (`PLAN.md`), ADRs, the local dev guide and the phase plans |
 | `.github/` | GitHub Actions workflows (CI) and the zizmor configuration |
@@ -55,4 +57,4 @@ The full local guide, with the service table, the make targets, how to run one t
 - [PLAN.md](docs/PLAN.md): the approved plan: summary, decisions, architecture, phases and status
 - [docs/adr/](docs/adr/): architecture decision records (start with the [index](docs/adr/README.md))
 - [docs/local-dev.md](docs/local-dev.md): local development: services and ports, the make targets, tests, troubleshooting
-- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md))
+- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md))

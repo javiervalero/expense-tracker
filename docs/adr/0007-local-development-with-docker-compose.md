@@ -151,3 +151,21 @@ The fixture `docs/spikes/fixtures/silo-object-created-post.json` is the emulator
 - More local services (emulator, ElasticMQ, relay, runner). Developers need Docker installed.
 - To verify in Phase 0: that the Bref image runs under the Lambda Runtime Interface Emulator. Fallback: the runner
   calls the same handler in-process with the same event array.
+
+## Implemented in Phase 1 (2026-10-14, PR #4)
+
+- **DynamoDB bootstrap.** `local-aws-init` (step 2 of `make up`) creates the app table `DYNAMODB_TABLE` from
+  `infra/dynamodb/table.json` (ADR 0002) and enables TTL on `expiresAt` (DynamoDB Local 3.3.1 accepts the TTL API;
+  whether it really expires items was not tested, and nothing locally depends on expiry). It is idempotent: an
+  unchanged table logs "no changes". It never deletes a table: if the existing table differs from the file,
+  `make up` fails and says to run `make down && make up`.
+- **In-memory storage, kept** (owner decision, 2026-10-13). DynamoDB Local still runs with `-inMemory`, so tables
+  and data vanish on `make down`, the same lifecycle as the S3 emulator's tmpfs. Persisted records would point at
+  receipt files that no longer exist.
+- **`.env` check.** `make up` and the test targets stop early, naming the line to add, when `.env` lacks
+  `DYNAMODB_TABLE` (clones from before Phase 1).
+- **Local endpoints only.** `DYNAMODB_ENDPOINT` is accepted only for a local
+  stand-in. Real AWS hosts are refused, so on AWS the variable is left unset.
+- **Origin and client-IP headers locally** work as ADR 0012 §4.5 describes: the Vite proxy adds both headers, nginx
+  fills `CloudFront-Viewer-Address` only when it is absent, the `api` healthcheck sends `X-Origin-Verify`, and the
+  integration tests check the logged `clientIp` through nginx.
