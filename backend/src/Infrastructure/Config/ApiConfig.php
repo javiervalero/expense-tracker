@@ -23,13 +23,15 @@ final readonly class ApiConfig
     private const APP_ORIGINS = 'APP_ORIGINS';
     private const MAX_ORIGINS = 3;
     private const MAX_PORT = 65535;
+    /** Browsers never send the default port in an `Origin`, so such an entry could never match. */
+    private const DEFAULT_PORTS = ['http' => 80, 'https' => 443];
     private const PLAIN_HTTP_HOSTS = ['localhost', '127.0.0.1', '[::1]'];
 
     /**
      * Exactly `scheme://host[:port]`, lower case: no path, query, fragment, credentials or trailing slash. The host is
-     * a DNS name, an IPv4 address or `[::1]`.
+     * a DNS name (labels of at most 63 characters), an IPv4 address or `[::1]`. A port never starts with 0.
      */
-    private const ORIGIN_PATTERN = '/\A(https?):\/\/((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*)|\[::1\])(?::([0-9]{1,5}))?\z/';
+    private const ORIGIN_PATTERN = '/\A(https?):\/\/((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*)|\[::1\])(?::([1-9][0-9]{0,4}))?\z/';
 
     /**
      * The only header that may carry the caller's address, in every environment (ADR 0012 section 4.3). Any other
@@ -147,7 +149,7 @@ final readonly class ApiConfig
             return false;
         }
         $port = $parts[3] ?? '';
-        if ($port !== '' && ((int) $port < 1 || (int) $port > self::MAX_PORT)) {
+        if ($port !== '' && ((int) $port > self::MAX_PORT || (int) $port === self::DEFAULT_PORTS[$parts[1]])) {
             return false;
         }
 
