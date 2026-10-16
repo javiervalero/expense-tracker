@@ -103,6 +103,48 @@ final class StorageUnavailableMiddlewareTest extends TestCase
         self::assertSame('TransactWriteItems', $line['operation']);
         self::assertSame('None,ThrottlingError', $line['code']);
         self::assertSame('REQ-7', $line['awsRequestId']);
+    }
+
+    /**
+     * A request that carries the note everywhere it could be picked up (path, query, header, body). The exceptions cannot carry it (their messages are fixed and they chain nothing), so what the
+     * test guards is that the middleware never copies request data into the log line or the 503.
+     *
+     * @return iterable<string, array{Throwable}>
+     */
+    public static function overloadFailures(): iterable
+    {
+        yield 'throttled call' => [new StorageFailure('PutItem', 'ThrottlingException', 'REQ-8', 400)];
+        yield 'throttled transaction' => [new TransactionCancelled(['None', 'ThrottlingError'], 'REQ-9', 400)];
+    }
+
+    #[DataProvider('overloadFailures')]
+    public function testTheNoteOfARequestReachesNeitherTheLogNorThe503(Throwable $failure): void
+    {
+        $request = new Request(
+            'POST',
+            '/x/' . self::PRIVATE_NOTE,
+            ['q' => self::PRIVATE_NOTE],
+            ['x-note' => self::PRIVATE_NOTE],
+            '{"note":"' . self::PRIVATE_NOTE . '"}',
+        );
+        $next = new class ($failure) implements Handler {
+            public function __construct(private Throwable $failure) {}
+
+            public function handle(Request $request): Response
+            {
+                throw $this->failure;
+            }
+        };
+
+        try {
+            (new StorageUnavailableMiddleware(new JsonLogger($this->stream)))->process($request, $next);
+            self::fail('Expected a 503 HttpProblem.');
+        } catch (HttpProblem $problem) {
+            $shown = json_encode([$problem->problem->toArray(), $problem->headers, $problem->getMessage()], JSON_THROW_ON_ERROR);
+            self::assertStringNotContainsString(self::PRIVATE_NOTE, $shown);
+            self::assertSame(503, $problem->problem->status);
+        }
+        self::assertStringContainsString('storage unavailable', $this->logged());
         self::assertStringNotContainsString(self::PRIVATE_NOTE, $this->logged());
     }
 

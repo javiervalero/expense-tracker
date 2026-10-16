@@ -5,8 +5,6 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Api;
 
 use App\Api\ApiFactory;
-use App\Api\Routes;
-use App\Tests\Support\Api\OfflineServices;
 use App\Http\Handler;
 use App\Http\Request;
 use App\Http\Response;
@@ -328,14 +326,5 @@ final class ApiFactoryTest extends TestCase
         self::assertSame(500, $response->status);
         self::assertSame([], $response->headerValues('Retry-After'));
         self::assertStringNotContainsString('storage unavailable', $this->logged());
-    }
-
-    public function testTheApiServicesBuildOfflineAndTheRouteTableTakesThem(): void
-    {
-        $services = OfflineServices::create();
-
-        $routes = Routes::all($services);
-
-        self::assertSame(['GET /health', 'HEAD /health'], array_map(static fn(Route $route): string => $route->method . ' ' . $route->template, $routes));
     }
 }

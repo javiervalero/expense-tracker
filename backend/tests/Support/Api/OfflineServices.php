@@ -14,8 +14,11 @@ use App\Tests\Support\FrozenClock;
 use Aws\MockHandler;
 
 /**
- * {@see ApiServices} that never touch a network: the DynamoDB client is the SDK's MockHandler (which, when its queue
- * is empty, fails the test instead of sending anything), the clock is frozen.
+ * {@see ApiServices} wired to the SDK's MockHandler instead of a network: the handler answers every request, so
+ * nothing is sent. Only construction is covered. Calling the store would still need credentials, which the SDK
+ * looks up in its default chain (the environment, then the instance metadata service), and a unit-test container
+ * has none; a test that calls the store must run where the chain resolves them, or hand the store its own client.
+ * The clock is frozen.
  */
 final class OfflineServices
 {

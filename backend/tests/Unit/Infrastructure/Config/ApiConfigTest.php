@@ -219,6 +219,40 @@ final class ApiConfigTest extends TestCase
         }
     }
 
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function localSpellings(): iterable
+    {
+        yield 'capitalised' => ['Local'];
+        yield 'padded' => [' local '];
+        yield 'upper case' => ['LOCAL'];
+        yield 'tab and newline' => ["\tlocal\n"];
+    }
+
+    #[DataProvider('localSpellings')]
+    public function testEveryCaseAndPaddingOfLocalStillRequiresAnEndpoint(string $appEnv): void
+    {
+        try {
+            ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => $appEnv]);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            self::assertSame(['DYNAMODB_ENDPOINT is required when APP_ENV is local'], $e->errors);
+        }
+    }
+
+    public function testAWhitespaceOnlyEndpointCountsAsEmptyInALocalEnvironment(): void
+    {
+        foreach (['   ', "\t", " \n "] as $endpoint) {
+            try {
+                ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => $endpoint]);
+                self::fail('Expected InvalidConfiguration.');
+            } catch (InvalidConfiguration $e) {
+                self::assertContains('DYNAMODB_ENDPOINT is required when APP_ENV is local', $e->errors);
+            }
+        }
+    }
+
     public function testALocalEnvironmentWithAnEndpointAndANonLocalOneWithoutAreAccepted(): void
     {
         $local = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000']);
