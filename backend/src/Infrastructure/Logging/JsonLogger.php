@@ -11,8 +11,10 @@ namespace App\Infrastructure\Logging;
  *
  * The reserved fields always win over the context, so a caller cannot forge the level or the timestamp.
  *
- * Defensive redaction: the values of the secrets given to the constructor, and the value of any `Authorization`
- * header (a context key of that name, or `Authorization: ...` inside a text), never reach the log.
+ * Defensive redaction: the values of the secrets given to the constructor never reach the log, nor does the value
+ * of a context key named (any case, any depth) `authorization`, `cookie`, `set-cookie`, `x-origin-verify`,
+ * `x-csrf-token`, `password` or `passwordHash`. Inside a text, `Authorization: ...`, `Cookie: ...` and
+ * `Set-Cookie: ...` lines and `__Host-session=<value>` are redacted too.
  *
  * A failed write is dropped on purpose: a broken log sink must not fail the work being logged.
  * (The local-only tooling in docker/local-aws has its own copy; they are separate Composer projects.)
@@ -23,8 +25,11 @@ final readonly class JsonLogger
     private const MAX_MESSAGE_BYTES = 1024;
     private const REDACTED = '[REDACTED]';
     private const UNSAFE_LINE = '[REDACTED: line could not be redacted safely]';
-    private const AUTHORIZATION_KEY = '/^authorization$/i';
+    private const SENSITIVE_KEY = '/^(?:authorization|cookie|set-cookie|x-origin-verify|x-csrf-token|password|passwordhash)$/i';
     private const AUTHORIZATION_IN_TEXT = '/(authorization\s*[:=]\s*)[^\r\n",]*/i';
+    /** A whole `Cookie:` or `Set-Cookie:` line: the value holds `;` and `,`, so only the line end stops it. */
+    private const COOKIE_LINE_IN_TEXT = '/((?<![A-Za-z0-9_-])(?:set-)?cookie\s*:\s*)[^\r\n"]*/i';
+    private const SESSION_COOKIE_IN_TEXT = '/(__Host-session\s*=\s*)[^\s;,"\']+/i';
     private const JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR;
 
     private \Closure $clock;
@@ -108,7 +113,7 @@ final readonly class JsonLogger
         $redacted = [];
         foreach ($values as $key => $value) {
             $redacted[$key] = match (true) {
-                \is_string($key) && preg_match(self::AUTHORIZATION_KEY, $key) === 1 => self::REDACTED,
+                \is_string($key) && preg_match(self::SENSITIVE_KEY, $key) === 1 => self::REDACTED,
                 \is_string($value) => $this->redactText($value),
                 \is_array($value) => $this->redactContext($value),
                 default => $value,
@@ -120,7 +125,12 @@ final readonly class JsonLogger
 
     private function redactText(string $text): string
     {
-        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $this->redactSecrets($text)) ?? self::REDACTED;
+        $redacted = $this->redactSecrets($text);
+        foreach ([self::COOKIE_LINE_IN_TEXT, self::SESSION_COOKIE_IN_TEXT, self::AUTHORIZATION_IN_TEXT] as $pattern) {
+            $redacted = preg_replace($pattern, '$1' . self::REDACTED, $redacted) ?? self::REDACTED;
+        }
+
+        return $redacted;
     }
 
     /**

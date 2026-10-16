@@ -196,7 +196,6 @@ final class JsonLoggerTest extends TestCase
     public function testRedactsASessionCookieValueInsideAMessage(): void
     {
         $token = str_repeat('Ab3_-', 8) . 'xyz';
-        self::assertSame(43, strlen($token));
 
         $this->logger()->info("session __Host-session={$token} seen", ['detail' => "x __HOST-SESSION={$token}"]);
 

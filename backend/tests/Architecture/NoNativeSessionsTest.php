@@ -75,7 +75,7 @@ final class NoNativeSessionsTest extends TestCase
     {
         $source = file_get_contents($path);
         self::assertIsString($source, $path);
-        $tokens = \PhpToken::tokenize($source);
+        $tokens = array_values(\PhpToken::tokenize($source));
         $hits = [];
 
         foreach ($tokens as $index => $token) {
