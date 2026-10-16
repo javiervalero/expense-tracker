@@ -37,8 +37,16 @@ abstract class ApiTestCase extends TestCase
     /** The `X-Origin-Verify` value sent with every call; null sends none. Reset for each test. */
     private ?string $originHeader = null;
 
+    /** The browser `Origin` sent on every call except GET and HEAD; null sends none. Reset for each test. */
+    private ?string $browserOrigin = null;
+
+    /** Whether `X-Requested-With: XMLHttpRequest` is sent on every call except GET and HEAD. Reset for each test. */
+    private bool $sendRequestedWith = true;
+
     final protected function setUp(): void
     {
+        $this->browserOrigin = self::defaultBrowserOrigin();
+        $this->sendRequestedWith = true;
         $fromEnv = getenv('API_BASE_URL');
         $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
         $this->originHeader = self::localOriginSecret();
@@ -56,6 +64,22 @@ abstract class ApiTestCase extends TestCase
     final protected function withoutOriginHeader(): void
     {
         $this->originHeader = null;
+    }
+
+    /**
+     * From now on in this test, sends `Origin: $origin` on the calls that need one (null: no `Origin` at all).
+     */
+    final protected function withBrowserOrigin(?string $origin): void
+    {
+        $this->browserOrigin = $origin;
+    }
+
+    /**
+     * From now on in this test, sends no `X-Requested-With` header.
+     */
+    final protected function withoutRequestedWith(): void
+    {
+        $this->sendRequestedWith = false;
     }
 
     /**
@@ -114,7 +138,7 @@ abstract class ApiTestCase extends TestCase
             self::assertNull($documented, "$method $path is a documented operation ($documented): use request(), not rawRequest()");
         }
 
-        return $this->http->request($method, $this->base . $path, $this->withOrigin($options));
+        return $this->http->request($method, $this->base . $path, $this->withDefaults($method, $options));
     }
 
     /**
@@ -122,7 +146,7 @@ abstract class ApiTestCase extends TestCase
      */
     private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
     {
-        $response = $this->http->request($method, $this->base . $url, $this->withOrigin($options));
+        $response = $this->http->request($method, $this->base . $url, $this->withDefaults($method, $options));
         // The spec documents paths without the server prefix and without a query string.
         $violations = self::validator()->validate(
             $operationMethod,
@@ -137,20 +161,47 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
-     * The options plus the origin header. A header the test sets itself in the options wins.
+     * The options plus the headers sent by default: `X-Origin-Verify` always, and on every method except GET and HEAD
+     * the browser's `Origin` and `X-Requested-With` (what the CSRF check wants). A header the test sets itself in the
+     * options wins, whatever its letter case.
      *
      * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
      *
      * @return array{body?: string, headers?: array<string, string|non-empty-list<string>>}
      */
-    private function withOrigin(array $options): array
+    private function withDefaults(string $method, array $options): array
     {
-        if ($this->originHeader === null) {
-            return $options;
+        $defaults = [];
+        if ($this->originHeader !== null) {
+            $defaults['X-Origin-Verify'] = $this->originHeader;
         }
-        $options['headers'] = ($options['headers'] ?? []) + ['X-Origin-Verify' => $this->originHeader];
+        if (!in_array(strtoupper($method), ['GET', 'HEAD'], true)) {
+            if ($this->browserOrigin !== null) {
+                $defaults['Origin'] = $this->browserOrigin;
+            }
+            if ($this->sendRequestedWith) {
+                $defaults['X-Requested-With'] = 'XMLHttpRequest';
+            }
+        }
+        $own = array_change_key_case($options['headers'] ?? [], CASE_LOWER);
+        foreach ($defaults as $name => $value) {
+            if (!array_key_exists(strtolower($name), $own)) {
+                $options['headers'][$name] = $value;
+            }
+        }
 
         return $options;
+    }
+
+    /**
+     * The first entry of `APP_ORIGINS` (the same list the API checks), or the Vite dev server when unset.
+     */
+    private static function defaultBrowserOrigin(): string
+    {
+        $fromEnv = getenv('APP_ORIGINS');
+        $first = is_string($fromEnv) ? trim(explode(',', $fromEnv)[0]) : '';
+
+        return $first !== '' ? $first : 'http://localhost:5173';
     }
 
     /**

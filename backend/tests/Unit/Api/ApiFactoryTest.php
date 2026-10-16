@@ -18,7 +18,9 @@ final class ApiFactoryTest extends TestCase
 {
     private const SECRET_A = 'factory-slot-a-0123456789-0123456789';
     private const SECRET_B = 'factory-slot-b-0123456789-0123456789';
-    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1'];
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1'];
+
+    private const BROWSER = ['origin' => 'http://localhost:5173', 'x-requested-with' => 'XMLHttpRequest'];
 
     /** @var resource */
     private $stream;
@@ -62,12 +64,32 @@ final class ApiFactoryTest extends TestCase
         $kernel = ApiFactory::fromEnvironment(self::ENV, $this->stream);
 
         $notFound = $kernel->handle(new Request('GET', '/api/v1/nope', [], self::origin(), ''));
-        $notAllowed = $kernel->handle(new Request('POST', '/api/v1/health', [], self::origin(), ''));
+        $notAllowed = $kernel->handle(new Request('POST', '/api/v1/health', [], self::origin() + self::BROWSER, ''));
 
         self::assertSame(404, $notFound->status);
         self::assertSame(405, $notAllowed->status);
         self::assertSame(['GET, HEAD'], $notAllowed->headerValues('Allow'));
         self::assertSame(['nosniff'], $notAllowed->headerValues('X-Content-Type-Options'));
+    }
+
+    public function testAStateChangingRequestWithoutTheCsrfHeadersIs403BeforeRoutingAndLoggedOnce(): void
+    {
+        $kernel = ApiFactory::fromEnvironment(self::ENV, $this->stream);
+
+        $response = $kernel->handle(new Request('POST', '/api/v1/health', [], self::origin(), ''));
+
+        self::assertSame(403, $response->status);
+        self::assertSame([], $response->headerValues('Allow'));
+        self::assertStringContainsString('csrf check failed', $this->logged());
+    }
+
+    public function testTheCsrfCheckRunsAfterTheOriginCheck(): void
+    {
+        $response = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handle(new Request('POST', '/api/v1/health', [], self::BROWSER, ''));
+
+        self::assertSame(403, $response->status);
+        self::assertStringContainsString('origin verification failed', $this->logged());
+        self::assertStringNotContainsString('csrf check failed', $this->logged());
     }
 
     public function testEachRequestIsLoggedOnce(): void
@@ -80,7 +102,7 @@ final class ApiFactoryTest extends TestCase
 
     public function testAClientErrorIsLoggedExactlyOnceWithItsRealStatus(): void
     {
-        $response = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handle(new Request('POST', '/api/v1/health', [], self::origin(), ''));
+        $response = ApiFactory::fromEnvironment(self::ENV, $this->stream)->handle(new Request('POST', '/api/v1/health', [], self::origin() + self::BROWSER, ''));
 
         self::assertSame(405, $response->status);
         self::assertSame(1, substr_count($this->logged(), "\n"));
@@ -159,7 +181,7 @@ final class ApiFactoryTest extends TestCase
     public function testTheFactoryUsesTheLoadedConfigAndNeverReadsTheEnvironmentItself(): void
     {
         $other = 'loader-slot-0123456789-0123456789-xx';
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1']);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1']);
         $kernel = ApiFactory::fromConfigLoader(static fn(): ApiConfig => $config, $this->stream);
 
         self::assertSame(200, $kernel->handle(new Request('GET', '/api/v1/health', [], self::origin($other), ''))->status);
