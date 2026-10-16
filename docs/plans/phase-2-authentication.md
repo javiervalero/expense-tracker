@@ -622,6 +622,19 @@ Carried (do when it first applies):
 - **Enums and dates in log context** now log as `{"class": …}`. Before logging the first enum (a `reason` or `status`) or date, map `BackedEnum` → `->value`, `UnitEnum` → `->name`, `DateTimeInterface` → `format(DATE_ATOM)`.
 - **JSON inside a string:** there is no text rule for `"password":"…"` / `"cookie":"…"` already encoded into a string. Never log a raw request body; if one is ever needed, add a quoted-key rule first.
 
+### Notes from the WP3 reviews (2026-10-16)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `e2e5c07..42cf690`; round 2 (opus/high) on `42cf690..d0c1b68` approved; the last LOW (`d0c1b68..ab22cc7`, under 30 lines) was reviewed inline by the main session. No CRITICAL findings. The fix batch covers:
+- **Shell AWS keys (security MEDIUM):** Compose takes `AWS_*` from the caller's shell before `.env`, so exported real keys would have reached `api-php`, whose request code can read its environment. `COMPOSE` in the Makefile now starts with `env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE`; `scripts/check-env.sh` (tested by `scripts/tests/check-env.test.sh`) refuses a key pair other than the fake one from `.env.example`, any session token, and any credential line not written as `KEY=value` (Compose also reads `KEY: value` and `KEY = value`, checked with `docker compose config`). Messages name the variable, never the value. `docs/local-dev.md`'s direct `docker compose run` example carries the same prefix.
+- **"Built once per process" was false (php-reviewer HIGH):** under php-fpm, locally and with Bref FPM on Lambda, every request starts with fresh PHP state, so no static cache can carry the client across requests (real reuse would need `BREF_RUNTIME=function`, an ADR 0012 change). Comments and this plan now say "once per request"; no cache was added. WP6's common-password list loads only when a registration checks a password. Phase 8 measures the per-request cost.
+- `APP_ENV` compared as `strtolower(trim(…))`; a whitespace-only `DYNAMODB_ENDPOINT` counts as empty.
+- Weak tests replaced: the "no item data in the log" check now plants the note where it could leak; a near-tautological wiring test was removed (WP7 proves the wiring).
+- **Accepted risk (R13):** `dynamodb` on `api-internal` can reach php-fpm on 9000 (FastCGI has no authentication). Using that path needs code execution inside AWS's digest-pinned DynamoDB Local image; the target is read-only, non-root, `cap_drop: ALL`, holds only the fake keys, and has no route out. `listen.allowed_clients` would need fixed subnets that could clash with a developer's network. Revisit if a non-AWS image ever joins `api-internal`. WP14 records this in an ADR 0007 note.
+
+Carried:
+- **WP7:** `backend/tests/Support/Api/OfflineServices.php` is offline only for construction. A store call through it hangs, because the SDK's default credential chain falls through to the instance metadata service (the Phase 1 lesson again). Before WP7 uses it, give the client explicit static fake credentials (and keep `AWS_EC2_METADATA_DISABLED=true`).
+- **Agent briefs:** a WP3 fix agent killed debugging containers by an image filter. Only its own were running, but on the shared host that filter could hit another project. Every brief now says: kill or remove only containers you started, **by name**.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
