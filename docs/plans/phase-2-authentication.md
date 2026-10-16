@@ -1,0 +1,628 @@
+# Phase 2: Authentication. Implementation plan
+
+| | |
+|---|---|
+| Status | **Approved by the owner, 2026-10-16** (gate G1; all nine section 10 decisions answered with the recommended defaults) |
+| Phase | 2 (PLAN §12, essential track) |
+| Branch | `feat/phase-2-authentication`, from `main` (Phase 1 merged in PR #4, commit 93d2cbb) |
+| Inputs | BRIEF; PLAN §5, §6, §9, §10, §12; ADR 0002, 0003, 0004, 0005, 0011, 0012; [Phase 1 plan](phase-1-backend-core.md) section 6 (everything carried to Phase 2); the Phase 1 code (`backend/src/Api`, `backend/src/Http`, `backend/src/Infrastructure`, `ApiTestCase`, `contract/openapi.yaml`, `docker-compose.yml`, `Makefile`, `.env.example`) |
+| Drafted by | `ecc:planner` (opus/high); fact-checked against the code by the main session (2026-10-16) |
+| AWS | **None.** Phase 2 makes no AWS calls, uses no credentials, deploys nothing and costs $0. Every DynamoDB call goes to DynamoDB Local. Phase 2 has no AWS deploy, so it has no deploy gate. If any step ever seems to need AWS, the work stops and the owner is asked first. |
+
+**Scope (PLAN §12, row 2):** `POST /auth/register`, `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`. It also covers:
+- server-side sessions (an opaque token in an HttpOnly cookie, stored only as a hash under `SESSION#<tokenHash>`, with a TTL);
+- Argon2id password hashing;
+- CSRF protection (the `SameSite` cookie, a required custom header, and an `Origin` check);
+- login throttling per account and per client IP (IPv4, IPv6 `/64`, plus a coarser IPv6 tier).
+
+Contract first (ADR 0011): every endpoint, status and problem goes into `openapi.yaml` in the same WP that adds it.
+
+Not in scope: front-end pages (Phase 4), categories and expenses (Phase 3). See section 7.
+
+## 1. Goal and definition of done
+
+**Goal:** a person can create an account, sign in, see who they are and sign out, through the real API, locally. The design must hold up on the public internet:
+- passwords are stored only as Argon2id hashes;
+- the session token never reaches JavaScript and is never stored in plain form;
+- a forged cross-site request is refused;
+- password guessing is slowed per account and per network.
+
+**Done means (each item can be demonstrated):**
+- **`make up`** from a clean clone is still idempotent and healthy. The API now starts after the bootstrap (`LATE_SERVICES = api frontend`) and talks to DynamoDB Local.
+- **The happy path, with curl** (commands in `docs/local-dev.md`, all with `X-Origin-Verify`, `Origin: http://localhost:5173` and `X-Requested-With: XMLHttpRequest`):
+  - `POST /api/v1/auth/register` returns `201` with `{id, email}` and `Set-Cookie: __Host-session=…; Path=/; Max-Age=…; Secure; HttpOnly; SameSite=Lax`.
+  - `GET /api/v1/auth/me` with that cookie returns `200` with the same `{id, email}`.
+  - `POST /api/v1/auth/logout` returns `204` and a clearing cookie. The same cookie then gets `401` on `/auth/me`.
+  - `POST /api/v1/auth/login` returns `200` and a **new** cookie. Any cookie the request carried stops working.
+- **CSRF:** a `POST` without `X-Requested-With`, without `Origin`, or with a foreign `Origin` gets `403` problem+json. `GET` and `HEAD` are never affected.
+- **Throttling:**
+  - After the account limit of failed logins for one email, every login for that email gets `429` with `Retry-After`, even with the right password. The same happens for an email that has no account.
+  - The same holds per client address (IPv4 or `/64`) and per IPv6 `/48`.
+  - A race test sends 25 parallel wrong-password logins and gets **exactly** the limit of `401`s; the rest are `429`.
+- **No secrets in logs:** `make test-integration` greps the `api-php` logs for the test's password and session token and finds neither. Request lines on authenticated calls carry `userId`.
+- **Contract:**
+  - Every new operation is in `openapi.yaml`, and `frontend/src/api/schema.gen.ts` is regenerated.
+  - Every integration request is contract-validated through `ApiTestCase::request()`.
+  - New contract tests check four things: every operation declares `security`; the routes behind the session guard equal the operations with `security: [sessionCookie]`; every operation with a body documents 400/413/415/422; every non-health operation documents 503.
+- **`make test`** passes with line coverage ≥ 80% (target: near 100% on `backend/src`). **`make lint`** passes.
+- **CI:** the same 7 required checks (`backend`, `local-aws`, `guards`, `contract`, `frontend`, `integration`, `terraform`) are green. No job is added or renamed.
+- **Docs and ADRs:** each of ADR 0004, 0002, 0003 and 0012 gets an "Implemented in Phase 2" note (clarifications only; see section 2). `docs/local-dev.md`, `README.md` and `.env.example` are updated.
+
+## 2. Design decisions (recommended defaults)
+
+These settle the open design questions before any code is written. "ADR impact" says whether the point stays inside an accepted ADR. **None of them is meant to change a decision.** If the owner reads any "clarification" as a change, it becomes ADR 0013 instead (gate G2).
+
+| # | Topic | Recommendation | ADR impact |
+|---|---|---|---|
+| A1 | Cookie | Name `__Host-session`. Attributes `Path=/; Secure; HttpOnly; SameSite=Lax`, no `Domain`, `Max-Age` = the absolute lifetime (so renewal never needs a new `Set-Cookie`). **The same attributes everywhere, `Secure` included, also on `http://localhost`.** Browsers treat localhost as a secure context; R1 confirms this per browser. There is no "insecure cookie" switch, so local and AWS run one code path. | As ADR 0004 |
+| A2 | Token and hash | 32 bytes from `random_bytes`, base64url without padding (exactly 43 characters). Stored as SHA-256 hex: `PK = SESSION#<64 hex>`. No pepper or HMAC is needed, because a 256-bit random value cannot be guessed from its hash. A cookie value that is not exactly 43 base64url characters is treated as "no session", with no database read. | As ADR 0004 |
+| A3 | Lifetime | **Idle 24 h (sliding), absolute 7 days.** The renewal write happens at most once every 15 minutes. Expiry is checked on **every** read against `expiresAt` and `absoluteExpiresAt`, because DynamoDB TTL deletes items late (up to about 48 h). TTL is only for cleanup. | Clarifies ADR 0004 ("sliding renewal" gets an absolute cap) |
+| A4 | Rotation | Login and register always issue a fresh token, and delete the session that the request carried (if any). The server never adopts a token chosen by the client, so session fixation is impossible. | As ADR 0004; the ECC PHP rule ("regenerate after authentication") |
+| A5 | Logout | Deletes the current session item. Always `204` plus a clearing cookie, even with no cookie or an unknown one (idempotent, and no oracle). Protected by CSRF, so a forced logout is refused. There is no "sign out everywhere": it would need a per-user session index, and the BRIEF does not ask for it. | As ADR 0004 |
+| A6 | `/auth/me` | `200 {id, email}`. Otherwise `401` problem with `WWW-Authenticate: Session` (RFC 9110 requires that header on a 401), plus a clearing cookie when a stale cookie was sent. | — |
+| A7 | Where authentication runs | There is **no global auth middleware**. A `RequireSession` decorator wraps each protected handler in `Routes.php`. Public routes, 404s and `/health` therefore never cost a DynamoDB read. A contract test keeps "guarded routes" equal to "operations with `security: [sessionCookie]`", so a forgotten guard fails CI. | Clarifies ADR 0003 (its list says "session authentication" middleware; this is a route-level guard) and the Phase 1 plan's chain note |
+| A8 | CSRF | A global `CsrfMiddleware` after `ClientIp` and before the router. Every method except `GET`, `HEAD` and `OPTIONS` needs both:<br>• **`X-Requested-With: XMLHttpRequest`** (exact value). This is ADR 0004's header, kept on purpose: ADR 0012 §4.1's CloudFront allow-list forwards `X-Requested-With` but not `X-CSRF-Token`.<br>• **`Origin`**, byte-for-byte one of `APP_ORIGINS`. A missing `Origin`, `null`, or a comma-joined value is refused.<br>It runs before authentication, so a forged request costs no database read.<br>Locally the Vite proxy forwards the browser's `Origin` unchanged (`changeOrigin: false`) and already refuses foreign origins itself (`frontend/vite/proxyHeaders.ts`), so the check sees the real value. | Clarifies ADR 0004 (exact value, missing Origin refused, order) |
+| A9 | Register flow and enumeration | Register **signs the user in** (`201` + cookie). An email that is already taken gets **`409`**, which is honest. Sign-up cannot hide whether an email exists without email verification (out of scope in the BRIEF): a fake "success" would leave the person unable to sign in. Mitigation: registration is throttled per IP (A13). **Login stays fully generic** (ADR 0004). | ADR 0004's "generic responses" sentence is about login, so this is a clarification. **Owner decision 2** |
+| A10 | Email normalisation | Trim surrounding ASCII whitespace, lower-case (ASCII), validate with `FILTER_VALIDATE_EMAIL`, at most 254 bytes, no control characters. No provider tricks (dots, `+tags`). ASCII addresses only (documented limit). The user item stores the normalised form. | — |
+| A11 | Password policy | 12 to 128 characters (`mb_strlen`). Spaces and Unicode are allowed. Control characters are refused (a carried WP3 rule). No composition rules, no breached-password lookup (that would be an outbound third-party call, against ADR 0012's "no third-party calls"). Login only enforces the maximum length, so a later policy change never locks anyone out. | **Owner decision 4** |
+| A12 | Argon2id cost | `memory_cost` 65536 KiB (64 MiB), `time_cost` 4, `threads` 1. These are PHP's defaults, **pinned as constants** so a PHP upgrade cannot change them silently. `password_needs_rehash` on login upgrades old hashes. Argon2 memory is allocated outside PHP's `memory_limit`. Phase 7 sizes the API Lambda (at least 512 MB suggested) and Phase 8 measures login latency. | As ADR 0004 |
+| A13 | Throttle limits | Fixed windows, counted in DynamoDB:<br>• login per account (hashed email): **10 per 15 min**;<br>• login per address (IPv4, IPv6 `/64`, or the shared `unknown`): **30 per 15 min**;<br>• login per IPv6 `/48`: **100 per 15 min**;<br>• register per address: **5 per hour**; register per `/48`: **20 per hour**.<br>Above a limit: `429`, `Retry-After` = seconds to the end of the window, one generic body that never says which bucket fired. An email without an account is counted exactly like a real one. | ADR 0004/0012 say "per email and per IP"; the extra tiers are additive (clarification). **Owner decision 5** |
+| A14 | Coarse IPv6 tier | **`/48`**, next to the `/64` key. A holder of a `/48` (hosting, 6to4) would otherwise spread over 65,536 `/64` keys. Only failures count against the login tier and its limit is high, so a `/48` shared by about 256 residential `/56` customers is unlikely to trip it. IPv4 has no coarse tier. Computed from the canonical `ClientAddress::$ip`; `ClientIp` itself is not changed. | Clarifies ADR 0012 §4.3. **Owner decision 6** |
+| A15 | Throttle storage and races | Item `PK = THROTTLE#<scope>#<key>`, `SK = THROTTLE`, with `attempts` and `expiresAt` (TTL). Scopes: `LOGIN-EMAIL` (key = SHA-256 hex of the normalised email, so mistyped emails are not stored), `LOGIN-IP`, `LOGIN-NET`, `REGISTER-IP`, `REGISTER-NET`.<br>**Increment first:** each attempt is one atomic `UpdateItem ADD attempts :1`, guarded by `attribute_not_exists(PK) OR expiresAt > :now`, and the returned count decides. N parallel attempts therefore get N distinct counts, and only `limit` pass.<br>An expired window that TTL has not deleted yet is reset with a conditional put (`… OR expiresAt <= :now`). If two requests reset at once, the loser retries the increment once.<br>On a **successful** login: the account bucket is deleted, and the address buckets are refunded (`ADD -1`, never below 0). Net effect: failures are what is counted. | Clarifies ADR 0002 (`THROTTLE#<email or ip>` gets a scope and a hashed email) |
+| A16 | Timing for unknown accounts | When the email has no account, the login still runs `password_verify` against a constant dummy hash with the **same** parameters (a test pins them), and does one `GetItem` on a fixed dummy user key. Known and unknown emails then cost the same hash time and the same number of reads. | As ADR 0004 |
+| A17 | Clock and ids | `Infrastructure\Clock\Clock` (`now(): DateTimeImmutable`, UTC) with `SystemClock`; `FrozenClock` for tests. `Infrastructure\Id\IdGenerator` with `RandomUuidGenerator` (UUID v4 from `random_bytes`), plus `Uuid::isValid()` (lower-case canonical v4). | ADR 0002 ("random UUIDs") |
+| A18 | DynamoDB overload | `StorageFailure` with code `ProvisionedThroughputExceededException`, `ThrottlingException` or `RequestLimitExceeded`, and `TransactionCancelled` whose reasons are only throttling or `TransactionConflict` (no `ConditionalCheckFailed`), become **`503` with `Retry-After: 1`**. This only happens after the SDK's own 3 attempts. Every other storage failure stays a generic 500. | — |
+| A19 | False duplicate after a retry | The SDK retries a timed-out write; the first attempt may already have succeeded. So a `ConditionFailed` on a create is **re-read before it is reported**:<br>• register: if the email lock already holds *our* new user id, it is a success;<br>• session create: if the item holds our user id and `createdAt`, it is a success;<br>• anything else is a real conflict.<br>The throttle `ADD` may count one attempt twice on a retry, which errs on the safe side. | — |
+| A20 | Duplicate cookie names | Bref rebuilds `Cookie` from API Gateway's `cookies[]`, so two `__Host-session` values can arrive (cookie tossing). **Two or more** means anonymous: no lookup, and a warning `duplicate session cookie` that logs no values. | — |
+| A21 | Secrets in logs | `JsonLogger` key-based redaction gains `cookie`, `set-cookie`, `x-origin-verify`, `x-csrf-token`, `password` and `passwordHash` (case-insensitive). Text patterns are added for `Cookie:` / `Set-Cookie:` lines and `__Host-session=<value>`. Every function that takes a password or token marks it `#[\SensitiveParameter]`. Value objects hide secrets from `var_dump`, `print_r` and `json_encode`. The request line gets `userId` (an opaque UUID) once a session or login is known. | — |
+| A22 | Local wiring | `api-php` gets `DYNAMODB_ENDPOINT` and `DYNAMODB_TABLE` (both required, `:?`), `AWS_REGION`, the **fake** key pair from `.env`, `AWS_EC2_METADATA_DISABLED=true` and `APP_ORIGINS`. Defence in depth: `api-php` stays **only** on the internal network `api-internal`, which has no route out, and `dynamodb` joins that network. The fake keys therefore cannot reach anything but DynamoDB Local, and `DYNAMODB_ENDPOINT` is already allow-listed to local hosts. `check-env` requires `DYNAMODB_ENDPOINT`. | ADR 0007 (local stack), unchanged |
+
+**Request flow after Phase 2** (outermost first):
+1. `ErrorHandling`
+2. `RequestLogging`
+3. `OriginVerify`
+4. deferred 413/400
+5. `ClientIp`
+6. **`StorageUnavailable`** (WP3)
+7. **`Csrf`** (WP4)
+8. router, with **`RequireSession`** around protected handlers (WP8)
+
+## 3. Work packages
+
+Each package is one or a few reviewable commits with conventional messages. Tests are committed with or before the code that makes them pass, so RED → GREEN is visible in the history. Every WP is S or S–M.
+
+**Order:** step 0 research → infrastructure (WP2–WP3) → CSRF (WP4) → pure building blocks (WP5–WP6) → repositories (WP7–WP9) → endpoints (WP10–WP12) → end-to-end and log checks (WP13) → docs (WP14). WP5, WP6 and WP9 depend only on WP2 and could be reordered. They all run on one branch, one after another.
+
+**Where commands run:** unchanged from Phase 1. PHP runs **only through make targets**, in the pinned PHP 8.5 tools container: the host PHP is 8.4 and `vendor/` needs 8.5. Node tools run in the pinned node container. Temporary files go in `build/tmp/`. CI calls the same make targets.
+
+**Accepted ADRs are not edited to change decisions.** A real change needs ADR 0013 (gate G2). Clarifications go in the "Implemented in Phase 2" notes written in WP14.
+
+### Shared Docker host rule (applies to every WP marked "Docker: yes")
+The Docker host is shared with other projects. An agent may only:
+- use the repo's make targets;
+- use `docker compose -p expense-tracker …` (`up`, `stop`, `start`, `run --rm`, `logs`, `ps`, `down` **without** `-v`);
+- use `docker run --rm` for containers it starts itself.
+
+It may remove **only** containers, networks or volumes that it created in this session, by name. It must **never** run `docker rm $(docker ps -aq)`, any `docker … prune`, `docker compose down -v`, or `docker volume rm` on a volume it did not create. If a cleanup seems to need any of these, it stops and asks the owner.
+
+### Model routing summary (`.claude/rules/project/model-routing.md`)
+- **Implementation:** `ecc:tdd-guide`, sonnet/medium, one brief per WP (file paths + the exact question).
+- **Review:** one language reviewer per diff: `ecc:php-reviewer`, sonnet/medium.
+- **Security:** `ecc:security-reviewer`, **opus/high on every WP that touches auth, sessions, cookies, CSRF, throttling, passwords, log redaction or DB writes** (WP2–WP13, marked per WP). **Round 2** (re-review of the fix hunks only) also runs at **opus/high**.
+- **CI and Makefile:** diffs under about 30 lines are reviewed inline by the main session. Larger ones go to `ecc:code-reviewer` (sonnet/medium).
+- **Docs:** `ecc:doc-updater` (haiku/low), always fact-checked by the main session (WP14).
+- **Test runs and output summaries:** general-purpose, haiku/low.
+- **Build or lint failures:** `ecc:build-error-resolver`, sonnet/low on the first attempt, then opus/high.
+
+### Step 0: Research & Reuse (ECC step 0, before WP2), fact-checked by the main session
+`ecc:docs-lookup` cannot be used here: it depends on Context7, which this setup does not have (found in Phase 1). Instead:
+- **R2, R4 and R5** are answered from the code itself: the Bref source in `backend/vendor/bref/bref/src/Event/Http/`, the aws-sdk-php source in `backend/vendor/aws/`, and a short `php -r` run in the pinned `php:8.5-fpm-alpine` and `bref/php-85:3` images (`docker run --rm`). Main session or `general-purpose` haiku/low.
+- **R1, R3, R6 and R7** are web research on primary sources (browser vendor docs, the AWS DynamoDB developer guide, OWASP cheat sheets, NIST SP 800-63B-4, the Fetch spec): `general-purpose` sonnet/medium with WebFetch, every claim with a URL.
+
+Each result goes in the WP that needs it:
+- **R1 (WP5, A1):** do Chrome, Firefox and Safari accept and send a `__Host-` cookie with `Secure` from `http://localhost:5173` and `http://127.0.0.1:5173`? If Safari does not, `docs/local-dev.md` says "use Chrome or Firefox locally"; the code is not weakened.
+- **R2 (WP5, WP8):** Bref 3 FPM with API Gateway payload v2. How is the `Cookie` request header rebuilt from `cookies[]` (separator, duplicates)? How do several `Set-Cookie` response headers become the `cookies` array?
+- **R3 (WP3):** the exact DynamoDB error codes for throttling, both as SDK exception codes and as `CancellationReasons` codes (`ThrottlingError`, `ProvisionedThroughputExceeded`, `TransactionConflict`). Which of them does the SDK's `standard` retry mode already retry?
+- **R4 (WP7):** does aws-sdk-php fill `ClientRequestToken` on `TransactWriteItems` by itself and reuse it across retries? Does DynamoDB Local honour it? This is informational only: A19's re-read rule does not depend on it.
+- **R5 (WP6):** the Argon2id parameters and backend in `php:8.5-fpm-alpine` and `bref/php-85:3` (libargon2 or libsodium; whether `threads > 1` is possible); `password_hash` defaults on 8.5.
+- **R6 (WP6, A3, A11):** current OWASP guidance (Password Storage, Session Management, Authentication cheat sheets) and NIST SP 800-63B-4 on password length, Argon2id parameters, idle and absolute timeouts, and lockout. Record the citations next to A3, A11 and A12.
+- **R7 (WP4):** the Fetch spec. Does a same-origin `fetch` with `POST`/`PATCH`/`DELETE` always send `Origin`? If not, refusing a missing `Origin` (A8) would break the app.
+
+### Part A: Infrastructure
+
+#### WP1: Plan (S)
+- **Files:** this plan (`docs/plans/phase-2-authentication.md`).
+- **Agent:** written by the main session from the planner's output. **Commit:** `docs: add phase 2 implementation plan`.
+
+#### WP2: Clock, UUID generator, log redaction (S)
+- **Files:**
+  - `backend/src/Infrastructure/Clock/{Clock,SystemClock}.php`; `backend/tests/Support/FrozenClock.php` (with `advance(int $seconds)`).
+  - `backend/src/Infrastructure/Id/{IdGenerator,RandomUuidGenerator,Uuid}.php`.
+  - `backend/src/Infrastructure/Logging/JsonLogger.php`: the A21 key list and text patterns.
+  - `backend/tests/Architecture/NoNativeSessionsTest.php`, with fixtures. It scans `src/` and `public/` with `PhpToken` and forbids `session_start`, `setcookie`, `setrawcookie`, `$_COOKIE`, `rand`, `mt_rand`, `uniqid` and `lcg_value`: cookies go only through `Response`, and randomness only through `random_bytes`.
+- **Tests first (RED):**
+  - `Unit/Infrastructure/Clock/SystemClockTest.php`: the time is UTC.
+  - `Unit/Infrastructure/Id/RandomUuidGeneratorTest.php`: format, version nibble `4`, variant `10xx`, 1,000 unique values.
+  - `UuidTest`: refuses upper case, braces, v1, the nil UUID and whitespace.
+  - `JsonLoggerTest`: each new key redacted at any depth; `Cookie: a=b` and `__Host-session=<43 chars>` inside a message redacted; a `password` key inside nested context redacted.
+  - `NoNativeSessionsTest`: a leaky fixture is flagged with file and line.
+- **Acceptance:** green; PHPStan max clean.
+- **Docker:** yes (php tools container).
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)** on the redaction (it may be batched with WP3's review).
+- **Commit:** `feat: add clock, uuid generator and cookie-aware log redaction`.
+
+#### WP3: DynamoDB in the API, 503 on overload, local wiring (S–M)
+- **Files:**
+  - `backend/src/Infrastructure/Config/ApiConfig.php`: holds `DynamoDbSettings`, and their errors are merged into one `InvalidConfiguration` (names only). Fail closed when `APP_ENV=local` and `DYNAMODB_ENDPOINT` is empty, so an empty value never silently means real AWS (the in-app twin of `check-env`).
+  - `backend/src/Api/ApiServices.php` (a small readonly holder: `ItemStore`, `Clock`, `IdGenerator`, logger). `ApiFactory` builds the client and `ItemStore` **once per process** (reused by warm Lambdas). `Routes::all(ApiServices $services)`.
+  - `backend/src/Http/Middleware/StorageUnavailableMiddleware.php` (A18): logs `storage unavailable` with operation, code and AWS request id (never item data), then throws `HttpProblem::of(503, headers: ['Retry-After' => ['1']])`. `ErrorHandlingMiddleware` already keeps `Retry-After` on 5xx.
+  - `backend/tests/Contract/RoutesMatchContractTest.php` and `Unit/Api/ApiFactoryTest.php`: build `ApiServices` offline (SDK `MockHandler`, no network).
+  - `docker-compose.yml` (A22):
+    - `api-php` environment;
+    - `dynamodb` gets `networks: [default, api-internal]`;
+    - rewrite the `api-php` "NEVER AWS CREDENTIALS" comment: only the fake local pair, which works against DynamoDB Local and nothing else, on a network with no route out.
+  - `Makefile`: `LATE_SERVICES = api frontend`; `REQUIRED_ENV_KEYS = DYNAMODB_TABLE DYNAMODB_ENDPOINT`; refresh the comments above both.
+  - `.env.example`: say that `DYNAMODB_ENDPOINT` is now required by the API.
+- **Tests first (RED):**
+  - `ApiConfigTest`: missing `DYNAMODB_TABLE` plus a bad `AWS_REGION` give both errors, by name; `APP_ENV=local` without an endpoint fails.
+  - `ApiFactoryTest`: an invalid DynamoDB setting gives 500 on `/health`, and the log names the variable only.
+  - `StorageUnavailableMiddlewareTest`: each throttling code gives 503 + `Retry-After: 1`; `AccessDeniedException` is rethrown (so it becomes 500); `TransactionCancelled([None, ThrottlingError])` gives 503; `[ConditionalCheckFailed, None]` is rethrown; the log line has no item data.
+- **Acceptance:** `make up` is healthy with the new order (the API starts after `local-aws-init`); `make test-integration` is green; a stale `.env` without `DYNAMODB_ENDPOINT` makes `make up` stop with the "add this line" message.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**: credentials in a container, the network change, error mapping. **Round 2 at opus/high.** The Makefile and Compose diff is reviewed inline if under ~30 lines.
+- **Commits:** `feat: wire the dynamodb item store into the api and map overload to 503`, `chore: give api-php the local dynamodb settings and start the api after the bootstrap`.
+
+#### WP4: CSRF middleware (S–M), security-critical
+- **Behaviour:** A8. One generic `403` problem ("The request failed the cross-site request check."). A warning `csrf check failed` logs method, path and reason (`missing-header` / `bad-header` / `missing-origin` / `foreign-origin`) and the `Origin` value capped at 128 bytes. The header and Origin values are not secrets.
+- **Config:** `APP_ORIGINS` (required) holds 1 to 3 comma-separated origins. Each is exactly `scheme://host[:port]`: lower case, no path, no trailing slash. `https` is required except for `localhost`, `127.0.0.1` and `[::1]`. Anything else fails closed at startup.
+- **Files:**
+  - `backend/src/Http/Middleware/CsrfMiddleware.php`; `ApiConfig` (+ `appOrigins`); `ApiFactory` (chain position).
+  - `docker-compose.yml`: `api-php` gets `APP_ORIGINS: ${APP_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}` (the Vite proxy's own allowed origins).
+  - `.env.example`: the `APP_ORIGINS` line, with a comment.
+  - `ApiTestCase`: on every method except GET and HEAD, it sends `Origin` (the first entry of `APP_ORIGINS` from env, default `http://localhost:5173`) and `X-Requested-With: XMLHttpRequest` by default, with `withBrowserOrigin(?string)` and `withoutRequestedWith()` for the negative cases. A header the test sets itself wins.
+  - `contract/openapi.yaml`: the `Forbidden` description also covers the CSRF check; `info.version` 0.4.0.
+- **Tests first (RED):**
+  - `Unit/Http/Middleware/CsrfMiddlewareTest.php`, a data provider:
+    - `GET`, `HEAD` and `OPTIONS` with nothing pass;
+    - `POST`, `PUT`, `PATCH`, `DELETE`, `PROPFIND` and a lower-case `post` with nothing give 403;
+    - header value `xmlhttprequest`, empty, or `XMLHttpRequest, XMLHttpRequest` gives 403;
+    - `Origin` missing, `null`, `http://localhost:5173/`, `http://localhost:5174`, `https://localhost:5173`, `http://LOCALHOST:5173`, `http://localhost:5173, http://evil.example`, or whitespace-padded gives 403;
+    - an exact allowed origin passes;
+    - the log line has the reason.
+  - `ApiConfigTest`: `APP_ORIGINS` empty, 4 entries, a path, a trailing slash, `http://` on a public host, upper case.
+  - `Integration/Http/CsrfApiTest.php` through nginx, with `requestAs` against `GET /health`'s documented 403/405:
+    - `POST /health` without `X-Requested-With` gives 403;
+    - with a foreign Origin gives 403;
+    - without Origin gives 403;
+    - with both headers right gives 405 (the CSRF check passed, and the router answers);
+    - `GET /health` without the headers gives 200.
+- **Acceptance:** green; the existing `HealthApiTest`, `OriginVerifyApiTest` and `ClientIpOverNginxTest` still pass. **Open the PR as a draft after this WP.**
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commit:** `feat: reject state-changing requests that fail the csrf header and origin checks`.
+
+### Part B: Building blocks
+
+#### WP5: Cookie parsing and session tokens (S), security-critical
+- **Files:**
+  - `backend/src/Http/Cookie/CookieHeader.php`, a strict parser:
+    - splits on `;` and trims spaces and tabs;
+    - names must be RFC 6265 tokens; values are kept raw (no URL-decoding);
+    - **duplicates are kept**, so the caller can see them;
+    - a header over 8 KiB parses as empty.
+  - `backend/src/Auth/Session/SessionToken.php` (A2):
+    - `generate()`, `fromCookieValue(string): ?self`, `hash(): string` (64 hex), `cookieValue()`;
+    - `#[\SensitiveParameter]`; `__debugInfo` hides the value; there is no `__toString`; `jsonSerialize` is refused.
+  - `backend/src/Auth/Session/SessionCookie.php`:
+    - `NAME = '__Host-session'`;
+    - `issue(SessionToken, int $maxAge): string` and `clear(): string` build the exact `Set-Cookie` values (A1);
+    - `read(Request)` returns `absent | malformed | duplicate | present(token)` (A20).
+- **Tests first (RED):**
+  - `Unit/Http/Cookie/CookieHeaderTest.php`: the Bref join `a=1; b=2`, an HTTP/2-style merge, a duplicate name kept twice, `=` inside a value, a pair without `=` skipped, a quoted value kept raw, an empty header, an oversize header.
+  - `Unit/Auth/Session/SessionTokenTest.php`:
+    - 43 characters of the base64url alphabet; 1,000 unique values;
+    - a known SHA-256 vector for a fixed value;
+    - refuses 42 and 44 characters, `+`, `/`, `=`, non-ASCII and whitespace;
+    - `var_dump`, `print_r`, `var_export` and `json_encode` never show the value.
+  - `Unit/Auth/Session/SessionCookieTest.php`: the exact `Set-Cookie` strings; `read()` outcomes (`__Host-session` twice gives duplicate; `__host-session` is a different name, so absent; a malformed value gives malformed).
+- **Acceptance:** 100% line coverage of the three classes.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commit:** `feat: add cookie header parser and session token`.
+
+#### WP6: Email, password policy, Argon2id hasher (S), security-critical
+- **Files:**
+  - `backend/src/Auth/Email.php` (A10), with an `InvalidEmail` reason for the field error.
+  - `backend/src/Auth/Password/PasswordPolicy.php` (A11): `MIN_CHARS = 12`, `MAX_CHARS = 128`; `violation(string): ?string`; `exceedsLoginLimit(string): bool`.
+  - `backend/src/Auth/Password/PasswordHasher.php` (A12, A16):
+    - `hash()`, `verify()`, `needsRehash()`, `verifyDummy()`;
+    - the parameters are constructor arguments (unit tests pass cheap ones), and `production()` gives the pinned constants;
+    - `DUMMY_HASH` is a constant generated once with the production parameters.
+- **Tests first (RED):**
+  - `Unit/Auth/EmailTest.php`: `"  Alice@Example.COM "` gives `alice@example.com`; 254 bytes pass and 255 fail; no `@`, two `@`, a Unicode local part, a control character and NUL are refused.
+  - `Unit/Auth/Password/PasswordPolicyTest.php`: 11, 12, 128 and 129 characters; multibyte characters counted as one; spaces and emoji allowed; `\x00`, `\x1F` and `\x7F` refused.
+  - `Unit/Auth/Password/PasswordHasherTest.php`:
+    - the production hash starts with `$argon2id$v=19$m=65536,t=4,p=1$`;
+    - verify true and false;
+    - `needsRehash` is true for a hash with older parameters;
+    - **`password_get_info(DUMMY_HASH)` equals the production parameters**, so changing the cost without regenerating the dummy fails the test.
+  - One `slow`-group test: one production hash takes under 2 s in the tools container; the measured time is written to `build/tmp/argon2-timing.txt` for the WP review.
+- **Acceptance:** green; the measured time is recorded in the WP notes (input for Phase 7 sizing).
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commit:** `feat: add email normalisation, password policy and argon2id hasher`.
+
+### Part C: Storage (DynamoDB Local)
+
+#### WP7: Users and email locks (S–M)
+- **Files:**
+  - `backend/src/Auth/AuthKeys.php`: `user(string $userId)` and `emailLock(Email)`. Ids are checked with `Uuid::isValid`, otherwise `InvalidArgumentException`. WP8 and WP9 add `session()` and `throttle()`. **Keys always take the user id from the session principal or a freshly generated id, never from the request.**
+  - `backend/src/Auth/User/{User,UserRepository,EmailTaken}.php`:
+    - `User` hides `passwordHash` from `__debugInfo`;
+    - `create(User)` is one `transactWrite`: put `USER#<id>`/`PROFILE` and put `EMAIL#<email>`/`EMAIL`, both `attribute_not_exists(PK)`, **items built field by field**;
+    - on `ConditionalCheckFailed` the lock is re-read (A19): our id is a success, anything else is `EmailTaken`; other cancellation reasons are rethrown (WP3 maps them to 503);
+    - `findByEmail()`, `findById()`, `updatePasswordHash()` (`attribute_exists(PK)`);
+    - an item with a missing or wrongly typed attribute is a storage error (500), never trusted.
+  - Item attributes: `userId`, `email`, `passwordHash`, `createdAt` (ISO 8601 UTC).
+- **Tests first (RED):**
+  - `Unit/Auth/AuthKeysTest.php`: refuses a non-UUID, upper case and an empty id. A local part with `#` is fine, because the key is never parsed back.
+  - `Integration/Auth/UserRepositoryTest.php` on `TemporaryTable`:
+    - create, then find by email and by id;
+    - the same email in other letter case gives `EmailTaken`, and no second user item exists;
+    - **calling `create` twice with the same `User` succeeds** (the retry rule);
+    - an unknown email gives null;
+    - `updatePasswordHash` on a missing user gives `ConditionFailed`;
+    - a corrupt item gives a storage error.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)** (DB writes, enumeration); **round 2 at opus/high**.
+- **Commit:** `feat: add user repository with a transactional email lock`.
+
+#### WP8: Sessions and the route guard (S–M), security-critical
+- **Files:**
+  - `AuthKeys::session(string $tokenHash)` (64 lower-case hex only).
+  - `backend/src/Auth/Session/`:
+    - `Session.php`;
+    - `SessionLifetime.php`: `IDLE = 86400`, `ABSOLUTE = 604800`, `RENEW_AFTER = 900`;
+    - `Principal.php` (`userId`, `tokenHash`; attribute `auth.principal`);
+    - `SessionRepository.php`:
+      - `create(userId)`: a conditional put, with the A19 re-read, and one new token on a real collision;
+      - `find(hash, now)`: valid only while `expiresAt > now`, `absoluteExpiresAt > now` and the `userId` is a valid UUID;
+      - `renew()`: condition `attribute_exists(PK) AND expiresAt > :now`; new `expiresAt = min(now + IDLE, absoluteExpiresAt)`;
+      - `delete()`;
+    - `SessionAuthenticator.php`: Request → `Anonymous(reason)` or `Authenticated(Principal)`. A duplicate cookie gives a warning and **no read**. A failed renewal is logged and is not fatal; a renewal `ConditionFailed` means the session is gone, so anonymous;
+    - `RequireSession.php`: a `Handler` decorator. Anonymous gives `401` + `WWW-Authenticate: Session`, plus a clearing cookie if a cookie was sent. Authenticated sets the principal attribute and `RequestLogContext::recordUserId()`.
+  - `backend/src/Http/RequestLogContext.php` and `Middleware/RequestLoggingMiddleware.php`: `userId` in the request line (write-once, like `clientIp`).
+  - Session item: `PK = SESSION#<hash>`, `SK = SESSION`, `userId`, `createdAt`, `renewedAt`, `absoluteExpiresAt`, `expiresAt` (all epoch seconds as Numbers; TTL needs a Number).
+- **Tests first (RED):**
+  - `Unit/Auth/Session/SessionAuthenticatorTest.php` (an in-memory fake repository plus `FrozenClock`):
+    - absent, malformed and duplicate cookies are anonymous **with zero repository calls**;
+    - an unknown hash is anonymous;
+    - an item still present with `expiresAt` in the past (TTL lag) is anonymous;
+    - the absolute cap reached right after a renewal is anonymous;
+    - no renewal before 15 min, one after;
+    - renewal never goes past the absolute cap;
+    - renewal `ConditionFailed` is anonymous.
+  - `Unit/Auth/Session/RequireSessionTest.php`: the 401 problem with its headers; the inner handler is not called; on success the attribute and `userId` are recorded.
+  - `Integration/Auth/SessionRepositoryTest.php` on `TemporaryTable`: create, find, renew, delete; a `create` replayed with the same item is a success; the stored types are Numbers.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commit:** `feat: add server-side sessions and the require-session route guard`.
+
+#### WP9: Throttle counters (S–M), security-critical
+- **Files:**
+  - `AuthKeys::throttle(string $scope, string $key)`.
+  - `backend/src/Auth/Throttle/`:
+    - `ThrottleRule.php` (scope, limit, window) and the A13 constants;
+    - `ThrottleCounter.php`: A15 increment, reset and refund, plus a `delete`;
+    - `ThrottleDecision.php`: allowed, or blocked with `retryAfterSeconds` (≥ 1, rounded up);
+    - `NetworkPrefix.php`: the IPv6 `/48` from the canonical address; null for IPv4 and unknown;
+    - `LoginThrottle.php`: `attempt(Email, ClientAddress)` increments `LOGIN-EMAIL`, `LOGIN-IP` and, for IPv6, `LOGIN-NET`, and returns the strictest decision; `succeeded(...)` deletes the account bucket and refunds the address buckets;
+    - `RegisterThrottle.php`: `REGISTER-IP` and `REGISTER-NET`.
+- **Tests first (RED):**
+  - `Unit/Auth/Throttle/NetworkPrefixTest.php`: `2001:db8:1:2::1` gives `2001:db8:1::/48`; `::1` gives `::/48`; IPv4 and `unknown` give null.
+  - `Unit/Auth/Throttle/LoginThrottleTest.php` (a fake counter):
+    - one bucket over its limit blocks;
+    - `Retry-After` is the largest remaining time;
+    - the decision does not depend on whether the account exists (the throttle never asks);
+    - success deletes and refunds;
+    - the `unknown` address is one shared bucket (ADR 0012).
+  - `Integration/Auth/ThrottleCounterTest.php` on `TemporaryTable` with `FrozenClock`:
+    - the first hit creates `attempts = 1` and `expiresAt = now + window`;
+    - hit N+1 is blocked with the right `Retry-After`;
+    - after the clock passes the window, with the item still present (TTL lag), the count resets to 1;
+    - **reset race:** with an expired item seeded, two counters reset, and the total is 2, not 1;
+    - a refund never goes below 0;
+    - `expiresAt` is a Number.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commit:** `feat: add fixed-window login and registration throttling on dynamodb`.
+
+### Part D: Endpoints (contract first)
+
+#### WP10: `POST /auth/register` (S–M), security-critical
+- **Contract** (`contract/openapi.yaml`, then `make contract-gen`), in this WP because this is the first endpoint that uses these components:
+  - `components.securitySchemes.sessionCookie` (`apiKey`, `in: cookie`, `name: __Host-session`);
+  - headers `SetSessionCookie` (required), `ClearSessionCookie`, `RetryAfter` (required), `WWWAuthenticate`;
+  - schemas `User` (`id` uuid, `email`; `additionalProperties: false`), `Credentials` (exactly `email` and `password`; `additionalProperties: false`), `ValidationProblemDetails` (`ProblemDetails` + `errors: [{pointer, detail}]`, a carried item);
+  - responses `BadRequest`, `ContentTooLarge`, `UnsupportedMediaType`, `ValidationFailed` (422), `Conflict`, `TooManyRequests`, `ServiceUnavailable`;
+  - a header parameter `X-Requested-With` (required, `const: XMLHttpRequest`) on every state-changing operation; `Origin` is described in text (browsers set it, JavaScript cannot);
+  - `/auth/register`, `post`: `security: []`; responses 201 (`User`, `Set-Cookie`), 400, 403, 405, 409, 413, 415, 422, 429, 500, 503.
+- **Contract tests:**
+  - `EveryOperationDocumentsErrorsTest` is extended: an operation with a request body documents 400/413/415/422; every operation except `/health` documents 503; every state-changing operation declares `X-Requested-With`.
+  - New `EveryOperationDeclaresSecurityTest`: there is no global default, and every operation says `security` explicitly (fail closed).
+  - `backend/tests/Support/Contract/OpenApiDocument.php` gains `security()`, `hasRequestBody()` and `headerParameters()`.
+- **Files:**
+  - `backend/src/Auth/Http/CredentialsInput.php`: from `JsonBody::decode` (its first use), exactly `email` and `password`, both strings. An unknown key, null, an array or a numeric-key object gives a `FieldError` with pointer `/email`, `/password` or `/<key>`. Values are never echoed. Control characters are refused.
+  - `backend/src/Auth/Http/RegisterHandler.php`, in order:
+    1. the register throttle (429 before any hashing);
+    2. email and policy checks (422);
+    3. hash;
+    4. `UserRepository::create` (409 on `EmailTaken`);
+    5. delete the session the request carried, if any;
+    6. create a session;
+    7. `201` + `Set-Cookie`;
+    8. log `user registered` with `userId` (never the email).
+  - `Routes.php`: `POST /auth/register`.
+  - `ApiTestCase`:
+    - `sessionCookieFrom(ResponseInterface)` and `withSessionCookie(?string)`;
+    - a **random `CloudFront-Viewer-Address` per test** (`[2001:db8:<rand>:<rand>::1]:<port>`), so throttle buckets never leak between tests; `withoutViewerAddress()` for `ClientIpOverNginxTest`'s "nginx fills it" case (update that test).
+- **Tests first (RED):**
+  - `Unit/Auth/Http/CredentialsInputTest.php`.
+  - `Unit/Auth/Http/RegisterHandlerTest.php` (fakes):
+    - throttled gives 429 and **the hasher is not called**;
+    - `EmailTaken` gives 409;
+    - the replay case gives 201;
+    - a carried session is deleted;
+    - `TransactionCancelled([ThrottlingError, None])` reaches WP3's middleware as 503.
+  - `Integration/Auth/RegisterApiTest.php` (all through `request()`):
+    - 201, contract-valid, with the exact cookie attributes;
+    - the same email in upper case gives 409;
+    - a short password gives 422 with pointer `/password`;
+    - `text/plain` gives 415;
+    - a body over 64 KiB gives 413;
+    - no `X-Requested-With` gives 403;
+    - the 6th registration from one viewer address gives 429 with `Retry-After`.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commits:** `feat: document post /auth/register in the contract`, `feat: add post /auth/register`.
+
+#### WP11: `POST /auth/login` (S–M), security-critical
+- **Contract:**
+  - `components/responses/Unauthorized` (with `WWW-Authenticate`);
+  - `/auth/login`, `post`: `security: []`; responses 200 (`User`, `Set-Cookie`), 400, 401, 403, 405, 413, 415, 422, 429, 500, 503;
+  - regenerate `schema.gen.ts`.
+- **Files:** `backend/src/Auth/Http/LoginHandler.php`; `Routes.php`. The flow:
+  1. `CredentialsInput` (shape only, plus `exceedsLoginLimit`) gives 422 on failure.
+  2. `LoginThrottle::attempt` (increment first). If blocked: 429 + `Retry-After`, **without verifying the password**.
+  3. `findByEmail`. If there is no user: `verifyDummy` plus one dummy `GetItem` (A16), then 401.
+  4. `verify`. If it fails: 401 "Invalid email or password." (the same body and headers as step 3).
+  5. On success:
+     - `succeeded()` (reset and refunds);
+     - `needsRehash` → `updatePasswordHash`, best effort and logged;
+     - delete the carried session;
+     - create a session;
+     - `200 {id, email}` + `Set-Cookie`.
+  6. Log `login succeeded` / `login failed` with `userId` when known and a reason category, never the email or password.
+- **Tests first (RED):**
+  - `Unit/Auth/Http/LoginHandlerTest.php` (fakes):
+    - an unknown email calls `verifyDummy` and the dummy read, and its response is **byte-identical** to the wrong-password one (status, headers, body);
+    - when blocked, `verify` is never called, even with the right password;
+    - success deletes the old session, resets the account bucket and refunds the address buckets;
+    - `needsRehash` triggers the update; a failed update still logs the user in.
+  - `Integration/Auth/LoginApiTest.php`:
+    - login after register gives 200 and a **different** cookie;
+    - a wrong password gives 401 + `WWW-Authenticate`;
+    - an unknown email gives the same 401 body;
+    - 11 failures on one email from 11 different viewer addresses: the 11th gets 429 (account bucket);
+    - 31 failures from one address on 31 different emails: the 31st gets 429 (address bucket);
+    - a `slow` test: 101 failures from distinct `/64`s inside one `/48` give 429 (`/48` tier).
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commits:** `feat: document post /auth/login in the contract`, `feat: add post /auth/login with throttling and session rotation`.
+
+#### WP12: `GET /auth/me` and `POST /auth/logout` (S), security-critical
+- **Contract:**
+  - `/auth/me`, `get`: `security: [{sessionCookie: []}]`; responses 200 (`User`), 401, 403, 405, 500, 503.
+  - `/auth/logout`, `post`: `security: []`, no request body; responses 204 (`ClearSessionCookie`), 403, 405, 500, 503.
+  - New `ProtectedRoutesMatchContractTest`: the routes whose handler is a `RequireSession` equal the operations with a non-empty `security`.
+- **Files:**
+  - `backend/src/Auth/Http/MeHandler.php`: reads `USER#<principal.userId>`. A missing user gives 401 and the session is deleted.
+  - `backend/src/Auth/Http/LogoutHandler.php` (A5).
+  - `Routes.php`: `me` wrapped in `RequireSession`.
+- **Tests first (RED):**
+  - Add `/auth/me` to `Routes.php` **without** the guard and see `ProtectedRoutesMatchContractTest` fail; then wrap it.
+  - Unit tests for both handlers.
+  - `Integration/Auth/SessionApiTest.php`:
+    - register, then `me` gives 200 with the same id and email;
+    - logout gives 204 + a clearing cookie, and `me` with the old cookie gives 401 + `WWW-Authenticate` + a clearing cookie;
+    - logout with no cookie gives 204;
+    - logout without `X-Requested-With` gives 403 (forced logout refused);
+    - two `__Host-session` cookies give 401;
+    - after a login, the cookie issued by register gives 401 (rotation).
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)**; **round 2 at opus/high**.
+- **Commits:** `feat: document get /auth/me and post /auth/logout`, `feat: add get /auth/me and post /auth/logout`.
+
+### Part E: End to end and wrap-up
+
+#### WP13: End-to-end flow, throttle race, log hygiene (S–M)
+- **Files:**
+  - `backend/tests/Integration/Auth/AuthFlowApiTest.php`: register → me → logout → me (401) → login → me, all contract-validated.
+  - `backend/tests/Integration/Auth/LoginThrottleRaceTest.php`: a Guzzle `Pool` sends 25 concurrent wrong-password logins for one email, from distinct viewer addresses. It expects **exactly 10 × 401 and 15 × 429** (A15: increment first).
+  - Both tests write canonical markers to `build/auth-test/markers.json`: the test password, one issued session token, and the user id.
+  - `Makefile` `test-integration` (following the `CLIENT_IP_MARKERS` pattern), against the `api-php` logs since the start of the run:
+    - the marker password and the marker token **do not appear**;
+    - a request line for `/api/v1/auth/me` carries `"userId":"<marker id>"`;
+    - a `csrf check failed` line exists for the CSRF test.
+
+    Each check fails with a specific, loud message.
+- **Acceptance:** `make test-integration` is green twice in a row, with no flake.
+- **Docker:** yes.
+- **Agents:** tdd-guide; php-reviewer; Makefile diff inline if under ~30 lines, otherwise code-reviewer (sonnet/medium); **security-reviewer (opus/high)**, limited to the race and hygiene assertions.
+- **Commit:** `test: end-to-end auth flow, throttle race and log hygiene checks`.
+
+#### WP14: Docs, ADR notes and wrap-up (S)
+- **Files:**
+  - `docs/local-dev.md`:
+    - curl for register, login, me and logout, with a cookie jar (`-c` / `-b`), `X-Origin-Verify`, `Origin` and `X-Requested-With`;
+    - what a 429 looks like, and that `make down && make up` clears all data (in memory);
+    - existing clones must add `DYNAMODB_ENDPOINT` and `APP_ORIGINS` to `.env`;
+    - the R1 browser note.
+  - `README.md` quick start.
+  - "Implemented in Phase 2" notes (clarifications, drafted by the main session from the WP results):
+    - **ADR 0004:** A1–A6, A8, A9, A11–A13, A15, A16.
+    - **ADR 0002:** the user, email-lock, session and throttle item shapes (A15's scoped keys, hashed email).
+    - **ADR 0003:** authentication as a route guard; CSRF position (A7, A8).
+    - **ADR 0012:** the `/48` tier next to `/64` (A14).
+  - PLAN §12 Phase 2 status → Done; this plan's status → Done.
+- **Haiku output is fact-checked:** doc-updater (haiku/low) drafts. Before the commit, the main session checks:
+  - every make target against `make help`;
+  - every path with Glob;
+  - every env var against `.env.example` and `docker-compose.yml`;
+  - **every curl command, by running it.**
+- **Before the PR is marked ready:** `/update-docs`, `/code-review`, `/verification-loop`; then `/ecc:cost-report` (compare with Phase 1).
+- **Docker:** yes (only to verify the commands).
+- **Commit:** `docs: phase 2 local-dev, readme and adr notes`.
+
+## 4. Dependencies
+
+```
+WP1 ─► R ─► WP2 ─► WP3 ─► WP4 ───────────────────────────┐
+              ├──► WP5 ──────────► WP8 ──┐               │
+              ├──► WP6 ──┐               ├─► WP10 ─► WP11 ─► WP12 ─► WP13 ─► WP14
+              ├──► WP7 ◄─┘ (Email)       │
+              └──► WP9 ──────────────────┘
+```
+- WP10 needs WP3 (wiring, 503), WP4 (CSRF and `ApiTestCase` defaults), WP6, WP7, WP8 and WP9.
+- WP12 needs WP8 (guard) and WP10/WP11 (to have users and sessions to test with).
+- WP3, WP4 and WP10 all touch `docker-compose.yml`, `.env.example` or `ApiTestCase`, so they run one after another.
+
+## 5. Test plan
+
+| Layer | What | Where | Run by |
+|---|---|---|---|
+| Unit | Clock, UUID, redaction, CSRF, cookie parser, token, email, policy, hasher, authenticator, guard, throttle policy, prefix, handlers (with fakes), storage-unavailable mapping, config | `backend/tests/Unit/**` | `make test-unit` (CI `backend`) |
+| Architecture | No native sessions, `$_COOKIE`, `setcookie` or weak randomness in `src/` and `public/` (+ the Bref boundary) | `backend/tests/Architecture/**` | `make test-unit` |
+| Contract | Route parity; every operation declares `security`; guarded routes = secured operations; documented 401/403/409/422/429/500/503 and body errors; the CSRF header parameter | `backend/tests/Contract/**` | `make test-contract` (CI `integration`) |
+| Integration (storage) | `UserRepository`, `SessionRepository`, `ThrottleCounter` on `TemporaryTable` with `FrozenClock` (TTL lag, reset race, retry replays) | `backend/tests/Integration/Auth/*RepositoryTest.php`, `ThrottleCounterTest.php` | `make test-integration` |
+| Integration (API) | CSRF, register, login, me, logout, the whole flow, throttle race, through nginx, contract-validated | `backend/tests/Integration/{Http,Auth}/**` | `make test-integration` |
+| Log hygiene | No password or token in `api-php` logs; `userId` on authenticated request lines | `Makefile` recipe + markers | `make test-integration` |
+| Front-end | Unchanged; `schema.gen.ts` regenerated, and `vue-tsc` catches drift | `frontend/` | `make frontend-test`, `frontend-lint` |
+
+- **Coverage:** ≥ 80% lines on `backend/src` (enforced by `coverage:check`). Target 100% on `CsrfMiddleware`, `CookieHeader`, `SessionToken`, `SessionCookie`, `SessionAuthenticator`, `RequireSession`, `ThrottleCounter` and `NetworkPrefix`.
+- **E2E:** the approved deviation (PLAN §12) still applies. The curl smoke test is Phase 6, Playwright is L1.
+- **Speed:** unit tests use cheap Argon2 parameters. Only one `slow` test measures the production cost, and only the `/48` test needs about 100 hashes (also `slow`; `make test-fast` skips both).
+
+## 6. Branch, PR, CI and owner gates
+
+- **Branch** `feat/phase-2-authentication`. **One PR for Phase 2**, opened as a **draft after WP4**, marked ready after WP14, and **squash-merged**. Body: definition-of-done checklist, the R1–R7 results, test plan.
+- **CI:** `main` requires 7 checks. Phase 2 **adds no job**: new tests run inside `backend`, `contract` and `integration`. If implementation does add or rename a job, the owner updates the ruleset by hand (the main session gives the click steps and only runs read-only `gh api` checks).
+- **Deletions:** none planned. Any deletion is asked separately.
+- **Owner gates:**
+  - **G1, approve this plan**, including the answers to section 10.
+  - **G2, only if a design point would change an accepted ADR** (for example, if the owner reads A3, A7, A9 or A14 as a change): ADR 0013 is written and accepted before the WP that needs it.
+  - **G3, PR merge**, including the "Implemented in Phase 2" notes.
+  - **G4, only if a CI job is added or renamed:** ruleset update.
+  - **AWS:** no gate is needed, because **Phase 2 creates or deploys nothing on AWS ($0)**.
+
+## 7. Not in Phase 2, and traceability of the carried items
+
+### 7.1 Everything carried from Phase 1 (its section 6) → where it lands
+
+| Carried item (Phase 1 plan, section 6) | Source | Phase 2 |
+|---|---|---|
+| Authentication and CSRF go in the chain after `RequestLogging` | Not in Phase 1 | WP4 (CSRF middleware, after `ClientIp`); WP8 (authentication as the `RequireSession` route guard, A7; a clarification recorded in WP14) |
+| Login throttling consumes `ClientAddress::throttleKey` | Not in Phase 1 | WP9, WP11 |
+| First use of `JsonBody` and `ValidationProblem`; add `ValidationProblemDetails` to the contract | Not in Phase 1 | WP10 |
+| `Clock` and the UUID generator | Not in Phase 1 | WP2 |
+| Key builders for user, email lock, session, throttle | Not in Phase 1 | WP7 (user, email), WP8 (session), WP9 (throttle) |
+| Wire `ItemStore` into `ApiFactory`; DynamoDB env + fake key pair in `api-php`; `LATE_SERVICES = api frontend` | Not in Phase 1 | WP3 |
+| Bref rebuilds `Cookie` from `cookies[]`: define which cookie wins, or reject duplicates | WP3 security notes | WP5 (parser keeps duplicates), WP8 (duplicates = anonymous, A20) |
+| Reject control characters in string fields; never use `array_is_list` to tell objects from arrays | WP3 security notes | WP6 (email, password), WP10 (`CredentialsInput`) |
+| Route ids validated as UUIDs before building keys | WP3 security notes | No route parameters in Phase 2. Keys validate ids (WP7). Still applies in Phase 3 |
+| Add `cookie`, `set-cookie`, `x-origin-verify`, `x-csrf-token` to `JsonLogger` redaction | WP4 notes | WP2 (plus `password`, `passwordHash` and text patterns) |
+| Never log `$_SERVER`; never read `HTTP_PROXY` | WP4, WP6 notes | Kept: WP3's new env (fake keys) makes this matter more; checked in every security review |
+| Optional `X-Request-Id` response header | WP4 notes | Still not planned |
+| A coarser IPv6 tier (`/56` or `/48`) next to `/64` | WP7 notes | WP9 (`/48`, A14) |
+| A per-account limit, not only per address | WP7 notes | WP9, WP11 (`LOGIN-EMAIL`, A13) |
+| CloudWatch metric filter and alarm on `client address unavailable` | WP7 notes | **Deferred to Phase 7.** It is Terraform (log metric filter + alarm next to the explicit log groups); Phase 2 has no AWS |
+| Key builders take PK from the session principal, never from the request | WP9 notes | WP7, WP8, WP12 |
+| Creates use `attribute_not_exists(PK)` and build items field by field | WP9 notes | WP7, WP8, WP9 |
+| Register must not turn `TransactionCancelled` reasons into an enumeration signal beyond what the product decides | WP9 notes | WP7, WP10 (only `409` on a taken email, A9; throttling reasons become 503) |
+| `ProvisionedThroughputExceeded` / `ThrottlingException` / `RequestLimitExceeded` → 503 + `Retry-After` | WP9 notes | WP3 (A18) |
+| A conditional put retried after a timeout may be a false duplicate: re-read first | WP9 notes | WP7 (register), WP8 (session), A19 |
+| `check-env` requires `DYNAMODB_ENDPOINT` once `api-php` uses DynamoDB | WP9 notes | WP3 (also fails closed in `ApiConfig` when `APP_ENV=local`) |
+
+### 7.2 Not in Phase 2 (with the reason)
+- **Front-end pages** (register, login, route guards): Phase 4. Carried to Phase 4:
+  - every non-GET call sends `X-Requested-With: XMLHttpRequest`;
+  - `fetch` keeps the default `credentials: 'same-origin'`;
+  - a 401 goes to Login;
+  - a 429 shows "try again in N seconds" from `Retry-After`;
+  - the R1 Safari note.
+- **Sign out everywhere / a list of sessions:** needs a per-user session index; not in the BRIEF.
+- **Change password, reset password, account deletion:** not in the BRIEF (email flows are out of scope).
+- **Breached-password lookup and CAPTCHA:** both are third-party calls (ADR 0012). A small local blocklist of common passwords could be a later polish item.
+- **Unicode normalisation of passwords:** needs `ext-intl` in both images. Passwords are compared byte for byte.
+- **MFA:** not in the BRIEF.
+- **Phase 6:** `scripts/smoke.sh` sends `Origin` and `X-Requested-With` and keeps a cookie jar.
+- **Phase 7, Terraform:**
+  - API Lambda env gets `APP_ORIGINS` = the CloudFront origin. **Watch for a dependency cycle:** Lambda env → distribution domain → API Gateway origin → Lambda integration. Break it with a custom domain, a two-step apply, or by reading the domain at cold start. To decide in the Phase 7 plan.
+  - API Lambda memory sized for Argon2id (at least 512 MB suggested; WP6 timing as input).
+  - The `client address unavailable` metric filter and alarm.
+  - The origin request policy forwards `Origin`, `X-Requested-With` and all cookies (already in ADR 0012 §4.1).
+  - IAM covers `TransactWriteItems` through its item actions (Put/ConditionCheck).
+- **Phase 8, verify on AWS:**
+  - several `Set-Cookie` headers survive Bref → API Gateway v2 → CloudFront;
+  - `Cookie` is rebuilt as R2 found;
+  - the `__Host-` cookie is set on the `*.cloudfront.net` domain;
+  - login latency with Argon2id at the chosen Lambda memory;
+  - a forged `Origin` through CloudFront gets 403.
+
+### 7.3 Review notes
+As in Phase 1, the findings of each WP's reviews (and anything carried to later phases) are added here as "Notes from the WPn reviews", before the next WP starts.
+
+## 8. Risks and decision points
+
+| # | Risk / trigger | Mitigation / fallback | WP |
+|---|---|---|---|
+| R1 | A browser refuses `Secure` / `__Host-` cookies on `http://localhost` (Safari) | Research R1. Recommend Chrome or Firefox locally; the code stays as on AWS. If no browser works, the owner decides (G2) | WP5, WP14 |
+| R2 | A login flood burns CPU (Argon2id costs about 0.1–0.5 s per attempt) | Throttling before hashing on blocked buckets; API Gateway rate limits (Phase 7); WP6 measures the cost; `needsRehash` allows retuning | WP6, WP11 |
+| R3 | An attacker locks a victim out with 10 wrong passwords | Short 15-minute window; only the account bucket blocks the account; documented trade-off (owner decision 5) | WP9 |
+| R4 | Misconfiguration puts every user in the shared `unknown` bucket | Fail closed by design (ADR 0012); alarm in Phase 7 | WP9 |
+| R5 | Parallel requests overshoot a limit | Increment first, atomic `ADD`; WP13 race test expects exact counts | WP9, WP13 |
+| R6 | TTL deletes late, so an expired session or window looks alive | Expiry always checked against `expiresAt` in code; TTL is only cleanup | WP8, WP9 |
+| R7 | A retried write reports a false duplicate (409, or a lost session) | Re-read rule A19; tested by replaying `create` | WP7, WP8 |
+| R8 | Register reveals that an email exists | Accepted (A9, owner decision 2); throttled per address and `/48`; login stays generic and timing-equalised (A16) | WP10, WP11 |
+| R9 | A password or token reaches a log | `#[\SensitiveParameter]`, value objects that hide secrets, key and text redaction, the WP13 log grep | WP2, WP5, WP13 |
+| R10 | A protected route is added without the guard | `ProtectedRoutesMatchContractTest` + explicit `security` on every operation | WP12 |
+| R11 | CSRF bypass with a missing `Origin` | Refused (A8); R7 confirms browsers always send it on non-GET | WP4 |
+| R12 | Integration tests trip each other's throttle buckets | A random viewer address per test; unique emails per test | WP10 |
+| R13 | `api-php` with credentials reaches something other than DynamoDB Local | Fake keys only; endpoint allow-list; `api-internal` has no route out; `dynamodb` joins that network | WP3 |
+| R14 | An older `.env` lacks `DYNAMODB_ENDPOINT` / `APP_ORIGINS` | `check-env` names the line (endpoint); Compose default (origins); `local-dev.md` note | WP3, WP4, WP14 |
+| R15 | The `APP_ORIGINS` ↔ CloudFront domain cycle in Terraform | Recorded for Phase 7 (section 7.2) | Phase 7 |
+| R16 | Scope creep into front-end pages or Phase 3 | Explicit list in section 7.2 | all |
+| R17 | Shared Docker host damaged by cleanup | The rule in section 3, repeated in every agent brief | all |
+
+## 9. Lessons from Phase 1, applied
+
+1. **Security round 2 at opus/high** on every security-critical WP (Phase 1 did this for WP3, WP6 and WP7; here it covers WP2–WP13).
+2. **Bref differences are researched up front** (R2). The Phase 1 surprise was the query string normalised by Bref, found only in review.
+3. **Log-grep tests use canonical markers.** The WP7 integration test flaked about 12% of the time on a non-canonical IPv6 value; WP13's markers are written in exactly the form the logger prints.
+4. **A stale `.env` never starts a half-configured stack:** `check-env` for keys without a Compose default, Compose defaults equal to `.env.example` for the others (WP8 lesson).
+5. **Fail closed on configuration**, with all errors collected and only names logged (WP4/WP6 lesson), now also for DynamoDB and `APP_ORIGINS`.
+6. **Haiku docs are fact-checked** against the tree and by running every command (WP14).
+7. **Review notes are recorded per WP** in section 7.3 before the next WP, so nothing carried is lost.
+8. **Small, contract-first WPs:** shared contract pieces arrive with their first endpoint, and every WP is S or S–M.
+
+## 10. Owner decisions (answered 2026-10-16: all nine recommended defaults)
+
+1. **Session lifetime (A3).** Idle 24 h with sliding renewal, absolute 7 days? **Recommended: yes.** It suits a personal finance tool. The alternative is idle 7 days / absolute 30 days: fewer sign-ins, a longer window for a stolen cookie.
+2. **Register when the email is taken (A9).** Answer `409` honestly (with registration throttled), keeping login generic? **Recommended: yes.** Without email verification a fake "success" would leave the person unable to sign in.
+3. **Register signs the user in (A9).** `201` with a session cookie? **Recommended: yes** (one step fewer for the user; the session is rotated on every later login).
+4. **Password length (A11).** Minimum 12, maximum 128 characters, no composition rules? **Recommended: 12.** NIST SP 800-63B-4 asks for 15 when a password is the only factor; choose 15 for the strictest reading. R6 confirms the citations.
+5. **Throttle limits (A13).** Login: 10 per account, 30 per address, 100 per IPv6 `/48`, each per 15 minutes. Register: 5 per address, 20 per `/48`, per hour. **Recommended: these values.** They are constants, cheap to change later.
+6. **Coarse IPv6 tier (A14).** `/48` or `/56`? **Recommended: `/48`.** It bounds a `/48` holder, and its high limit with failures-only counting keeps residential neighbours safe. `/56` matches typical home allocations but leaves a `/48` holder 256 buckets.
+7. **Cookie on localhost (A1).** The same `__Host-session` + `Secure` everywhere, with no local switch? **Recommended: yes.** If Safari refuses it (R1), use Chrome or Firefox locally.
+8. **`userId` in request log lines (A21).** It is an opaque id, kept for the same 30-day retention as the client IP. **Recommended: yes** (needed to investigate abuse).
+9. **PR shape.** One PR for the phase, draft after WP4, squash-merged, as in Phases 0 and 1? **Recommended: yes.**
