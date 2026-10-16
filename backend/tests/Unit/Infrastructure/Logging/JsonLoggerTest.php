@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Infrastructure\Logging;
 
 use App\Infrastructure\Logging\JsonLogger;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class JsonLoggerTest extends TestCase
@@ -129,6 +130,78 @@ final class JsonLoggerTest extends TestCase
         self::assertStringNotContainsString('ghi789', $this->logged());
         self::assertStringContainsString('text/plain', $this->logged());
         self::assertStringContainsString('Host: s3', $this->logged());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function cookieAndPasswordKeys(): iterable
+    {
+        foreach (['cookie', 'Cookie', 'set-cookie', 'Set-Cookie', 'x-origin-verify', 'X-Origin-Verify', 'x-csrf-token', 'X-CSRF-Token', 'password', 'Password', 'passwordHash', 'PASSWORDHASH'] as $key) {
+            yield $key => [$key];
+        }
+    }
+
+    #[DataProvider('cookieAndPasswordKeys')]
+    public function testRedactsTheValueOfEachSensitiveKeyAtAnyDepth(string $key): void
+    {
+        $this->logger()->info('seen', [
+            $key => 'top-level-value',
+            'request' => ['headers' => [$key => 'nested-value'], 'list' => [[$key => 'deep-value']]],
+        ]);
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('top-level-value', $logged);
+        self::assertStringNotContainsString('nested-value', $logged);
+        self::assertStringNotContainsString('deep-value', $logged);
+        self::assertStringContainsString('[REDACTED]', $logged);
+    }
+
+    public function testRedactsASensitiveKeyWhoseValueIsAnArrayOrNumber(): void
+    {
+        $this->logger()->info('seen', ['password' => ['a' => 'hunter2'], 'cookie' => 12345]);
+
+        self::assertStringNotContainsString('hunter2', $this->logged());
+        self::assertStringNotContainsString('12345', $this->logged());
+    }
+
+    public function testKeepsNeighbouringKeysThatMerelyLookSimilar(): void
+    {
+        $this->logger()->info('seen', ['cookies' => 'keep-me', 'passwordPolicy' => 'keep-too']);
+
+        self::assertStringContainsString('keep-me', $this->logged());
+        self::assertStringContainsString('keep-too', $this->logged());
+    }
+
+    public function testRedactsCookieAndSetCookieLinesInsideAMessage(): void
+    {
+        $this->logger()->info("GET /\r\nCookie: a=b; __Host-session=zzz\r\nHost: x\r\nSet-Cookie: __Host-session=qqq; Secure; HttpOnly\r\nAccept: */*");
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('a=b', $logged);
+        self::assertStringNotContainsString('zzz', $logged);
+        self::assertStringNotContainsString('qqq', $logged);
+        self::assertStringContainsString('Host: x', $logged);
+        self::assertStringContainsString('Accept: */*', $logged);
+        self::assertNotFalse(json_decode($logged, true));
+    }
+
+    public function testRedactsACookieLineInsideAContextString(): void
+    {
+        $this->logger()->info('sent', ['raw' => 'cookie: a=b']);
+
+        self::assertStringNotContainsString('a=b', $this->logged());
+    }
+
+    public function testRedactsASessionCookieValueInsideAMessage(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+        self::assertSame(43, strlen($token));
+
+        $this->logger()->info("session __Host-session={$token} seen", ['detail' => "x __HOST-SESSION={$token}"]);
+
+        self::assertStringNotContainsString($token, $this->logged());
+        self::assertStringContainsString('seen', $this->logged());
     }
 
     public function testEmptySecretsAreIgnored(): void
