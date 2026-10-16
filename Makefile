@@ -184,7 +184,7 @@ PIPE_MARKERS = build/pipe-test
 # ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
 CLIENT_IP_MARKERS = build/client-ip-test
 
-test-integration: .env check-env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
+test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \

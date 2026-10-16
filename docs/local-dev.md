@@ -90,6 +90,35 @@ check only shows that the emulator itself is up.
 
 Phase 0 has no upload endpoint yet, so the pipeline is tested with the integration tests (see "Tests"), not by hand.
 
+## Environment variables (`.env`)
+
+`make up` creates `.env` from `.env.example` when it is missing; after that, `.env` is yours and is never
+overwritten. Every value is a local, non-secret stand-in: never put real AWS credentials or secrets in it. "Required"
+means `make up` or Compose stops with a message naming the variable when it is missing; the others have a default or
+are read only by the tests, but keep the `.env.example` value unless you know why not.
+
+<!-- AUTO-GENERATED from .env.example and docker-compose.yml (/update-docs, 2026-10-16) -->
+| Variable | Required | What it is | Example (`.env.example`) |
+|---|---|---|---|
+| `AWS_REGION` | No | Region label the SDK signs with; the emulators ignore it | `eu-west-1` |
+| `AWS_ACCESS_KEY_ID` | Yes | Fake access key, accepted only by the emulators (also the S3 emulator's root user) | `localdev` |
+| `AWS_SECRET_ACCESS_KEY` | Yes | Fake secret key, the pair of the line above (also the S3 emulator's root password) | `localdevsecret` |
+| `AWS_EC2_METADATA_DISABLED` | No | Stops the SDK from asking the EC2 metadata service for credentials | `true` |
+| `DYNAMODB_ENDPOINT` | No | DynamoDB Local, as seen from other containers. Local stand-ins only; unset on AWS | `http://dynamodb:8000` |
+| `DYNAMODB_TABLE` | Yes | The app table that `make up` creates from `infra/dynamodb/table.json` | `expense-tracker-local` |
+| `SQS_ENDPOINT` | No | ElasticMQ, as seen from other containers | `http://sqs:9324` |
+| `SQS_RECEIPTS_QUEUE_URL` | Yes | URL of the `receipts` queue | `http://sqs:9324/000000000000/receipts` |
+| `SQS_RECEIPTS_DLQ_URL` | No | URL of the dead-letter queue (read by the tests) | `http://sqs:9324/000000000000/receipts-dlq` |
+| `S3_ENDPOINT` | No | S3 emulator, as seen from other containers | `http://s3:9000` |
+| `S3_PUBLIC_ENDPOINT` | No | S3 emulator, as seen from the host and the browser (presigned URLs are signed for it) | `http://localhost:9000` |
+| `S3_CORS_ALLOWED_ORIGIN` | No | Browser origin allowed by the receipts bucket's CORS rule (the Vite dev server) | `http://localhost:5173` |
+| `S3_NOTIFICATION_ARN` | No | Webhook target of the emulator's "object created" events; empty means the rule is not managed | `arn:minio:sqs::RELAY:webhook` |
+| `S3_WEBHOOK_ENDPOINT` | Yes | Where the emulator posts events (the `s3-events-relay` service) | `http://s3-events-relay:8080/` |
+| `S3_WEBHOOK_AUTH_TOKEN` | Yes | Bearer token shared by the emulator and the relay. Local only; use a random value on a shared host | `localdev-webhook-token` |
+| `API_PROXY_TARGET` | No | Where the Vite dev server forwards `/api`. Running Vite on the host? Use `http://127.0.0.1:8080` | `http://api:8080` |
+| `ORIGIN_VERIFY_LOCAL` | No | The local `X-Origin-Verify` value: the proxy sends it, the API accepts it (as `ORIGIN_VERIFY_SECRETS`). At least 32 visible ASCII characters, no space, comma, `"` or `\` | `local-origin-verify-not-a-secret` |
+<!-- END AUTO-GENERATED -->
+
 ## Make targets
 
 Run `make help` for the full list with one-line descriptions. Grouped:
