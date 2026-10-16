@@ -14,7 +14,7 @@ final class RandomUuidGeneratorTest extends TestCase
     {
         $uuid = (new RandomUuidGenerator())->generate();
 
-        self::assertMatchesRegularExpression('/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/', $uuid);
+        self::assertMatchesRegularExpression('/\A[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\z/', $uuid);
         self::assertTrue(Uuid::isValid($uuid));
     }
 
@@ -37,5 +37,19 @@ final class RandomUuidGeneratorTest extends TestCase
             self::assertSame('4', $uuid[14]);
             self::assertContains($uuid[19], ['8', '9', 'a', 'b']);
         }
+    }
+
+    public function testFromBytesFormatsAFixedVector(): void
+    {
+        self::assertSame('ffffffff-ffff-4fff-bfff-ffffffffffff', RandomUuidGenerator::fromBytes(str_repeat("\xFF", 16)));
+        self::assertSame('00000000-0000-4000-8000-000000000000', RandomUuidGenerator::fromBytes(str_repeat("\x00", 16)));
+        self::assertSame('00010203-0405-4607-8809-0a0b0c0d0e0f', RandomUuidGenerator::fromBytes(implode('', array_map(chr(...), range(0, 15)))));
+    }
+
+    public function testFromBytesRejectsAWrongLength(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+
+        RandomUuidGenerator::fromBytes(str_repeat("\x00", 15));
     }
 }
