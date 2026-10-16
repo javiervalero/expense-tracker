@@ -168,7 +168,7 @@ Code questions answered by the main session from `vendor/` and the pinned images
 #### WP3: DynamoDB in the API, 503 on overload, local wiring (S–M)
 - **Files:**
   - `backend/src/Infrastructure/Config/ApiConfig.php`: holds `DynamoDbSettings`, and their errors are merged into one `InvalidConfiguration` (names only). Fail closed when `APP_ENV=local` and `DYNAMODB_ENDPOINT` is empty, so an empty value never silently means real AWS (the in-app twin of `check-env`).
-  - `backend/src/Api/ApiServices.php` (a small readonly holder: `ItemStore`, `Clock`, `IdGenerator`, logger). `ApiFactory` builds the client and `ItemStore` **once per process** (reused by warm Lambdas). `Routes::all(ApiServices $services)`.
+  - `backend/src/Api/ApiServices.php` (a small readonly holder: `ItemStore`, `Clock`, `IdGenerator`, logger). `ApiFactory` builds the client and `ItemStore` **once per request** (php-fpm keeps no state between requests). `Routes::all(ApiServices $services)`.
   - `backend/src/Http/Middleware/StorageUnavailableMiddleware.php` (A18): logs `storage unavailable` with operation, code and AWS request id (never item data), then throws `HttpProblem::of(503, headers: ['Retry-After' => ['1']])`. `ErrorHandlingMiddleware` already keeps `Retry-After` on 5xx.
   - `backend/tests/Contract/RoutesMatchContractTest.php` and `Unit/Api/ApiFactoryTest.php`: build `ApiServices` offline (SDK `MockHandler`, no network).
   - `docker-compose.yml` (A22):
@@ -248,7 +248,7 @@ Code questions answered by the main session from `vendor/` and the pinned images
 - **Files:**
   - `backend/src/Auth/Email.php` (A10), with an `InvalidEmail` reason for the field error.
   - `backend/src/Auth/Password/PasswordPolicy.php` (A11): `MIN_CHARS = 12`, `MAX_CHARS = 128`; `violation(string): ?string` (too short, too long, control character, **common password**); `exceedsLoginLimit(string): bool`.
-  - `backend/resources/common-passwords.txt` + `backend/src/Auth/Password/CommonPasswords.php` (owner decision 2026-10-16, R6): a list of common passwords, lower-cased, loaded once per process into a hash set. Only entries of 12+ characters matter (shorter ones are already refused by length), so the file keeps just those. **Source and licence are checked before use** (for example SecLists, MIT): the file header names the source, version and licence. No network call at runtime or build time.
+  - `backend/resources/common-passwords.txt` + `backend/src/Auth/Password/CommonPasswords.php` (owner decision 2026-10-16, R6): a list of common passwords, lower-cased, loaded only when a registration checks a password (never on other requests), into a hash set; `CommonPasswords` is lazy (it reads the file on first use). Only entries of 12+ characters matter (shorter ones are already refused by length), so the file keeps just those. **Source and licence are checked before use** (for example SecLists, MIT): the file header names the source, version and licence. No network call at runtime or build time.
   - `backend/src/Auth/Password/PasswordHasher.php` (A12, A16):
     - `hash()`, `verify()`, `needsRehash()`, `verifyDummy()`;
     - the parameters are constructor arguments (unit tests pass cheap ones), and `production()` gives the pinned constants;
@@ -289,6 +289,7 @@ Code questions answered by the main session from `vendor/` and the pinned images
     - an unknown email gives null;
     - `updatePasswordHash` on a missing user gives `ConditionFailed`;
     - a corrupt item gives a storage error.
+- **Acceptance:** green; a route reaches the `ItemStore` built by `ApiFactory` (proves the wiring).
 - **Docker:** yes.
 - **Agents:** tdd-guide; php-reviewer; **security-reviewer (opus/high)** (DB writes, enumeration); **round 2 at opus/high**.
 - **Commit:** `feat: add user repository with a transactional email lock`.
@@ -490,6 +491,7 @@ Code questions answered by the main session from `vendor/` and the pinned images
     - **ADR 0002:** the user, email-lock, session and throttle item shapes (A15's scoped keys, hashed email).
     - **ADR 0003:** authentication as a route guard; CSRF position (A7, A8).
     - **ADR 0012:** the `/48` tier next to `/64` (A14).
+    - **ADR 0007:** the accepted risk that `api` and `dynamodb` can reach php-fpm on 9000 (carried from WP3, R13): reasons in R13; revisit if a non-AWS image joins `api-internal`.
   - PLAN §12 Phase 2 status → Done; this plan's status → Done.
 - **Haiku output is fact-checked:** doc-updater (haiku/low) drafts. Before the commit, the main session checks:
   - every make target against `make help`;
@@ -593,7 +595,8 @@ WP1 ─► R ─► WP2 ─► WP3 ─► WP4 ───────────�
   - `Cookie` is rebuilt as R2 found;
   - the `__Host-` cookie is set on the `*.cloudfront.net` domain;
   - login latency with Argon2id at the chosen Lambda memory;
-  - a forged `Origin` through CloudFront gets 403.
+  - a forged `Origin` through CloudFront gets 403;
+  - measure the per-request cost of building the DynamoDB client (it is built on every request; the SDK resolves credentials lazily).
 
 ### 7.3 Review notes
 As in Phase 1, the findings of each WP's reviews (and anything carried to later phases) are added here as "Notes from the WPn reviews", before the next WP starts.
@@ -635,7 +638,7 @@ Carried (do when it first applies):
 | R10 | A protected route is added without the guard | `ProtectedRoutesMatchContractTest` + explicit `security` on every operation | WP12 |
 | R11 | CSRF bypass with a missing `Origin` | Refused (A8); R7 confirms browsers always send it on non-GET | WP4 |
 | R12 | Integration tests trip each other's throttle buckets | A random viewer address per test; unique emails per test | WP10 |
-| R13 | `api-php` with credentials reaches something other than DynamoDB Local | Fake keys only; endpoint allow-list; `api-internal` has no route out; `dynamodb` joins that network | WP3 |
+| R13 | `api-php` with credentials reaches something other than DynamoDB Local | Fake keys only; endpoint allow-list; `api-internal` has no route out; `dynamodb` joins that network. **Accepted:** `api` and `dynamodb` can both reach php-fpm on 9000 (DynamoDB Local is AWS's digest-pinned image, using that path needs code execution inside it, and the target is read-only, non-root, cap_drop ALL, holds only the fake keys and has no route out; `listen.allowed_clients` would need fixed subnets that could clash with a developer's network). Revisit if a non-AWS image joins `api-internal`. Shell AWS keys are kept out by `env -u` in `COMPOSE` and by `check-env` | WP3 |
 | R14 | An older `.env` lacks `DYNAMODB_ENDPOINT` / `APP_ORIGINS` | `check-env` names the line (endpoint); Compose default (origins); `local-dev.md` note | WP3, WP4, WP14 |
 | R15 | The `APP_ORIGINS` ↔ CloudFront domain cycle in Terraform | Recorded for Phase 7 (section 7.2) | Phase 7 |
 | R16 | Scope creep into front-end pages or Phase 3 | Explicit list in section 7.2 | all |

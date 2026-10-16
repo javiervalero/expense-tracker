@@ -10,8 +10,9 @@ use App\Infrastructure\Id\IdGenerator;
 use App\Infrastructure\Logging\JsonLogger;
 
 /**
- * What the route handlers share, built once per process by {@see ApiFactory} (a warm Lambda reuses the DynamoDB
- * client and its connections across invocations).
+ * What the route handlers share, built once per request by {@see ApiFactory}: php-fpm keeps no state between
+ * requests, so nothing is reused, and building is cheap because the SDK resolves credentials lazily. (Real reuse would
+ * need `BREF_RUNTIME=function`, a change to ADR 0012.)
  */
 final readonly class ApiServices
 {

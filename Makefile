@@ -25,7 +25,11 @@ NPM_CONTRACT = $(RUN_NODE) npm --prefix contract
 NPM_FRONTEND = $(RUN_NODE) npm --prefix frontend
 GENERATED_TYPES = frontend/src/api/schema.gen.ts
 
-COMPOSE = docker compose -p expense-tracker
+# Compose takes AWS_ACCESS_KEY_ID and the other AWS_* variables of the CALLER'S SHELL before it reads .env. api-php runs
+# request code that can read its environment, so a real key exported in the shell must never reach it: `env -u`
+# removes them from every docker compose call, and only the (fake) values of .env remain. `make check-env` refuses an
+# .env that holds anything else. (RUN_PHP and RUN_NODE pass no AWS variable: `-e CI` and `-e ORIGIN_VERIFY_LOCAL` only.)
+COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE docker compose -p expense-tracker
 
 # Building the image is only needed when the tools run in a container.
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
@@ -106,19 +110,11 @@ check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned br
 	cp .env.example .env
 	@echo "Created .env from .env.example (local, non-secret values)."
 
-# Keys that docker-compose.yml reads WITHOUT a default (a silent default would let a stale .env start a stack with an
-# empty value): the table, and the endpoint, which the API also needs (it refuses to start with APP_ENV=local and
-# no endpoint, so an empty value can never mean real AWS). `check-env` fails fast, before anything starts, naming the
-# line to add (the example comes from .env.example).
-REQUIRED_ENV_KEYS = DYNAMODB_TABLE DYNAMODB_ENDPOINT
-
+# `check-env` fails fast, before anything starts: a key that docker-compose.yml reads WITHOUT a default is missing
+# (it names the line to add), or the AWS credentials in .env are not the fake pair of .env.example, or .env sets a
+# session token. It never prints a value. The logic is scripts/check-env.sh (tested by scripts/tests/check-env.test.sh).
 check-env: .env
-	@for key in $(REQUIRED_ENV_KEYS); do \
-		tr -d '\r' < .env | grep -Eq "^[[:space:]]*(export[[:space:]]+)?$$key=[[:space:]]*[^[:space:]\"'#]" || { \
-			example=$$(grep -m 1 "^$$key=" .env.example || echo "$$key=<value>"); \
-			echo "$$key is missing from .env: add '$$example' (see .env.example)" >&2; exit 1; \
-		}; \
-	done
+	@scripts/check-env.sh .env .env.example
 
 # `make up` starts the stack in three steps, so that a service that needs the bootstrap to have finished is never
 # started (or waited for) before it:
@@ -128,7 +124,7 @@ check-env: .env
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
 # LATE_SERVICES = api frontend: the API uses the DynamoDB table that `local-aws-init` creates, so the entry point `api`
 # (nginx) and `frontend` (Vite, which needs `api` healthy) start after it. `api-php` is in step 1 (it does not touch
-# DynamoDB until it serves a request, and nothing reaches it except `api`). `worker-runner` stays in step 1: it needs
+# DynamoDB until it serves a request; only `api` and `dynamodb` can reach it, see docker-compose.yml). `worker-runner` stays in step 1: it needs
 # only sqs and worker (queues come from elasticmq.conf).
 # `make frontend-install` must have run (like `make php-install` for the API): Vite runs from frontend/node_modules.
 ONE_SHOT_SERVICES = local-aws-init

@@ -19,8 +19,8 @@ use App\Http\Response;
 use App\Http\Routing\Route;
 use App\Http\Routing\RouteDispatcher;
 use App\Http\Routing\Router;
-use App\Infrastructure\Config\ApiConfig;
 use App\Infrastructure\Clock\SystemClock;
+use App\Infrastructure\Config\ApiConfig;
 use App\Infrastructure\Config\InvalidConfiguration;
 use App\Infrastructure\DynamoDb\DynamoDbClientFactory;
 use App\Infrastructure\DynamoDb\ItemStore;
@@ -60,7 +60,8 @@ final class ApiFactory
             // The request-path logger is built from the VALIDATED config: the origin secrets are on its redaction list.
             $requestLogger = new JsonLogger($logStream, null, $config->originVerifySecrets);
 
-            // Built once per process: a warm Lambda reuses the client and the store for every invocation.
+            // Built once per request, cheaply: php-fpm (and Bref FPM on Lambda) keeps no PHP state between requests,
+            // so nothing is reused. The SDK resolves credentials lazily, at the first call, not here.
             $services = new ApiServices(
                 new ItemStore(DynamoDbClientFactory::create($config->dynamoDb), $config->dynamoDb->tableName),
                 new SystemClock(),
@@ -68,14 +69,14 @@ final class ApiFactory
                 $requestLogger,
             );
 
-            // Order, outermost first: errors are rendered as problem+json; the request line is written for every request,
-            // a 403 included; the origin check runs before routing, so no path is exempt (unknown ones get 403, not
-            // 404). A request that could not be built (oversized body, malformed query) travels as a bare request and
-            // its problem is raised right after the origin check. ClientIp comes after that, so only a request that
-            // passed the origin check has its address read. StorageUnavailable comes after ClientIp, right before the router:
-            // DynamoDB overload thrown by a handler becomes a 503 there, and anything else travels up unchanged. The
-            // router comes last. Any middleware that reads the
-            // query or the body must come after DeferredProblemMiddleware.
+            // Order, outermost first: errors are rendered as problem+json; the request line is written for every
+            // request, a 403 included; the origin check runs before routing, so no path is exempt (unknown ones get
+            // 403, not 404). A request that could not be built (oversized body, malformed query) travels as a bare
+            // request and its problem is raised right after the origin check. ClientIp comes after that, so only a
+            // request that passed the origin check has its address read. StorageUnavailable comes after ClientIp,
+            // right before the router: DynamoDB overload thrown by a handler becomes a 503 there, and anything else
+            // travels up unchanged. The router comes last. Any middleware that reads the query or the body must come
+            // after DeferredProblemMiddleware.
             return new ApiKernel(new Pipeline(
                 [
                     new ErrorHandlingMiddleware($requestLogger),

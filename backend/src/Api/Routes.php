@@ -11,11 +11,12 @@ use App\Http\Routing\Route;
 final class Routes
 {
     /**
+     * @param ApiServices $services what the handlers share; the health route needs none of it, the Phase 2 routes use it
+     *
      * @return list<Route>
      */
     public static function all(ApiServices $services): array
     {
-        unset($services); // health needs nothing yet; the Phase 2 routes will
         $health = new HealthHandler();
 
         return [

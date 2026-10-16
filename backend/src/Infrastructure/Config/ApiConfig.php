@@ -76,7 +76,9 @@ final readonly class ApiConfig
             $settings = null;
         }
         $endpoint = $env[self::DYNAMODB_ENDPOINT] ?? null;
-        if (($env[self::APP_ENV] ?? null) === self::LOCAL_ENV && ($endpoint === null || $endpoint === '')) {
+        $appEnv = $env[self::APP_ENV] ?? '';
+        $isLocal = is_string($appEnv) && strtolower(trim($appEnv)) === self::LOCAL_ENV;
+        if ($isLocal && ($endpoint === null || (is_string($endpoint) && trim($endpoint) === ''))) {
             $errors[] = self::DYNAMODB_ENDPOINT . ' is required when ' . self::APP_ENV . ' is ' . self::LOCAL_ENV;
         }
 

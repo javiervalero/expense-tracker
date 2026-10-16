@@ -9,7 +9,8 @@ services:
   dynamodb:
     # amazon/dynamodb-local:3.3.1 (multi-arch index digest, taken with `docker buildx imagetools inspect`)
     image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
-    # Also on api-internal, so the API (php-fpm, which has no other network) can reach it.
+    # Also on api-internal, so the API (php-fpm, which has no other network) can reach it. That also lets this container
+    # reach php-fpm on 9000 (accepted: see the `api-php` comment; revisit if a non-AWS image joins api-internal).
     networks: [default, api-internal]
     command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
     ports:
@@ -214,7 +215,11 @@ services:
   # Lambda uses, so SCRIPT_FILENAME is the same everywhere): an edit shows up at the next request without a rebuild.
   # Only public/, src/ and vendor/ are mounted (not tests/ or composer files); `make php-install` must have run.
   # Not published, and ONLY on the internal network `api-internal`: FastCGI has no authentication, so anything that can
-  # connect to port 9000 can run code. Only `api` (on both networks) reaches it.
+  # connect to port 9000 can run code. `api` (nginx) and `dynamodb` (DynamoDB Local) are the other members of that
+  # network, so both can reach php-fpm on 9000. Accepted risk: DynamoDB Local is AWS's own digest-pinned image, and
+  # using that path needs code execution inside it first; this container is read-only, non-root, cap_drop ALL, holds
+  # only the fake keys and has no route out. php-fpm's `listen.allowed_clients` would need fixed subnets, which could
+  # clash with a developer's own networks. Revisit if a non-AWS image ever joins `api-internal`.
   #
   # NO SECRETS and NO env_file here: the pool has clear_env = no, so every variable of this container is visible to
   # the PHP code of every request. The environment is what the API needs, listed below. The only AWS credentials are
@@ -425,6 +430,8 @@ services:
       # `docker compose run` would start a dependency again.
 
 networks:
-  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Only `api-php`, `api` and `dynamodb` (the one backend the API may reach).
+  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Members: `api-php`, `api`
+  # and `dynamodb` (the one backend the API may reach). `api` and `dynamodb` can therefore both reach php-fpm on 9000;
+  # accepted, see the `api-php` comment.
   api-internal:
     internal: true
