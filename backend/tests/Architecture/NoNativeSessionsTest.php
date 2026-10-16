@@ -178,7 +178,7 @@ final class NoNativeSessionsTest extends TestCase
         }
         // A definition (`function rand()`), but not an import (`use function setcookie`).
         if ($previous?->is(T_FUNCTION) === true) {
-            $beforeFunction = $this->neighbour($tokens, (int) $previousIndex, -1);
+            $beforeFunction = $this->neighbour($tokens, $previousIndex, -1);
             if ($beforeFunction?->is(T_USE) !== true) {
                 return false;
             }

@@ -15,7 +15,7 @@ final class FrozenClock implements Clock
 
     public function __construct(string $at = '2026-10-16T12:00:00+00:00')
     {
-        $this->now = new \DateTimeImmutable($at);
+        $this->now = (new \DateTimeImmutable($at))->setTimezone(new \DateTimeZone('UTC'));
     }
 
     public function now(): \DateTimeImmutable
