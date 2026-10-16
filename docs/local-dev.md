@@ -208,9 +208,14 @@ docker run --rm -u $(id -u):$(id -g) -v "$PWD":/app -w /app/backend expense-trac
 **PHP integration or conformance test** (needs `make up`): the same command as the Makefile uses, with a filter:
 
 ```bash
-docker compose -p expense-tracker --profile tools run --rm --user $(id -u):$(id -g) php \
+env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE \
+  docker compose -p expense-tracker --profile tools run --rm --user $(id -u):$(id -g) php \
   vendor/bin/phpunit --testsuite integration --filter ExampleTestName
 ```
+
+Keep the `env -u …` prefix on any `docker compose` command that starts containers (`up`, `run`). Compose takes
+`AWS_*` from your shell before `.env`, so real keys exported in your terminal would otherwise reach the containers;
+the Makefile does the same for every call.
 
 Use `--testsuite conformance` for the conformance suite. Two integration tests (`S3ToQueueTest` and `RelayHttpTest`,
 group `queue-exclusive`) read the `receipts` queue themselves, so `worker-runner` must be stopped while they run. The

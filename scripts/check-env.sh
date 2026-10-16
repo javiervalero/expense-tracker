@@ -59,4 +59,14 @@ if is_assigned "$ENV_FILE" AWS_SESSION_TOKEN; then
   problem "AWS_SESSION_TOKEN is set in .env; remove it: the local stack only runs with the fake pair, which has no session token"
 fi
 
+# Compose's .env parser also reads `KEY: value` and `KEY = value` (checked with `docker compose config`), and the last
+# assignment wins. The checks above only read `KEY=value`, so any other form of a credential line is refused outright.
+for key in "${FAKE_KEYS[@]}" AWS_SESSION_TOKEN; do
+  if tr -d '\r' <"$ENV_FILE" |
+    grep -E "^[[:space:]]*(export[[:space:]]+)?$key[[:space:]]*[:=]" |
+    grep -Eqv "^[[:space:]]*(export[[:space:]]+)?$key="; then
+    problem "$key in .env is written in a form other than $key=value; write it exactly as in .env.example"
+  fi
+done
+
 [ "$problems" -eq 0 ]

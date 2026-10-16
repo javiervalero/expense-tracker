@@ -108,6 +108,38 @@ run_guard "$ENVFILE"
 expect 1 'a different key id with export and CRLF'
 expect_not_in_output 'AKIAOTHERKEYCRLF' 'a different key id with export and CRLF'
 
+# Compose's .env parser also reads `KEY: value` and `KEY = value`, and the last assignment wins: such a line after the
+# fake pair would be what Compose uses, so any form other than KEY=value is refused for the credential keys.
+fresh_env
+printf 'AWS_ACCESS_KEY_ID: AKIACOLONFORMKEY1\n' >>"$ENVFILE"
+run_guard "$ENVFILE"
+expect 1 'a key id in the colon form'
+expect_in_output 'AWS_ACCESS_KEY_ID' 'a key id in the colon form'
+expect_not_in_output 'AKIACOLONFORMKEY1' 'a key id in the colon form'
+
+fresh_env
+printf 'AWS_SECRET_ACCESS_KEY = SpacedSecretValue77\n' >>"$ENVFILE"
+run_guard "$ENVFILE"
+expect 1 'a secret key with blanks around ='
+expect_in_output 'AWS_SECRET_ACCESS_KEY' 'a secret key with blanks around ='
+expect_not_in_output 'SpacedSecretValue77' 'a secret key with blanks around ='
+
+fresh_env
+printf 'export AWS_SESSION_TOKEN : FwoColonToken\n' >>"$ENVFILE"
+run_guard "$ENVFILE"
+expect 1 'a session token in the colon form'
+expect_not_in_output 'FwoColonToken' 'a session token in the colon form'
+
+fresh_env
+printf 'AWS_ACCESS_KEY_ID: localdev\n' >>"$ENVFILE"
+run_guard "$ENVFILE"
+expect 1 'even the fake key id in the colon form'
+
+fresh_env
+printf 'AWS_ACCESS_KEY_ID=localdev\n' >>"$ENVFILE"
+run_guard "$ENVFILE"
+expect 0 'the fake key id assigned twice'
+
 run_guard "$WORK/missing"
 expect 2 'a missing env file'
 
