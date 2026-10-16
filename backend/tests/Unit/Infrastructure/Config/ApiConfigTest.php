@@ -197,6 +197,7 @@ final class ApiConfigTest extends TestCase
         yield 'loopback over http' => ['http://127.0.0.1:5173'];
         yield 'ipv6 loopback over http' => ['http://[::1]:5173'];
         yield 'localhost without a port' => ['http://localhost'];
+        yield 'a 63 character label' => ['https://' . 'a' . '' . str_repeat('b', 62) . '.example'];
         yield 'three origins' => ['https://a.example.com,https://b.example.com,http://localhost:5173'];
     }
 
@@ -236,6 +237,12 @@ final class ApiConfigTest extends TestCase
         yield 'a non-numeric port' => ['https://app.example.com:abc'];
         yield 'an empty port' => ['https://app.example.com:'];
         yield 'a port out of range' => ['https://app.example.com:99999'];
+        yield 'https on its default port' => ['https://app.example:443'];
+        yield 'http on its default port' => ['http://localhost:80'];
+        yield 'a port with a leading zero' => ['http://localhost:05173'];
+        yield 'port zero' => ['http://localhost:0'];
+        yield 'a 64 character label' => ['https://' . str_repeat('a', 64) . '.example'];
+        yield 'a foreign ipv6 host over http' => ['http://[::2]:5173'];
         yield 'the same origin twice' => ['https://a.example.com,https://a.example.com'];
         yield 'a trailing newline' => ["https://a.example.com\n"];
     }

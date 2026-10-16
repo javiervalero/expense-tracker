@@ -175,6 +175,7 @@ abstract class ApiTestCase extends TestCase
         if ($this->originHeader !== null) {
             $defaults['X-Origin-Verify'] = $this->originHeader;
         }
+        // OPTIONS gets the browser headers too, on purpose: harmless, the middleware exempts it.
         if (!in_array(strtoupper($method), ['GET', 'HEAD'], true)) {
             if ($this->browserOrigin !== null) {
                 $defaults['Origin'] = $this->browserOrigin;

@@ -38,6 +38,7 @@ final class CsrfApiTest extends ApiTestCase
         $response = $this->requestAs('GET', '/health', 'POST', '/api/v1/health');
 
         self::assertSame(403, $response->getStatusCode());
+        self::assertSame('The request failed the cross-site request check.', $this->problemBody($response)['detail']);
     }
 
     public function testAPostWithoutAnOriginIs403(): void
@@ -47,6 +48,7 @@ final class CsrfApiTest extends ApiTestCase
         $response = $this->requestAs('GET', '/health', 'POST', '/api/v1/health');
 
         self::assertSame(403, $response->getStatusCode());
+        self::assertSame('The request failed the cross-site request check.', $this->problemBody($response)['detail']);
     }
 
     public function testAHeaderTheTestSetsItselfWins(): void
@@ -54,6 +56,7 @@ final class CsrfApiTest extends ApiTestCase
         $response = $this->requestAs('GET', '/health', 'POST', '/api/v1/health', ['headers' => ['Origin' => 'null']]);
 
         self::assertSame(403, $response->getStatusCode());
+        self::assertSame('The request failed the cross-site request check.', $this->problemBody($response)['detail']);
     }
 
     public function testAGetWithoutTheCsrfHeadersIsNotChecked(): void
