@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.3.0
+  version: 0.4.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -126,9 +126,12 @@ components:
   responses:
     Forbidden:
       description: |
-        Returned when the `X-Origin-Verify` header is missing, empty or wrong. The body is the same generic problem in
-        every case, so it never says which, and it is checked before the path, so even an unknown path or another
-        method gets this instead of 404 or 405.
+        Returned when the `X-Origin-Verify` header is missing, empty or wrong, and, for every method except `GET`,
+        `HEAD` and `OPTIONS`, when the cross-site request check fails: `X-Requested-With` is not exactly
+        `XMLHttpRequest`, or `Origin` is missing, `null` or not one of the app's origins. The body is the same generic
+        problem for each origin-verify failure, and the CSRF check has its own generic detail, so neither says which
+        header was wrong. Both are checked before the path, so even an unknown path or another method gets this
+        instead of 404 or 405.
       headers:
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
