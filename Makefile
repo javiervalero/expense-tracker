@@ -107,8 +107,10 @@ check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned br
 	@echo "Created .env from .env.example (local, non-secret values)."
 
 # Keys that docker-compose.yml reads WITHOUT a default (a silent default would let a stale .env start a stack with an
-# empty value). `check-env` fails fast, before anything starts, naming the line to add (the example comes from .env.example).
-REQUIRED_ENV_KEYS = DYNAMODB_TABLE
+# empty value): the table, and the endpoint, which the API also needs (it refuses to start with APP_ENV=local and
+# no endpoint, so an empty value can never mean real AWS). `check-env` fails fast, before anything starts, naming the
+# line to add (the example comes from .env.example).
+REQUIRED_ENV_KEYS = DYNAMODB_TABLE DYNAMODB_ENDPOINT
 
 check-env: .env
 	@for key in $(REQUIRED_ENV_KEYS); do \
@@ -124,13 +126,13 @@ check-env: .env
 #   2. ONE_SHOT_SERVICES: run in the foreground. They exit on purpose, and `up --wait` counts "exited (0)" as a
 #      failure, so they cannot be in step 1. Their log is shown and a non-zero exit code fails `make up`;
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
-# LATE_SERVICES is empty for now: nothing yet depends on the bootstrap. `worker-runner`, the API (`api`, `api-php`) and
-# `frontend` are in step 1 on purpose: the runner needs only sqs and worker (queues come from elasticmq.conf), Phase 0's
-# API serves only /api/v1/health, and `frontend` (Vite) needs only `api` healthy (Compose orders them with depends_on).
-# When the API needs DynamoDB tables or buckets, set `LATE_SERVICES = api frontend` (api-php follows api).
+# LATE_SERVICES = api frontend: the API uses the DynamoDB table that `local-aws-init` creates, so the entry point `api`
+# (nginx) and `frontend` (Vite, which needs `api` healthy) start after it. `api-php` is in step 1 (it does not touch
+# DynamoDB until it serves a request, and nothing reaches it except `api`). `worker-runner` stays in step 1: it needs
+# only sqs and worker (queues come from elasticmq.conf).
 # `make frontend-install` must have run (like `make php-install` for the API): Vite runs from frontend/node_modules.
 ONE_SHOT_SERVICES = local-aws-init
-LATE_SERVICES =
+LATE_SERVICES = api frontend
 
 # The step-1 list is computed once and checked: if `docker compose config --services` fails (broken compose file,
 # a missing required variable) or yields nothing to start, `make up` stops with an error instead of running

@@ -9,6 +9,8 @@ services:
   dynamodb:
     # amazon/dynamodb-local:3.3.1 (multi-arch index digest, taken with `docker buildx imagetools inspect`)
     image: amazon/dynamodb-local:3.3.1@sha256:ff89bd48ff32cd8d9be5fee8873b65b8854dc408f1afe881be6eb00247bc0dab
+    # Also on api-internal, so the API (php-fpm, which has no other network) can reach it.
+    networks: [default, api-internal]
     command: ["-jar", "DynamoDBLocal.jar", "-sharedDb", "-inMemory"]
     ports:
       - "127.0.0.1:8000:8000"
@@ -204,9 +206,9 @@ services:
         condition: service_healthy
 
   # The local API (WP12), in two containers like production's one handler: `api` (nginx) forwards /api/ to `api-php`
-  # (php-fpm), which runs backend/public/index.php. See ADR 0007 and 0012. Both start in step 1 of `make up`: neither
-  # needs anything the `local-aws-init` bootstrap creates (Phase 0 serves only /api/v1/health), so LATE_SERVICES stays
-  # empty. When the API starts to use DynamoDB or S3, move `api` there.
+  # (php-fpm), which runs backend/public/index.php. See ADR 0007 and 0012. `api-php` starts in step 1 of
+  # `make up` and `api` in step 3 (LATE_SERVICES), after the `local-aws-init` bootstrap has created the DynamoDB table
+  # the API uses; nothing reaches `api-php` except through `api`.
   #
   # php-fpm, from the `fpm` stage of docker/php/Dockerfile. The code is MOUNTED, read-only, at /var/task (the path
   # Lambda uses, so SCRIPT_FILENAME is the same everywhere): an edit shows up at the next request without a rebuild.
@@ -214,8 +216,11 @@ services:
   # Not published, and ONLY on the internal network `api-internal`: FastCGI has no authentication, so anything that can
   # connect to port 9000 can run code. Only `api` (on both networks) reaches it.
   #
-  # NO SECRETS, NO env_file, NEVER AWS CREDENTIALS here: the pool has clear_env = no, so every variable of this
-  # container is visible to the PHP code of every request. The environment is what the API needs, listed below.
+  # NO SECRETS and NO env_file here: the pool has clear_env = no, so every variable of this container is visible to
+  # the PHP code of every request. The environment is what the API needs, listed below. The only AWS credentials are
+  # the project's FAKE local pair (.env: localdev), which DynamoDB Local accepts and nothing else does, on a network
+  # (`api-internal`) with no route out; DYNAMODB_ENDPOINT is also checked against a local-only allow-list at startup.
+  # Never put real AWS credentials in .env.
   # ORIGIN_VERIFY_SECRETS is the LOCAL, non-secret origin value (the same one the Vite proxy sends, see .env.example),
   # not a real secret; the default equals .env.example so an older .env still works. Production gets a real one.
   api-php:
@@ -234,6 +239,12 @@ services:
       ORIGIN_VERIFY_SECRETS: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
       # The one header the API reads the caller's address from (nginx fills it from the socket when it is absent).
       CLIENT_IP_HEADER: CloudFront-Viewer-Address
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:?not set - add DYNAMODB_ENDPOINT=http://dynamodb:8000 to .env (see .env.example)}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:?not set - add DYNAMODB_TABLE=expense-tracker-local to .env (see .env.example)}
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
+      AWS_EC2_METADATA_DISABLED: "true"
     # Same hardening as the other services. Not root, so php-fpm runs its workers as that user (the pool `user` and
     # `group` of the image are only for a root master). The one writable place is /tmp.
     user: "10001:10001"
@@ -414,6 +425,6 @@ services:
       # `docker compose run` would start a dependency again.
 
 networks:
-  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Only `api-php` and `api`.
+  # php-fpm's private network: `internal: true` gives it no route out and no published ports. Only `api-php`, `api` and `dynamodb` (the one backend the API may reach).
   api-internal:
     internal: true
