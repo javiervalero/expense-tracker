@@ -11,8 +11,15 @@ namespace App\Infrastructure\Logging;
  *
  * The reserved fields always win over the context, so a caller cannot forge the level or the timestamp.
  *
- * Defensive redaction: the values of the secrets given to the constructor, and the value of any `Authorization`
- * header (a context key of that name, or `Authorization: ...` inside a text), never reach the log.
+ * Defensive redaction: the values of the secrets given to the constructor never reach the log, nor does the value
+ * of a context key named (any depth) `authorization`, `cookie`, `set-cookie`, `x-origin-verify`,
+ * `x-csrf-token`, `password`, `current-password`, `new-password` or `passwordHash`. A key is compared in lower
+ * case, with `_` as `-` and without a leading `http-`, so `HTTP_COOKIE` and `newPassword` match too. Inside a
+ * text (values and string keys), `Authorization: ...`, `Cookie: ...` and `Set-Cookie: ...` lines (to the end of
+ * the line), `__Host-session=<value>` (also URL-encoded) and Argon2 hashes are redacted too.
+ *
+ * Objects in the context: a `JsonSerializable` is logged as its `jsonSerialize()` result, redacted like any other
+ * value; every other object is logged as its class name only (its properties never reach the log).
  *
  * A failed write is dropped on purpose: a broken log sink must not fail the work being logged.
  * (The local-only tooling in docker/local-aws has its own copy; they are separate Composer projects.)
@@ -23,8 +30,19 @@ final readonly class JsonLogger
     private const MAX_MESSAGE_BYTES = 1024;
     private const REDACTED = '[REDACTED]';
     private const UNSAFE_LINE = '[REDACTED: line could not be redacted safely]';
-    private const AUTHORIZATION_KEY = '/^authorization$/i';
+    /** Matched against a normalised key (see {@see self::isSensitiveKey()}): lower case, `-` for `_`, no `http-`. */
+    private const SENSITIVE_KEY = '/\A(?:authorization|cookie|set-cookie|x-origin-verify|x-csrf-token|(?:current-?|new-?)?password|passwordhash)\z/';
     private const AUTHORIZATION_IN_TEXT = '/(authorization\s*[:=]\s*)[^\r\n",]*/i';
+    /**
+     * A whole `Cookie:` or `Set-Cookie:` line (also as a server variable, `HTTP_COOKIE:`): the value holds `;`, `,`
+     * and quotes, so only the line end stops it.
+     */
+    private const COOKIE_LINE_IN_TEXT = '/((?<![A-Za-z0-9_-])(?:http[_-])?(?:set[_-])?cookie\s*:\s*)[^\r\n]*/i';
+    /** `__Host-session=<token>`, also URL-encoded (`%3D`). */
+    private const SESSION_COOKIE_IN_TEXT = '/(__Host-session\s*(?:=|%3D)\s*)[^\s;,"\'&]+/i';
+    private const ARGON2_HASH_IN_TEXT = '/\$argon2(?:id|i|d)\$[^\s"]+/i';
+    /** Deepest chain of `JsonSerializable` objects followed, so an object returning itself cannot loop. */
+    private const MAX_OBJECT_DEPTH = 8;
     private const JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR;
 
     private \Closure $clock;
@@ -103,24 +121,64 @@ final readonly class JsonLogger
      *
      * @return array<array-key, mixed>
      */
-    private function redactContext(array $values): array
+    private function redactContext(array $values, int $depth = 0): array
     {
         $redacted = [];
         foreach ($values as $key => $value) {
-            $redacted[$key] = match (true) {
-                \is_string($key) && preg_match(self::AUTHORIZATION_KEY, $key) === 1 => self::REDACTED,
-                \is_string($value) => $this->redactText($value),
-                \is_array($value) => $this->redactContext($value),
-                default => $value,
-            };
+            if (!\is_string($key)) {
+                $redacted[$key] = $this->redactValue($value, $depth);
+                continue;
+            }
+            $redacted[$this->redactText($key)] = $this->isSensitiveKey($key) ? self::REDACTED : $this->redactValue($value, $depth);
         }
 
         return $redacted;
     }
 
+    private function redactValue(mixed $value, int $depth): mixed
+    {
+        return match (true) {
+            \is_string($value) => $this->redactText($value),
+            \is_array($value) => $this->redactContext($value, $depth),
+            $value instanceof \JsonSerializable => $this->redactSerializable($value, $depth),
+            \is_object($value) => ['class' => $value::class],
+            default => $value,
+        };
+    }
+
+    /**
+     * What a `JsonSerializable` says about itself is what would be logged, so it gets the same redaction.
+     */
+    private function redactSerializable(\JsonSerializable $value, int $depth): mixed
+    {
+        if ($depth >= self::MAX_OBJECT_DEPTH) {
+            return ['class' => $value::class];
+        }
+        try {
+            $serialized = $value->jsonSerialize();
+        } catch (\Throwable) {
+            return ['class' => $value::class];
+        }
+
+        return $this->redactValue($serialized, $depth + 1);
+    }
+
+    private function isSensitiveKey(string $key): bool
+    {
+        $normalised = str_replace('_', '-', strtolower(trim($key)));
+        $normalised = str_starts_with($normalised, 'http-') ? substr($normalised, \strlen('http-')) : $normalised;
+
+        return preg_match(self::SENSITIVE_KEY, $normalised) === 1;
+    }
+
     private function redactText(string $text): string
     {
-        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $this->redactSecrets($text)) ?? self::REDACTED;
+        $redacted = $this->redactSecrets($text);
+        foreach ([self::COOKIE_LINE_IN_TEXT, self::SESSION_COOKIE_IN_TEXT, self::AUTHORIZATION_IN_TEXT] as $pattern) {
+            $redacted = preg_replace($pattern, '$1' . self::REDACTED, $redacted) ?? self::REDACTED;
+        }
+
+        return preg_replace(self::ARGON2_HASH_IN_TEXT, self::REDACTED, $redacted) ?? self::REDACTED;
     }
 
     /**

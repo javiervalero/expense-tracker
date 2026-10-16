@@ -69,9 +69,12 @@ export interface components {
     };
     responses: {
         /**
-         * @description Returned when the `X-Origin-Verify` header is missing, empty or wrong. The body is the same generic problem in
-         *     every case, so it never says which, and it is checked before the path, so even an unknown path or another
-         *     method gets this instead of 404 or 405.
+         * @description Returned when the `X-Origin-Verify` header is missing, empty or wrong, and, for every method except `GET`,
+         *     `HEAD` and `OPTIONS`, when the cross-site request check fails: `X-Requested-With` is not exactly
+         *     `XMLHttpRequest`, or `Origin` is missing, `null` or not one of the app's origins. Origin-verify failures
+         *     share one generic problem; CSRF failures share another, with the detail "The request failed the cross-site
+         *     request check.". Neither says which header was wrong. Both are checked before the path, so even an unknown
+         *     path or another method gets this instead of 404 or 405.
          */
         Forbidden: {
             headers: {

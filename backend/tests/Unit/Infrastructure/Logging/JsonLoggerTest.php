@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Infrastructure\Logging;
 
 use App\Infrastructure\Logging\JsonLogger;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class JsonLoggerTest extends TestCase
@@ -105,7 +106,7 @@ final class JsonLoggerTest extends TestCase
 
         self::assertStringContainsString('ünï 🧾', $this->logged());
         self::assertStringContainsString('"key":"a/b"', $this->logged());
-        self::assertNotFalse(json_decode($this->logged(), true), 'the line must still be valid JSON');
+        self::assertIsArray(json_decode($this->logged(), true, flags: JSON_THROW_ON_ERROR), 'the line must still be valid JSON');
     }
 
     public function testRedactsSecretValuesFromMessageAndNestedContext(): void
@@ -115,7 +116,7 @@ final class JsonLoggerTest extends TestCase
         self::assertStringNotContainsString('topsecret', $this->logged());
         self::assertStringNotContainsString('tok/en', $this->logged());
         self::assertStringContainsString('[REDACTED]', $this->logged());
-        self::assertNotFalse(json_decode($this->logged(), true));
+        self::assertIsArray(json_decode($this->logged(), true, flags: JSON_THROW_ON_ERROR));
     }
 
     public function testRedactsAnAuthorizationHeaderByKeyAndInText(): void
@@ -129,6 +130,77 @@ final class JsonLoggerTest extends TestCase
         self::assertStringNotContainsString('ghi789', $this->logged());
         self::assertStringContainsString('text/plain', $this->logged());
         self::assertStringContainsString('Host: s3', $this->logged());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function cookieAndPasswordKeys(): iterable
+    {
+        foreach (['cookie', 'Cookie', 'set-cookie', 'Set-Cookie', 'x-origin-verify', 'X-Origin-Verify', 'x-csrf-token', 'X-CSRF-Token', 'password', 'Password', 'passwordHash', 'PASSWORDHASH'] as $key) {
+            yield $key => [$key];
+        }
+    }
+
+    #[DataProvider('cookieAndPasswordKeys')]
+    public function testRedactsTheValueOfEachSensitiveKeyAtAnyDepth(string $key): void
+    {
+        $this->logger()->info('seen', [
+            $key => 'top-level-value',
+            'request' => ['headers' => [$key => 'nested-value'], 'list' => [[$key => 'deep-value']]],
+        ]);
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('top-level-value', $logged);
+        self::assertStringNotContainsString('nested-value', $logged);
+        self::assertStringNotContainsString('deep-value', $logged);
+        self::assertStringContainsString('[REDACTED]', $logged);
+    }
+
+    public function testRedactsASensitiveKeyWhoseValueIsAnArrayOrNumber(): void
+    {
+        $this->logger()->info('seen', ['password' => ['a' => 'hunter2'], 'cookie' => 12345]);
+
+        self::assertStringNotContainsString('hunter2', $this->logged());
+        self::assertStringNotContainsString('12345', $this->logged());
+    }
+
+    public function testKeepsNeighbouringKeysThatMerelyLookSimilar(): void
+    {
+        $this->logger()->info('seen', ['cookies' => 'keep-me', 'passwordPolicy' => 'keep-too']);
+
+        self::assertStringContainsString('keep-me', $this->logged());
+        self::assertStringContainsString('keep-too', $this->logged());
+    }
+
+    public function testRedactsCookieAndSetCookieLinesInsideAMessage(): void
+    {
+        $this->logger()->info("GET /\r\nCookie: a=b; __Host-session=zzz\r\nHost: x\r\nSet-Cookie: __Host-session=qqq; Secure; HttpOnly\r\nAccept: */*");
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('a=b', $logged);
+        self::assertStringNotContainsString('zzz', $logged);
+        self::assertStringNotContainsString('qqq', $logged);
+        self::assertStringContainsString('Host: x', $logged);
+        self::assertStringContainsString('Accept: */*', $logged);
+        self::assertIsArray(json_decode($logged, true, flags: JSON_THROW_ON_ERROR));
+    }
+
+    public function testRedactsACookieLineInsideAContextString(): void
+    {
+        $this->logger()->info('sent', ['raw' => 'cookie: a=b']);
+
+        self::assertStringNotContainsString('a=b', $this->logged());
+    }
+
+    public function testRedactsASessionCookieValueInsideAMessage(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+
+        $this->logger()->info("session __Host-session={$token} seen", ['detail' => "x __HOST-SESSION={$token}"]);
+
+        self::assertStringNotContainsString($token, $this->logged());
+        self::assertStringContainsString('seen', $this->logged());
     }
 
     public function testEmptySecretsAreIgnored(): void
@@ -191,17 +263,178 @@ final class JsonLoggerTest extends TestCase
         self::assertStringContainsString('[REDACTED]', $capped);
     }
 
-    public function testASecretInAPublicPropertyOfALoggedObjectIsRedacted(): void
+    public function testASelfReferencingSerializableStopsAtTheDepthLimit(): void
+    {
+        $loop = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                return ['next' => $this];
+            }
+        };
+
+        $this->logger()->info('loop', ['value' => $loop]);
+
+        $value = $this->firstEntry()['value'] ?? null;
+        $level = 0;
+        while (\is_array($value) && \array_key_exists('next', $value)) {
+            $value = $value['next'];
+            ++$level;
+        }
+        self::assertSame(['class' => $loop::class], $value);
+        self::assertGreaterThan(0, $level);
+    }
+
+    public function testASerializableThatThrowsIsLoggedAsItsClassNameOnly(): void
+    {
+        $failing = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                throw new \RuntimeException('cookie: a=b-cookie-value');
+            }
+        };
+
+        $this->logger()->info('failing', ['value' => $failing]);
+
+        self::assertSame(['class' => $failing::class], $this->firstEntry()['value'] ?? null);
+        self::assertStringNotContainsString('a=b-cookie-value', $this->logged());
+    }
+
+    public function testAPlainObjectIsLoggedAsItsClassNameOnly(): void
     {
         $secret = 'Slot-A-0123456789-0123456789-abcdef';
         $object = new class ($secret) {
             public function __construct(public string $token) {}
         };
 
-        $this->logger([$secret])->info('object', ['value' => $object]);
+        $this->logger([$secret])->info('object', ['value' => $object, 'std' => (object) ['cookie' => 'a=b-cookie-value', 'other' => 'visible-property']]);
 
-        self::assertStringNotContainsString($secret, $this->logged());
-        self::assertStringContainsString('[REDACTED]', $this->logged());
+        $logged = $this->logged();
+        self::assertStringNotContainsString($secret, $logged);
+        self::assertStringNotContainsString('a=b-cookie-value', $logged);
+        self::assertStringNotContainsString('visible-property', $logged);
+        $entry = $this->firstEntry();
+        self::assertSame(['class' => \stdClass::class], $entry['std']);
+        self::assertSame(['class' => $object::class], $entry['value']);
+    }
+
+    public function testAJsonSerializableObjectGoesThroughTheSameRedaction(): void
+    {
+        $object = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                return ['password' => 'x-password-value', 'note' => "Cookie: a=b-cookie-value\n", 'fine' => 'visible'];
+            }
+        };
+
+        $this->logger()->info('object', ['value' => $object]);
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('x-password-value', $logged);
+        self::assertStringNotContainsString('a=b-cookie-value', $logged);
+        self::assertStringContainsString('visible', $logged);
+    }
+
+    public function testAJsonSerializableThatReturnsAScalarIsRedactedAsText(): void
+    {
+        $object = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                return 'Authorization: Bearer scalar-token';
+            }
+        };
+
+        $this->logger()->info('object', ['value' => $object]);
+
+        self::assertStringNotContainsString('scalar-token', $this->logged());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function normalisedSensitiveKeys(): iterable
+    {
+        foreach (['HTTP_COOKIE', 'set_cookie', 'HTTP_X_ORIGIN_VERIFY', 'HTTP_AUTHORIZATION', 'newPassword', "cookie\n", 'current-password', 'new_password', 'HTTP-Cookie', 'X_CSRF_TOKEN'] as $key) {
+            yield addcslashes($key, "\n") => [$key];
+        }
+    }
+
+    #[DataProvider('normalisedSensitiveKeys')]
+    public function testRedactsKeysAfterNormalisingThem(string $key): void
+    {
+        $this->logger()->info('seen', [$key => 'sensitive-value']);
+
+        self::assertStringNotContainsString('sensitive-value', $this->logged());
+    }
+
+    public function testKeepsKeysThatOnlyContainASensitiveWord(): void
+    {
+        $this->logger()->info('seen', ['http-cookies' => 'keep-1', 'passwordPolicy' => 'keep-2', 'my-cookie' => 'keep-3']);
+
+        self::assertStringContainsString('keep-1', $this->logged());
+        self::assertStringContainsString('keep-2', $this->logged());
+        self::assertStringContainsString('keep-3', $this->logged());
+    }
+
+    public function testAStringArrayKeyIsRedactedAsText(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+
+        $this->logger()->info('keyed', ['map' => ["x __Host-session={$token} y" => 'value']]);
+
+        self::assertStringNotContainsString($token, $this->logged());
+    }
+
+    public function testACookieLineIsRedactedToTheEndOfTheLineEvenWithQuotes(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+
+        $this->logger()->info("Cookie: a=\"x y\"; __Host-session={$token}\r\nHost: kept");
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString($token, $logged);
+        self::assertStringNotContainsString('x y', $logged);
+        self::assertStringContainsString('Host: kept', $logged);
+    }
+
+    public function testACookieLineInsideAQuotedContextStringIsRedactedToTheEnd(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+
+        $this->logger()->info('sent', ['raw' => "Cookie: a=\"x y\"; __Host-session={$token}"]);
+
+        self::assertStringNotContainsString($token, $this->logged());
+        self::assertStringNotContainsString('x y', $this->logged());
+    }
+
+    public function testRedactsServerVariableStyleCookieLines(): void
+    {
+        $this->logger()->info("http_cookie: a=b-one\nset_cookie: c=d-two; Secure\nHTTP_COOKIE: e=f-three");
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('b-one', $logged);
+        self::assertStringNotContainsString('d-two', $logged);
+        self::assertStringNotContainsString('f-three', $logged);
+    }
+
+    public function testRedactsAUrlEncodedSessionCookie(): void
+    {
+        $token = str_repeat('Ab3_-', 8) . 'xyz';
+
+        $this->logger()->info("query cookie=__Host-session%3D{$token}&a=1", ['more' => "__host-session%3d{$token}"]);
+
+        self::assertStringNotContainsString($token, $this->logged());
+    }
+
+    public function testRedactsArgon2HashesInText(): void
+    {
+        $hash = '$argon2id$v=19$m=65536,t=4,p=1$c29tZXNhbHQ$aGFzaGhhc2hoYXNo';
+
+        $this->logger()->info("stored {$hash} done", ['i' => '$argon2i$v=19$m=1,t=1,p=1$abc$def', 'd' => 'x $argon2d$v=19$m=1,t=1,p=1$abc$def']);
+
+        $logged = $this->logged();
+        self::assertStringNotContainsString('argon2', $logged);
+        self::assertStringNotContainsString('aGFzaGhhc2hoYXNo', $logged);
+        self::assertStringContainsString('done', $logged);
     }
 
     public function testASecretUsedAsAnArrayKeyIsRedacted(): void
