@@ -598,6 +598,27 @@ WP1 ─► R ─► WP2 ─► WP3 ─► WP4 ───────────�
 ### 7.3 Review notes
 As in Phase 1, the findings of each WP's reviews (and anything carried to later phases) are added here as "Notes from the WPn reviews", before the next WP starts.
 
+### Notes from the WP2 reviews (2026-10-16)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on `bbf1d76..0fe491b`; round 2 (opus/high) on `0fe491b..042b8e9` approved. No CRITICAL findings. The fix batch covers:
+- objects in log context: a `JsonSerializable` is redacted like any value (at most 8 levels; a throwing `jsonSerialize()` falls back to the class), any other object logs only `{"class": …}`;
+- key matching normalises before comparing (lower case, `_` → `-`, one leading `http-` stripped), anchored `\A…\z`, plus `current-password` / `new-password`; string array keys go through the text rules;
+- text rules: a `Cookie:` / `Set-Cookie:` / `HTTP_COOKIE:` line is redacted to end of line; `__Host-session%3D…`; Argon2 hashes;
+- the native-session guard (HIGH from php-reviewer) flags names anywhere (not only before `(`), `use function` imports, string callables, `header('Set-Cookie: …')`, every `session_*` function, `array_rand` / `shuffle` / `str_shuffle` / `srand` / `mt_srand`, `Mt19937`, `getallheaders`, `INPUT_COOKIE`, `$_SESSION`, `$_REQUEST`, `$GLOBALS['_COOKIE']`;
+- weak tests replaced (a `json_decode` check that could not fail, a self-comparing clock test); `FrozenClock` normalises to UTC; `RandomUuidGenerator::fromBytes` tested with fixed vectors.
+
+Optional LOWs from round 2, not done:
+- `password_hash` as a key normalises to `password-hash`, not matched (the Argon2 text rule still hides the value): use `password-?hash`.
+- The `Authorization` text rule still stops at `,` and `"` (Digest / SigV4 tails).
+- `\s*` in the cookie rules also crosses CR/LF (over-redaction only): `[ \t]*`.
+- The Argon2 text rule runs to the next whitespace (can hide a following `,userId=…`).
+- `use const INPUT_COOKIE as C`, `$GLOBALS['_SESSION']` / `['_REQUEST']`, `apache_request_headers`, the seedable engines `Xoshiro256StarStar` / `PcgOneseq128XslRr64`, and an interpolated `"Set-Cookie: $v"` are not caught by the guard.
+- The exact `session_*` string match would flag an array key or named argument such as `'session_id'`: the code uses camelCase and `SESSION#`, so it is fine; never whitelist broadly.
+
+Carried (do when it first applies):
+- **Enums and dates in log context** now log as `{"class": …}`. Before logging the first enum (a `reason` or `status`) or date, map `BackedEnum` → `->value`, `UnitEnum` → `->name`, `DateTimeInterface` → `format(DATE_ATOM)`.
+- **JSON inside a string:** there is no text rule for `"password":"…"` / `"cookie":"…"` already encoded into a string. Never log a raw request body; if one is ever needed, add a quoted-key rule first.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
