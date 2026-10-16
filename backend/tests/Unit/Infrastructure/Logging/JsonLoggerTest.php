@@ -263,6 +263,42 @@ final class JsonLoggerTest extends TestCase
         self::assertStringContainsString('[REDACTED]', $capped);
     }
 
+    public function testASelfReferencingSerializableStopsAtTheDepthLimit(): void
+    {
+        $loop = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                return ['next' => $this];
+            }
+        };
+
+        $this->logger()->info('loop', ['value' => $loop]);
+
+        $value = $this->firstEntry()['value'] ?? null;
+        $level = 0;
+        while (\is_array($value) && \array_key_exists('next', $value)) {
+            $value = $value['next'];
+            ++$level;
+        }
+        self::assertSame(['class' => $loop::class], $value);
+        self::assertGreaterThan(0, $level);
+    }
+
+    public function testASerializableThatThrowsIsLoggedAsItsClassNameOnly(): void
+    {
+        $failing = new class implements \JsonSerializable {
+            public function jsonSerialize(): mixed
+            {
+                throw new \RuntimeException('cookie: a=b-cookie-value');
+            }
+        };
+
+        $this->logger()->info('failing', ['value' => $failing]);
+
+        self::assertSame(['class' => $failing::class], $this->firstEntry()['value'] ?? null);
+        self::assertStringNotContainsString('a=b-cookie-value', $this->logged());
+    }
+
     public function testAPlainObjectIsLoggedAsItsClassNameOnly(): void
     {
         $secret = 'Slot-A-0123456789-0123456789-abcdef';
