@@ -244,6 +244,8 @@ services:
       ORIGIN_VERIFY_SECRETS: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
       # The one header the API reads the caller's address from (nginx fills it from the socket when it is absent).
       CLIENT_IP_HEADER: CloudFront-Viewer-Address
+      # The browser origins allowed to make state-changing calls (CSRF check); the same two the Vite proxy allows.
+      APP_ORIGINS: ${APP_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:?not set - add DYNAMODB_ENDPOINT=http://dynamodb:8000 to .env (see .env.example)}
       DYNAMODB_TABLE: ${DYNAMODB_TABLE:?not set - add DYNAMODB_TABLE=expense-tracker-local to .env (see .env.example)}
       AWS_REGION: ${AWS_REGION:-eu-west-1}

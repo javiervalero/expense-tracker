@@ -160,7 +160,7 @@ final class ApiConfigTest extends TestCase
             $sorted = $e->errors;
             sort($sorted);
             self::assertSame($sorted, $e->errors);
-            self::assertStringStartsWith('CLIENT_IP_HEADER ', $e->errors[0]);
+            self::assertStringStartsWith('APP_ORIGINS ', $e->errors[0]);
         }
     }
 

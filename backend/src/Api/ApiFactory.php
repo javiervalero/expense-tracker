@@ -7,6 +7,7 @@ namespace App\Api;
 use App\Http\ApiKernel;
 use App\Http\Handler;
 use App\Http\Middleware\ClientIpMiddleware;
+use App\Http\Middleware\CsrfMiddleware;
 use App\Http\Middleware\DeferredProblemMiddleware;
 use App\Http\Middleware\ErrorHandlingMiddleware;
 use App\Http\Middleware\OriginVerifyMiddleware;
@@ -75,7 +76,9 @@ final class ApiFactory
             // request and its problem is raised right after the origin check. ClientIp comes after that, so only a
             // request that passed the origin check has its address read. StorageUnavailable comes after ClientIp,
             // right before the router: DynamoDB overload thrown by a handler becomes a 503 there, and anything else
-            // travels up unchanged. The router comes last. Any middleware that reads the query or the body must come
+            // travels up unchanged. Csrf comes after that, right before the router: a state-changing request needs the
+            // X-Requested-With header and an allowed Origin, and runs before any handler (so before any authentication or
+            // database read). The router comes last. Any middleware that reads the query or the body must come
             // after DeferredProblemMiddleware.
             return new ApiKernel(new Pipeline(
                 [
@@ -85,6 +88,7 @@ final class ApiFactory
                     new DeferredProblemMiddleware(),
                     new ClientIpMiddleware($requestLogger, $config->clientIpHeader),
                     new StorageUnavailableMiddleware($requestLogger),
+                    new CsrfMiddleware($requestLogger, $config->appOrigins),
                 ],
                 new RouteDispatcher(new Router($routes ?? Routes::all($services))),
             ), null, $requestLogger);

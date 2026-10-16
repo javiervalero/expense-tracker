@@ -40,7 +40,7 @@ final class CsrfMiddlewareTest extends TestCase
     }
 
     /**
-     * @return array<string, mixed>
+     * @return array<mixed>
      */
     private function entry(): array
     {
