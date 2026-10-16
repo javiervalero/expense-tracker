@@ -13,8 +13,9 @@ final class Routes
     /**
      * @return list<Route>
      */
-    public static function all(): array
+    public static function all(ApiServices $services): array
     {
+        unset($services); // health needs nothing yet; the Phase 2 routes will
         $health = new HealthHandler();
 
         return [

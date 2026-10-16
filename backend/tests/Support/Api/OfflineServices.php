@@ -19,6 +19,9 @@ use Aws\MockHandler;
  */
 final class OfflineServices
 {
+    /**
+     * @param resource|null $logStream
+     */
     public static function create(?MockHandler $dynamoDb = null, mixed $logStream = null): ApiServices
     {
         $settings = DynamoDbSettings::fromEnvironment([
@@ -31,7 +34,20 @@ final class OfflineServices
             new ItemStore($client, $settings->tableName),
             new FrozenClock(),
             new RandomUuidGenerator(),
-            new JsonLogger($logStream ?? fopen('php://memory', 'w+b')),
+            new JsonLogger($logStream ?? self::memory()),
         );
+    }
+
+    /**
+     * @return resource
+     */
+    private static function memory()
+    {
+        $stream = fopen('php://memory', 'w+b');
+        if ($stream === false) {
+            throw new \RuntimeException('php://memory is unavailable.');
+        }
+
+        return $stream;
     }
 }

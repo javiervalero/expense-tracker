@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\Config;
 
+use App\Infrastructure\DynamoDb\DynamoDbSettings;
+
 /**
  * The API's configuration, read once from the process environment by the composition root. It grows with the
  * work packages that need settings (client IP header, rate limits, table names). Every problem is collected before
@@ -15,6 +17,9 @@ final readonly class ApiConfig
     private const MIN_SLOT_LENGTH = 32;
     private const MAX_SLOTS = 2;
     private const CLIENT_IP_HEADER = 'CLIENT_IP_HEADER';
+    private const APP_ENV = 'APP_ENV';
+    private const LOCAL_ENV = 'local';
+    private const DYNAMODB_ENDPOINT = 'DYNAMODB_ENDPOINT';
 
     /**
      * The only header that may carry the caller's address, in every environment (ADR 0012 section 4.3). Any other
@@ -31,8 +36,9 @@ final readonly class ApiConfig
     /**
      * @param list<string> $originVerifySecrets the accepted `X-Origin-Verify` values (slot A, then B for a rotation)
      * @param string $clientIpHeader the one header that carries the caller's address (always `CloudFront-Viewer-Address`)
+     * @param DynamoDbSettings $dynamoDb where the data lives
      */
-    private function __construct(public array $originVerifySecrets, public string $clientIpHeader) {}
+    private function __construct(public array $originVerifySecrets, public string $clientIpHeader, public DynamoDbSettings $dynamoDb) {}
 
     /**
      * @param array<array-key, mixed> $env
@@ -44,12 +50,37 @@ final readonly class ApiConfig
         $errors = [];
         $secrets = self::originVerifySecrets($env, $errors);
         $clientIpHeader = self::clientIpHeader($env, $errors);
+        $dynamoDb = self::dynamoDb($env, $errors);
         sort($errors);
-        if ($errors !== []) {
+        if ($errors !== [] || $dynamoDb === null) {
             throw new InvalidConfiguration($errors);
         }
 
-        return new self($secrets, $clientIpHeader);
+        return new self($secrets, $clientIpHeader, $dynamoDb);
+    }
+
+    /**
+     * Its errors join the others. With `APP_ENV=local` an endpoint is mandatory, so an empty value can never
+     * silently mean real AWS (the in-app twin of `make check-env`).
+     *
+     * @param array<array-key, mixed> $env
+     * @param list<string> $errors
+     * @param-out list<string> $errors
+     */
+    private static function dynamoDb(array $env, array &$errors): ?DynamoDbSettings
+    {
+        try {
+            $settings = DynamoDbSettings::fromEnvironment($env);
+        } catch (InvalidConfiguration $invalid) {
+            array_push($errors, ...$invalid->errors);
+            $settings = null;
+        }
+        $endpoint = $env[self::DYNAMODB_ENDPOINT] ?? null;
+        if (($env[self::APP_ENV] ?? null) === self::LOCAL_ENV && ($endpoint === null || $endpoint === '')) {
+            $errors[] = self::DYNAMODB_ENDPOINT . ' is required when ' . self::APP_ENV . ' is ' . self::LOCAL_ENV;
+        }
+
+        return $settings;
     }
 
     /**
