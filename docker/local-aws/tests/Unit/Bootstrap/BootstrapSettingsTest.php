@@ -23,6 +23,8 @@ final class BootstrapSettingsTest extends TestCase
             'S3_CORS_ALLOWED_ORIGIN' => 'http://localhost:5173',
             'S3_NOTIFICATION_ARN' => 'arn:minio:sqs::RELAY:webhook',
             'S3_WEBHOOK_ENDPOINT' => 'http://s3-events-relay:8080/',
+            'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000',
+            'DYNAMODB_TABLE' => 'expense-tracker-local',
         ];
     }
 
@@ -37,6 +39,45 @@ final class BootstrapSettingsTest extends TestCase
         self::assertSame('http://localhost:5173', $settings->corsAllowedOrigin);
         self::assertSame('arn:minio:sqs::RELAY:webhook', $settings->notificationArn);
         self::assertSame(90, $settings->waitTimeoutSeconds);
+        self::assertSame('http://dynamodb:8000', $settings->dynamoDbEndpoint);
+        self::assertSame('expense-tracker-local', $settings->dynamoDbTable);
+    }
+
+    #[DataProvider('refusedEndpoints')]
+    public function testRefusesADynamoDbEndpointThatIsNotAnAllowedLocalStandIn(string $endpoint): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DYNAMODB_ENDPOINT');
+
+        BootstrapSettings::fromEnvironment(['DYNAMODB_ENDPOINT' => $endpoint] + self::validEnvironment());
+    }
+
+    public function testRefusesTheRealAwsDynamoDbEndpoint(): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DYNAMODB_ENDPOINT');
+
+        BootstrapSettings::fromEnvironment(['DYNAMODB_ENDPOINT' => 'https://dynamodb.eu-west-1.amazonaws.com'] + self::validEnvironment());
+    }
+
+    #[DataProvider('invalidTableNames')]
+    public function testRefusesATableNameDynamoDbWouldNotAccept(string $name): void
+    {
+        $this->expectException(\RuntimeException::class);
+        $this->expectExceptionMessage('DYNAMODB_TABLE');
+
+        BootstrapSettings::fromEnvironment(['DYNAMODB_TABLE' => $name] + self::validEnvironment());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function invalidTableNames(): iterable
+    {
+        yield 'too short' => ['ab'];
+        yield 'too long' => [str_repeat('a', 256)];
+        yield 'space' => ['my table'];
+        yield 'slash' => ['a/b'];
     }
 
     public function testNotificationIsDisabledWhenTheArnIsEmptyOrAbsent(): void
@@ -77,7 +118,7 @@ final class BootstrapSettingsTest extends TestCase
      */
     public static function requiredVariables(): iterable
     {
-        foreach (['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'S3_ENDPOINT', 'S3_CORS_ALLOWED_ORIGIN'] as $variable) {
+        foreach (['AWS_REGION', 'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'S3_ENDPOINT', 'S3_CORS_ALLOWED_ORIGIN', 'DYNAMODB_ENDPOINT', 'DYNAMODB_TABLE'] as $variable) {
             yield $variable => [$variable];
         }
     }

@@ -215,8 +215,9 @@ services:
   # connect to port 9000 can run code. Only `api` (on both networks) reaches it.
   #
   # NO SECRETS, NO env_file, NEVER AWS CREDENTIALS here: the pool has clear_env = no, so every variable of this
-  # container is visible to the PHP code of every request. The environment is what the API needs, listed below
-  # (nothing yet; APP_ENV is the first placeholder).
+  # container is visible to the PHP code of every request. The environment is what the API needs, listed below.
+  # ORIGIN_VERIFY_SECRETS is the LOCAL, non-secret origin value (the same one the Vite proxy sends, see .env.example),
+  # not a real secret; the default equals .env.example so an older .env still works. Production gets a real one.
   api-php:
     image: expense-tracker-php:fpm
     build:
@@ -230,6 +231,9 @@ services:
     networks: [api-internal]
     environment:
       APP_ENV: local
+      ORIGIN_VERIFY_SECRETS: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
+      # The one header the API reads the caller's address from (nginx fills it from the socket when it is absent).
+      CLIENT_IP_HEADER: CloudFront-Viewer-Address
     # Same hardening as the other services. Not root, so php-fpm runs its workers as that user (the pool `user` and
     # `group` of the image are only for a root master). The one writable place is /tmp.
     user: "10001:10001"
@@ -266,6 +270,9 @@ services:
     networks: [default, api-internal]
     ports:
       - "127.0.0.1:8080:8080"
+    # Only for the healthcheck below. The local, non-secret origin value (same default as .env.example).
+    environment:
+      ORIGIN_VERIFY_LOCAL: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
     user: "101:101"
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
@@ -273,8 +280,11 @@ services:
     tmpfs:
       - /tmp:uid=101,gid=101,mode=1777,size=16m
     healthcheck:
-      # A real request through nginx AND php-fpm: wget fails on a non-2xx answer or no answer.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/health"]
+      # A real request through nginx AND php-fpm: wget fails on a non-2xx answer or no answer. It sends the local
+      # origin header (no route is exempt from the origin check); $$ keeps Compose from expanding it, the shell does.
+      test:
+        - CMD-SHELL
+        - 'wget -q -O /dev/null --header "X-Origin-Verify: $$ORIGIN_VERIFY_LOCAL" http://127.0.0.1:8080/api/v1/health'
       interval: 3s
       timeout: 5s
       retries: 20
@@ -337,7 +347,8 @@ services:
       api:
         condition: service_healthy
 
-  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator (docker/local-aws).
+  # One-shot: creates the buckets, the CORS rule and the notification rule in the S3 emulator, and the DynamoDB table
+  # (infra/dynamodb/table.json) in DynamoDB Local (docker/local-aws).
   # Idempotent: on a second run it logs "no changes". `make up` waits for it to exit with code 0.
   local-aws-init:
     image: expense-tracker-local-aws:dev
@@ -356,10 +367,14 @@ services:
       S3_CORS_ALLOWED_ORIGIN: ${S3_CORS_ALLOWED_ORIGIN:-}
       S3_NOTIFICATION_ARN: ${S3_NOTIFICATION_ARN:-}
       S3_WEBHOOK_ENDPOINT: ${S3_WEBHOOK_ENDPOINT:-}
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:-}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-}
       BOOTSTRAP_WAIT_SECONDS: ${BOOTSTRAP_WAIT_SECONDS:-}
     command: ["bin/bootstrap.php"]
     depends_on:
       s3:
+        condition: service_healthy
+      dynamodb:
         condition: service_healthy
 
   # PHP tools container on the Compose network: runs the conformance suite against the services above.

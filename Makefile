@@ -6,7 +6,9 @@
 # `RUN_NODE`, a pinned node image run as the host user (contract/ and frontend/).
 
 PHP_IMAGE ?= expense-tracker-php:dev
-RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
+# `-e CI` (no value) passes CI through from make's environment only when it is set, so the contract tests fail (instead
+# of skipping) when the bundle is missing in CI.
+RUN_PHP ?= docker run --rm -u $(shell id -u):$(shell id -g) -e CI -v "$(CURDIR)":/app -w /app $(PHP_IMAGE)
 COMPOSER = $(RUN_PHP) composer --working-dir=backend
 # docker/local-aws is a separate Composer project (the local-only tooling of the stack, namespace LocalAws\).
 LOCAL_AWS_COMPOSER = $(RUN_PHP) composer --working-dir=docker/local-aws
@@ -29,7 +31,7 @@ COMPOSE = docker compose -p expense-tracker
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -43,6 +45,12 @@ php-install: $(PHP_IMAGE_DEP) ## Install backend Composer dependencies from comp
 test-unit: $(PHP_IMAGE_DEP) ## Backend unit + architecture tests with coverage, 80% bar on src/
 	$(COMPOSER) run test:coverage
 	$(COMPOSER) run coverage:check
+
+# The contract suite: the validator against the real bundle, route parity and the documented errors. It runs in the php
+# tools container and needs no stack, but it does need contract/dist/openapi.json (`make contract-bundle`). CI sets CI,
+# so a missing bundle fails there instead of skipping.
+test-contract: $(PHP_IMAGE_DEP) ## Backend contract tests: route parity, documented errors, validator on the real bundle (needs contract-bundle)
+	$(COMPOSER) run test:contract
 
 lint-php: $(PHP_IMAGE_DEP) ## Backend: composer validate, PHP-CS-Fixer (dry run), PHPStan
 	$(COMPOSER) validate --strict
@@ -86,9 +94,29 @@ check-platform: ## composer.json config.platform.php equals the PHP in the pinne
 	$(MAKE) --no-print-directory php-image
 	PHP_IMAGE=$(PHP_IMAGE) scripts/check-php-platform.sh --with-vendor $(WORKER_DOCKERFILE)
 
+# The ini file that Lambda gets (backend/php/conf.d/app.ini, copied to /var/task/php/conf.d by the worker Dockerfile)
+# is loaded by the pinned bref/php-85 image itself and the three hardening values are asserted there.
+BREF_IMAGE = $(shell sed -nE 's/^[[:space:]]*FROM[[:space:]]+(bref\/php-85:[^@[:space:]]+@sha256:[0-9a-f]{64}).*$$/\1/Ip' $(WORKER_DOCKERFILE) | head -n 1)
+
+check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned bref/php-85 image with the hardened values
+	@test -n "$(BREF_IMAGE)" || { echo "check-php-ini: no pinned bref/php-85 FROM line in $(WORKER_DOCKERFILE)" >&2; exit 1; }
+	docker run --rm --entrypoint php --mount "type=bind,src=$(CURDIR)/backend/php/conf.d,dst=/var/task/php/conf.d,readonly" $(BREF_IMAGE) -r '$$want = ["zend.exception_ignore_args" => "1", "expose_php" => "", "enable_post_data_reading" => ""]; $$bad = []; foreach ($$want as $$key => $$value) { if ((string) ini_get($$key) !== $$value) { $$bad[] = $$key . "=" . var_export(ini_get($$key), true); } } if ($$bad) { fwrite(STDERR, "check-php-ini: unexpected values: " . implode(", ", $$bad) . "\n"); exit(1); } echo "check-php-ini: ok\n";'
+
 .env:
 	cp .env.example .env
 	@echo "Created .env from .env.example (local, non-secret values)."
+
+# Keys that docker-compose.yml reads WITHOUT a default (a silent default would let a stale .env start a stack with an
+# empty value). `check-env` fails fast, before anything starts, naming the line to add (the example comes from .env.example).
+REQUIRED_ENV_KEYS = DYNAMODB_TABLE
+
+check-env: .env
+	@for key in $(REQUIRED_ENV_KEYS); do \
+		tr -d '\r' < .env | grep -Eq "^[[:space:]]*(export[[:space:]]+)?$$key=[[:space:]]*[^[:space:]\"'#]" || { \
+			example=$$(grep -m 1 "^$$key=" .env.example || echo "$$key=<value>"); \
+			echo "$$key is missing from .env: add '$$example' (see .env.example)" >&2; exit 1; \
+		}; \
+	done
 
 # `make up` starts the stack in three steps, so that a service that needs the bootstrap to have finished is never
 # started (or waited for) before it:
@@ -109,7 +137,7 @@ LATE_SERVICES =
 # `up` with an empty list, which would silently start EVERY service (including the one-shot ones, out of order).
 # --build: the local-aws-init image is built from this repository, so a code change must reach it (an unchanged
 # build is instant, from the layer cache). Running the bootstrap again is safe: it logs "no changes".
-up: .env frontend-ready ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
+up: .env check-env frontend-ready ## Start the local stack, run the bootstrap, and wait until all is healthy (idempotent)
 	@set -e; \
 	all=$$($(COMPOSE) config --services) || { echo "make up: 'docker compose config --services' failed (see above); not starting anything." >&2; exit 1; }; \
 	first=$$(printf '%s\n' "$$all" | awk -v skip="$(ONE_SHOT_SERVICES) $(LATE_SERVICES)" 'BEGIN { n = split(skip, a, " "); for (i = 1; i <= n; i++) s[a[i]] = 1 } NF && !($$0 in s)'); \
@@ -132,7 +160,7 @@ ps: ## Show the local stack's services
 logs: ## Follow the local stack's logs (Ctrl+C to stop)
 	$(COMPOSE) logs -f --tail=100
 
-test-conformance: .env php-image ## Conformance tests (DynamoDB Local, ElasticMQ, S3 emulator) in the php container; run `make up` first
+test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local, ElasticMQ, S3 emulator) in the php container; run `make up` first
 	$(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite conformance
 
 # The `worker-runner` service consumes the real `receipts` queue, and two suites (S3ToQueueTest, RelayHttpTest) read and
@@ -153,14 +181,34 @@ PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):
 # One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
 EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
 PIPE_MARKERS = build/pipe-test
+# ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
+CLIENT_IP_MARKERS = build/client-ip-test
 
-test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> ElasticMQ -> worker-runner -> worker) in the php container; run `make up` first
+test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
 	$(COMPOSE) stop worker-runner; \
+	rm -rf $(CLIENT_IP_MARKERS); \
+	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
+	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
+	[ -f $(CLIENT_IP_MARKERS)/markers.json ] || fail "the client IP test left no $(CLIENT_IP_MARKERS)/markers.json"; \
+	marker() { v=$$(sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(CLIENT_IP_MARKERS)/markers.json); [ -n "$$v" ] || fail "markers.json has no '$$1' marker (did its test run?)"; printf '%s' "$$v"; }; \
+	valid=$$(marker validIp); duplicate=$$(marker duplicateValue); socketpath=$$(marker socketPath); \
+	apilogs=$$($(COMPOSE) logs --no-log-prefix --since "$$ip_since" api-php) || fail "could not read the api-php logs"; \
+	[ -n "$$apilogs" ] || fail "no api-php log output since $$ip_since (is the stack up?)"; \
+	requests=$$(printf '%s\n' "$$apilogs" | grep -F '"message":"request"' || true); \
+	[ -n "$$requests" ] || fail "no request line in the api-php logs since $$ip_since"; \
+	printf '%s\n' "$$requests" | grep -qF "\"clientIp\":\"$$valid\"" || fail "no request line with clientIp $$valid (the valid CloudFront-Viewer-Address)"; \
+	errorline=$$(printf '%s\n' "$$apilogs" | grep -F '"message":"client address unavailable"' | grep -F '"reason":"multiple-values"' | grep -F "\"value\":\"$$duplicate\"" | head -n 1 || true); \
+	[ -n "$$errorline" ] || fail "no 'client address unavailable' line (multiple-values) for the duplicated header $$duplicate"; \
+	requestid=$$(printf '%s' "$$errorline" | sed -n 's/.*"requestId":"\([0-9a-f]*\)".*/\1/p'); \
+	[ -n "$$requestid" ] || fail "the 'client address unavailable' line has no request id"; \
+	printf '%s\n' "$$requests" | grep -F "\"requestId\":\"$$requestid\"" | grep -qF '"clientIp":"unknown"' || fail "the request $$requestid (duplicated header) was not logged with clientIp unknown"; \
+	printf '%s\n' "$$requests" | grep -F "\"path\":\"$$socketpath\"" | grep -qE '"clientIp":"(172|10)\.[0-9]+\.[0-9]+\.[0-9]+"' || fail "the request for $$socketpath (no header) was not logged with a 172.x or 10.x clientIp (the socket address nginx fills in)"; \
+	echo "make test-integration: client IP log checks passed"; \
 	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
 	rm -rf $(PIPE_MARKERS); \
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
@@ -177,9 +225,11 @@ test-integration: .env php-image ## Pipeline integration tests (S3 -> relay -> E
 
 # The whole test suite (Phase 0 definition of done). Run as a sequence (not as prerequisites) so that the order holds
 # with `make -j` too: the cheap suites first, then the stack (`make up` is idempotent) for the tests that need it.
-# Needs `make php-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
+# Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
 test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
 	$(MAKE) --no-print-directory test-unit
+	$(MAKE) --no-print-directory contract-bundle
+	$(MAKE) --no-print-directory test-contract
 	$(MAKE) --no-print-directory test-local-aws
 	$(MAKE) --no-print-directory frontend-test
 	$(MAKE) --no-print-directory up
@@ -192,7 +242,7 @@ test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
 # guards, and the dependency audits. (The Bref boundary is an architecture test, so it runs in `make test-unit`.)
 # Needs the three `*-install` targets once. Each part is a target of its own, so a failure names the check.
-LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
+LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
 
 lint: ## ALL static checks and audits (no stack needed): PHP, front-end, contract, Terraform, platform + image pins
 	@set -e; for t in $(LINT_TARGETS); do \

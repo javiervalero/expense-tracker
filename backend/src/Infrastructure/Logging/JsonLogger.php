@@ -19,23 +19,31 @@ namespace App\Infrastructure\Logging;
  */
 final readonly class JsonLogger
 {
+    /** Longest exception message written to a log line, in bytes. */
+    private const MAX_MESSAGE_BYTES = 1024;
     private const REDACTED = '[REDACTED]';
+    private const UNSAFE_LINE = '[REDACTED: line could not be redacted safely]';
     private const AUTHORIZATION_KEY = '/^authorization$/i';
     private const AUTHORIZATION_IN_TEXT = '/(authorization\s*[:=]\s*)[^\r\n",]*/i';
     private const JSON_FLAGS = JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE | JSON_PARTIAL_OUTPUT_ON_ERROR;
 
     private \Closure $clock;
 
+    /** @var list<string> the secrets, longest first, so a secret inside another one cannot leave the rest of it */
+    private array $secrets;
+
     /**
      * @param resource $stream an open, writable stream
      * @param (\Closure(): \DateTimeImmutable)|null $clock defaults to the system clock
      * @param list<string> $secrets values to hide wherever they appear (empty ones are ignored)
      */
-    public function __construct(private mixed $stream, ?\Closure $clock = null, private array $secrets = [])
+    public function __construct(private mixed $stream, ?\Closure $clock = null, array $secrets = [])
     {
         if (!\is_resource($stream)) {
             throw new \InvalidArgumentException('The log stream must be an open stream resource.');
         }
+        usort($secrets, static fn(string $a, string $b): int => \strlen($b) <=> \strlen($a));
+        $this->secrets = $secrets;
         $this->clock = $clock ?? static fn(): \DateTimeImmutable => new \DateTimeImmutable();
     }
 
@@ -77,7 +85,17 @@ final readonly class JsonLogger
         if (!\is_resource($this->stream)) {
             return;
         }
-        @fwrite($this->stream, json_encode($entry, self::JSON_FLAGS) . "\n");
+        // Last line of defence: whatever the walk above missed (object properties, array keys, text that was JSON
+        // encoded before it got here) is still a secret, or its JSON-escaped form, in the final line.
+        $line = $this->redactSecrets((string) json_encode($entry, self::JSON_FLAGS));
+        if (!json_validate($line)) {
+            // A match that started inside a JSON escape (`\n` and a secret starting with n) broke the line.
+            $line = (string) json_encode(
+                ['time' => $entry['time'], 'level' => $level, 'message' => self::UNSAFE_LINE],
+                self::JSON_FLAGS,
+            );
+        }
+        @fwrite($this->stream, $line . "\n");
     }
 
     /**
@@ -102,12 +120,57 @@ final readonly class JsonLogger
 
     private function redactText(string $text): string
     {
+        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $this->redactSecrets($text)) ?? self::REDACTED;
+    }
+
+    /**
+     * Replaces each secret, and its JSON-escaped form, by the placeholder.
+     */
+    private function redactSecrets(string $text): string
+    {
         foreach ($this->secrets as $secret) {
-            if ($secret !== '') {
-                $text = str_replace($secret, self::REDACTED, $text);
+            if ($secret === '') {
+                continue;
             }
+            $escaped = substr((string) json_encode($secret, self::JSON_FLAGS), 1, -1);
+            $text = str_replace([$secret, $escaped], self::REDACTED, $text);
         }
 
-        return preg_replace(self::AUTHORIZATION_IN_TEXT, '$1' . self::REDACTED, $text) ?? self::REDACTED;
+        return $text;
+    }
+
+    /**
+     * Caps an exception message for a log field, never cutting a UTF-8 character in half. The secrets are hidden
+     * BEFORE the cut, so a cut can never leave the first characters of one.
+     */
+    public function capMessage(string $message): string
+    {
+        return $this->capValue($message, self::MAX_MESSAGE_BYTES);
+    }
+
+    /**
+     * Like {@see self::capMessage()} with a cap of your own: redact first, then cut to at most $bytes bytes.
+     */
+    public function capValue(string $value, int $bytes): string
+    {
+        return mb_strcut($this->redactText($value), 0, $bytes, 'UTF-8');
+    }
+
+    /**
+     * A write-only stream on stderr, the log destination of every process of the project.
+     *
+     * @return resource
+     */
+    public static function stderrStream(): mixed
+    {
+        $stream = fopen('php://stderr', 'wb');
+        // @codeCoverageIgnoreStart
+        // Unreachable in tests: php://stderr cannot be made to fail to open.
+        if ($stream === false) {
+            throw new \RuntimeException('Cannot open php://stderr for logging.');
+        }
+        // @codeCoverageIgnoreEnd
+
+        return $stream;
     }
 }

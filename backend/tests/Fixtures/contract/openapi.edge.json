@@ -1,0 +1,11 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Edge fixture", "version": "1.0.0" },
+  "paths": {
+    "/any": { "get": { "responses": { "200": { "description": "Any JSON.", "content": { "application/json": { "schema": {} } } } } } },
+    "/strict": { "get": { "responses": { "200": { "description": "Empty object.", "content": { "application/json": { "schema": { "type": "object", "properties": {}, "additionalProperties": false } } } } } } },
+    "/noschema": { "get": { "responses": { "200": { "description": "No schema.", "content": { "application/json": {} } } } } },
+    "/text": { "get": { "responses": { "200": { "description": "Text.", "content": { "text/plain": { "schema": { "type": "string" } } } } } } },
+    "/vnd": { "get": { "responses": { "200": { "description": "Vendor JSON.", "content": { "application/vnd.api+json": { "schema": { "type": "object", "required": ["data"] } } } } } } }
+  }
+}

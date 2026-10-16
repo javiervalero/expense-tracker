@@ -1,0 +1,211 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Tests\Support\Api;
+
+use App\Tests\Contract\BundledSpec;
+use App\Tests\Support\Contract\ContractValidator;
+use App\Tests\Support\Contract\ContractViolation;
+use App\Tests\Support\Contract\OpenApiDocument;
+use GuzzleHttp\Client as HttpClient;
+use PHPUnit\Framework\TestCase;
+use Psr\Http\Message\ResponseInterface;
+
+/**
+ * Base class of the tests that call the API over HTTP: the real `api` (nginx) in front of `api-php` (php-fpm) on the
+ * Compose network. {@see request()} sends the call to `/api/v1` + the path and checks the response against the
+ * bundled contract (contract/dist/openapi.json); any violation fails the test. There is no opt-out: a response
+ * the contract does not describe is a bug in the API or in the contract. A missing bundle fails too (never skips).
+ *
+ * {@see rawRequest()} is only for the nginx-level paths that are not part of the contract (outside `/api`, the 413
+ * nginx answers by itself, the `Server` header).
+ */
+abstract class ApiTestCase extends TestCase
+{
+    private const string DEFAULT_BASE = 'http://api:8080';
+    private const string API_PREFIX = '/api/v1';
+
+    private static ?OpenApiDocument $document = null;
+
+    private static ?ContractValidator $validator = null;
+
+    private HttpClient $http;
+
+    private string $base;
+
+    /** The `X-Origin-Verify` value sent with every call; null sends none. Reset for each test. */
+    private ?string $originHeader = null;
+
+    final protected function setUp(): void
+    {
+        $fromEnv = getenv('API_BASE_URL');
+        $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
+        $this->originHeader = self::localOriginSecret();
+        $this->http = new HttpClient([
+            'http_errors' => false,
+            'allow_redirects' => false,
+            'connect_timeout' => 3,
+            'timeout' => 10,
+        ]);
+    }
+
+    /**
+     * From now on in this test, sends no `X-Origin-Verify` header (for the 403 cases).
+     */
+    final protected function withoutOriginHeader(): void
+    {
+        $this->originHeader = null;
+    }
+
+    /**
+     * From now on in this test, sends `X-Origin-Verify: $value` instead of the local value of `ORIGIN_VERIFY_LOCAL`.
+     */
+    final protected function withOriginHeader(string $value): void
+    {
+        $this->originHeader = $value;
+    }
+
+    /**
+     * Calls `/api/v1{$path}` and fails the test when the response differs from the contract.
+     *
+     * @param string                                                      $path    relative to the server URL of the spec, as in its `paths` (`/health`)
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options Guzzle request options
+     */
+    final protected function request(string $method, string $path, array $options = []): ResponseInterface
+    {
+        self::assertStringStartsWith('/', $path, 'request() takes a path relative to the server URL of the spec');
+        self::assertFalse(str_starts_with($path, '/api/'), "request() adds the /api/v1 prefix itself; got $path");
+
+        return $this->sendAs($method, $path, $method, self::API_PREFIX . $path, $options);
+    }
+
+    /**
+     * Calls an absolute path under `/api/v1` and validates the response as the documented operation
+     * ($operationMethod, $template): for the 404 and 405 answers, which the contract documents on an operation
+     * although the request itself matches none (`/api/v1/unknown` as GET /health, POST /health as GET /health).
+     *
+     * @param string                                                      $absolutePathUnderApi `/api/v1/unknown`
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options                      Guzzle request options
+     */
+    final protected function requestAs(
+        string $operationMethod,
+        string $template,
+        string $method,
+        string $absolutePathUnderApi,
+        array $options = [],
+    ): ResponseInterface {
+        self::assertStringStartsWith(self::API_PREFIX . '/', $absolutePathUnderApi);
+
+        return $this->sendAs($operationMethod, $template, $method, $absolutePathUnderApi, $options);
+    }
+
+    /**
+     * Calls any path on the nginx front, with no contract check. Only for what is not in the spec: it fails for a
+     * path under `/api/v1` that is a documented operation for the method (use request()).
+     *
+     * @param string                                                      $path    absolute, from the site root (`/index.php`)
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options Guzzle request options
+     */
+    final protected function rawRequest(string $method, string $path, array $options = []): ResponseInterface
+    {
+        if (str_starts_with($path, self::API_PREFIX . '/')) {
+            $documented = self::document()->pathTemplate(strtoupper($method), substr($path, strlen(self::API_PREFIX)));
+            self::assertNull($documented, "$method $path is a documented operation ($documented): use request(), not rawRequest()");
+        }
+
+        return $this->http->request($method, $this->base . $path, $this->withOrigin($options));
+    }
+
+    /**
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
+     */
+    private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
+    {
+        $response = $this->http->request($method, $this->base . $url, $this->withOrigin($options));
+        // The spec documents paths without the server prefix and without a query string.
+        $violations = self::validator()->validate(
+            $operationMethod,
+            $template,
+            $response->getStatusCode(),
+            self::flatHeaders($response),
+            (string) $response->getBody(),
+        );
+        self::assertSame([], array_map(self::describe(...), $violations), "$method $url breaks the contract (as $operationMethod $template)");
+
+        return $response;
+    }
+
+    /**
+     * The options plus the origin header. A header the test sets itself in the options wins.
+     *
+     * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
+     *
+     * @return array{body?: string, headers?: array<string, string|non-empty-list<string>>}
+     */
+    private function withOrigin(array $options): array
+    {
+        if ($this->originHeader === null) {
+            return $options;
+        }
+        $options['headers'] = ($options['headers'] ?? []) + ['X-Origin-Verify' => $this->originHeader];
+
+        return $options;
+    }
+
+    /**
+     * The local, non-secret origin value that the Compose stack shares with the API (`.env`, same default as Compose).
+     */
+    private static function localOriginSecret(): string
+    {
+        $fromEnv = getenv('ORIGIN_VERIFY_LOCAL');
+
+        return is_string($fromEnv) && $fromEnv !== '' ? $fromEnv : 'local-origin-verify-not-a-secret';
+    }
+
+    /**
+     * @return array<mixed>
+     */
+    final protected function problemBody(ResponseInterface $response): array
+    {
+        $decoded = json_decode((string) $response->getBody(), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($decoded);
+
+        return $decoded;
+    }
+
+    private static function validator(): ContractValidator
+    {
+        return self::$validator ??= new ContractValidator(self::document());
+    }
+
+    private static function document(): OpenApiDocument
+    {
+        if (self::$document === null) {
+            if (!is_file(BundledSpec::FILE)) {
+                self::fail('contract/dist/openapi.json is missing; run `make contract-bundle` (API tests never run without the contract).');
+            }
+            self::$document = OpenApiDocument::fromFile(BundledSpec::FILE);
+        }
+
+        return self::$document;
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    private static function flatHeaders(ResponseInterface $response): array
+    {
+        $headers = [];
+        foreach ($response->getHeaders() as $name => $values) {
+            $headers[(string) $name] = implode(', ', $values);
+        }
+
+        return $headers;
+    }
+
+    private static function describe(ContractViolation $violation): string
+    {
+        return $violation->location . ': ' . $violation->message;
+    }
+}

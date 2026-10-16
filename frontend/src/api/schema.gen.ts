@@ -68,6 +68,21 @@ export interface components {
         };
     };
     responses: {
+        /**
+         * @description Returned when the `X-Origin-Verify` header is missing, empty or wrong. The body is the same generic problem in
+         *     every case, so it never says which, and it is checked before the path, so even an unknown path or another
+         *     method gets this instead of 404 or 405.
+         */
+        Forbidden: {
+            headers: {
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
         /** @description Returned for any path not listed in this spec. */
         NotFound: {
             headers: {
@@ -83,6 +98,17 @@ export interface components {
         MethodNotAllowed: {
             headers: {
                 Allow: components["headers"]["Allow"];
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description Returned when the API fails unexpectedly. The body is a generic problem and never says why; the cause is only in the server log. */
+        InternalServerError: {
+            headers: {
                 "Cache-Control": components["headers"]["CacheControlNoStore"];
                 "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
                 [name: string]: unknown;
@@ -126,8 +152,10 @@ export interface operations {
                     "application/json": components["schemas"]["HealthResponse"];
                 };
             };
+            403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
         };
     };
     headHealth: {
@@ -150,6 +178,15 @@ export interface operations {
                 };
                 content?: never;
             };
+            /** @description Returned when the origin check fails (see `GET /health`). No body (HEAD). */
+            403: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
             /** @description Returned for any path not listed in this spec. No body (HEAD). */
             404: {
                 headers: {
@@ -163,6 +200,15 @@ export interface operations {
             405: {
                 headers: {
                     Allow: components["headers"]["Allow"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Returned when the API fails unexpectedly. The body never says why. No body (HEAD). */
+            500: {
+                headers: {
                     "Cache-Control": components["headers"]["CacheControlNoStore"];
                     "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
                     [name: string]: unknown;

@@ -5,3 +5,4 @@
 !docker/local-aws/composer.lock
 !docker/local-aws/src
 !docker/local-aws/bin
+!infra/dynamodb/table.json

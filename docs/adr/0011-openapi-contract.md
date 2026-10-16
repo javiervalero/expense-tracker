@@ -43,3 +43,18 @@ sides drifting apart. The back-end must stay vanilla PHP: dev-only tools are acc
 - Drift fails CI on whichever side diverges.
 - About 100 lines of test-helper code to maintain, plus two front-end dev tools.
 - Later option: an `oasdiff` breaking-change check against `main`.
+
+## Verified in Phase 1 (2026-10-13, PR #4)
+
+**PASS: `opis/json-schema` 2.6 resolves the bundled document's `$ref`s.** The fallback validator is not needed
+(decision point D1 did not fire; gate G2 was not used).
+
+- The helper registers the whole bundled `contract/dist/openapi.json` once under a fixed `$id` and validates each
+  body against a JSON-pointer `$ref` into it, so `responses → schemas` chains resolve like any JSON Schema reference.
+  OpenAPI annotation keywords (`example`, `format: uri-reference`) do not cause errors.
+- Built test-first in `backend/tests/Support/Contract/` (`OpenApiDocument`, `ContractValidator`,
+  `ContractViolation`), proven on a small fixture spec before anything used it, then on the real bundle.
+- `opis/json-schema ~2.6.0` is in `require-dev` only, as decided.
+- In place: every integration request goes through `ApiTestCase::request()`; route parity is a test; another test
+  requires every operation to document its `403` and `500` problem responses. These run with `make test-contract` and
+  `make test-integration`, inside the existing CI `integration` job.

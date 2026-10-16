@@ -10,9 +10,9 @@ namespace LocalAws\Support;
  * Safety by construction: an endpoint must be a local stand-in (loopback, the Docker host alias or a single-label
  * Compose service name) and never real AWS, so a wrong `.env` can never reach (or bill) an account.
  *
- * KEEP IN SYNC: the allowlist (LOCAL_HOSTS, COMPOSE_SERVICE_NAME, REAL_AWS_SUFFIXES) mirrors the one in
- * backend/tests/Support/LocalAws.php. They are separate on purpose (separate Composer projects); a change to one
- * must be made in the other.
+ * KEEP IN SYNC: the allowlist (LOCAL_HOSTS, COMPOSE_SERVICE_NAME, REAL_AWS_SUFFIXES) mirrors the ones in
+ * backend/src/Infrastructure/Config/LocalEndpoint.php and backend/tests/Support/LocalAws.php (all three list each
+ * other). They are separate on purpose (separate Composer projects); a change to one must be made in the others.
  */
 final class LocalEndpoint
 {

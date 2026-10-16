@@ -4,3 +4,4 @@
 !backend/composer.lock
 !backend/src
 !backend/entrypoints/lambda/worker.php
+!backend/php/conf.d/app.ini

@@ -10,6 +10,7 @@
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "~3.95.27",
+        "opis/json-schema": "~2.6.0",
         "phpstan/phpstan": "~2.3.1",
         "phpstan/phpstan-phpunit": "~2.1.1",
         "phpstan/phpstan-strict-rules": "~2.1.0",
@@ -38,6 +39,7 @@
     "scripts": {
         "test": "phpunit --testsuite unit,architecture",
         "test:unit": "phpunit --testsuite unit",
+        "test:contract": "phpunit --testsuite contract",
         "stan": "phpstan analyse --memory-limit=512M",
         "cs": "php-cs-fixer fix --dry-run --diff --show-progress=none",
         "cs:fix": "php-cs-fixer fix",
@@ -47,6 +49,7 @@
     "scripts-descriptions": {
         "test": "Run the unit and architecture suites",
         "test:unit": "Run the unit suite only",
+        "test:contract": "Run the contract suite (needs contract/dist/openapi.json: make contract-bundle)",
         "stan": "PHPStan at level max with strict rules",
         "cs": "PHP-CS-Fixer in dry-run mode (fails on any difference)",
         "cs:fix": "PHP-CS-Fixer, rewriting files",

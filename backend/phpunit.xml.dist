@@ -23,6 +23,9 @@
         <testsuite name="conformance">
             <directory>tests/Conformance</directory>
         </testsuite>
+        <testsuite name="contract">
+            <directory>tests/Contract</directory>
+        </testsuite>
         <testsuite name="integration">
             <directory>tests/Integration</directory>
         </testsuite>

@@ -172,4 +172,85 @@ final class JsonLoggerTest extends TestCase
 
         $this->addToAssertionCount(1);
     }
+
+    public function testCapMessageCutsAtTheByteLimitWithoutSplittingACharacter(): void
+    {
+        $capped = $this->logger()->capMessage(str_repeat('a', 1023) . 'é');
+
+        self::assertSame(str_repeat('a', 1023), $capped);
+        self::assertSame('short', $this->logger()->capMessage('short'));
+    }
+
+    public function testCapMessageRedactsBeforeCuttingSoASecretOnTheCapBoundaryDoesNotLeakItsPrefix(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+
+        $capped = $this->logger([$secret])->capMessage(str_repeat('x', 1000) . $secret);
+
+        self::assertStringNotContainsString(substr($secret, 0, 8), $capped);
+        self::assertStringContainsString('[REDACTED]', $capped);
+    }
+
+    public function testASecretInAPublicPropertyOfALoggedObjectIsRedacted(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+        $object = new class ($secret) {
+            public function __construct(public string $token) {}
+        };
+
+        $this->logger([$secret])->info('object', ['value' => $object]);
+
+        self::assertStringNotContainsString($secret, $this->logged());
+        self::assertStringContainsString('[REDACTED]', $this->logged());
+    }
+
+    public function testASecretUsedAsAnArrayKeyIsRedacted(): void
+    {
+        $secret = 'Slot-A-0123456789-0123456789-abcdef';
+
+        $this->logger([$secret])->info('keyed', ['map' => [$secret => 'value']]);
+
+        self::assertStringNotContainsString($secret, $this->logged());
+    }
+
+    public function testAJsonEscapedSecretInsideAlreadyEncodedTextIsRedacted(): void
+    {
+        $secret = 'Slot-"quoted"-0123456789-0123456789\end';
+        $encoded = (string) json_encode(['header' => $secret]);
+
+        $this->logger([$secret])->info($encoded, ['again' => $encoded]);
+
+        $escaped = substr((string) json_encode($secret), 1, -1);
+        self::assertStringNotContainsString($escaped, $this->logged());
+        self::assertStringNotContainsString('0123456789-0123456789', $this->logged());
+    }
+
+    public function testARedactionThatWouldBreakTheJsonEscapesWritesAFixedSafeLine(): void
+    {
+        $slot = 'n0123456789abcdefghijklmnopqrstuvwxyzABC';
+
+        $this->logger([$slot])->warning("\n" . substr($slot, 1), ['k' => 'v']);
+
+        $line = trim($this->logged());
+        self::assertTrue(json_validate($line));
+        for ($i = 0; $i + 8 <= strlen($slot); ++$i) {
+            self::assertStringNotContainsString(substr($slot, $i, 8), $line);
+        }
+        $entry = json_decode($line, true);
+        self::assertIsArray($entry);
+        self::assertSame(self::FIXED_TIME, $entry['time']);
+        self::assertSame('warning', $entry['level']);
+        self::assertSame('[REDACTED: line could not be redacted safely]', $entry['message']);
+        self::assertArrayNotHasKey('k', $entry);
+    }
+
+    public function testASecretContainedInAnotherSecretIsRedactedWholeWhateverTheOrder(): void
+    {
+        $short = 'Slot-A-0123456789-0123456789-abcdef';
+
+        $this->logger([$short, $short . 'TAIL'])->info('value ' . $short . 'TAIL end');
+
+        self::assertStringNotContainsString('TAIL', $this->logged());
+        self::assertStringContainsString('value [REDACTED] end', $this->logged());
+    }
 }

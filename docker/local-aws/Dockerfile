@@ -27,6 +27,8 @@ WORKDIR /app
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=vendor /app/src ./src
 COPY docker/local-aws/bin ./bin
+# The one table definition (ADR 0002); Phase 7's Terraform reads the same file.
+COPY infra/dynamodb/table.json ./config/dynamodb-table.json
 USER 10001:10001
 ENTRYPOINT ["php"]
 CMD ["bin/bootstrap.php"]

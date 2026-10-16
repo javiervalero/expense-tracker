@@ -110,3 +110,18 @@ items have `LSI1SK`. All ids are random UUIDs and are never reused.
   Ad-hoc reporting is harder than with SQL.
 - Single-table design is less familiar to many developers. The key layout is documented here and in
   [`../PLAN.md`](../PLAN.md).
+
+## Implemented in Phase 1 (2026-10-15, PR #4)
+
+- **One table definition:** `infra/dynamodb/table.json` (CreateTable fields: keys `PK`/`SK`, `LSI1` on `PK` +
+  `LSI1SK` projecting all attributes, on-demand billing, plus `TimeToLiveAttribute: expiresAt`). The table name is
+  not in it; it comes from `DYNAMODB_TABLE`. The local bootstrap creates the table from this file, a conformance test
+  checks that the local table equals it, and Phase 7's Terraform reads the same file. There is no second copy to
+  drift.
+- **Access layer:** `App\Infrastructure\DynamoDb\ItemStore`, a thin typed adapter that later repositories use.
+  Reads are always strongly consistent, as this ADR requires. Expressions always go through name and value maps, and
+  expression strings are typed `literal-string`, so static analysis rejects one built from input. `query()` accepts
+  only the table or `LSI1`. Errors map to `ConditionFailed`, `TransactionCancelled` or `StorageFailure`, which never
+  carry the AWS message or item data.
+- No keys, repositories or cursor yet: those arrive with their first features (Phases 2 and 3). The review notes
+  carried to them are in [the Phase 1 plan](../plans/phase-1-backend-core.md) ("Notes from the WP9 reviews").

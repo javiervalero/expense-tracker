@@ -27,6 +27,8 @@ WORKDIR /var/task
 COPY --from=vendor /app/vendor ./vendor
 COPY --from=vendor /app/src ./src
 COPY backend/entrypoints/lambda/worker.php ./entrypoints/lambda/worker.php
+# Bref scans /var/task/php/conf.d for extra ini files (checked by `make check-php-ini`).
+COPY backend/php/conf.d/app.ini ./php/conf.d/app.ini
 # Not root: the files above are world-readable and the handler writes nothing.
 USER 10001:10001
 # The handler: a file that returns the closure called for each invocation.

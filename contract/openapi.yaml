@@ -2,10 +2,12 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.1.0
+  version: 0.3.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
+
+    Every request must carry the `X-Origin-Verify` header that CloudFront adds (ADR 0012). A request without it, or with a wrong value, gets the same generic `403`, whatever the path or method. Browsers never send it; the proxy in front of the API does.
 
     Errors are RFC 9457 problem details (`application/problem+json`, ADR 0003).
 
@@ -39,10 +41,14 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
     head:
       operationId: headHealth
       tags: [health]
@@ -65,6 +71,13 @@ paths:
               $ref: '#/components/headers/CacheControlNoStore'
             X-Content-Type-Options:
               $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '403':
+          description: Returned when the origin check fails (see `GET /health`). No body (HEAD).
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
         '404':
           description: Returned for any path not listed in this spec. No body (HEAD).
           headers:
@@ -77,6 +90,13 @@ paths:
           headers:
             Allow:
               $ref: '#/components/headers/Allow'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '500':
+          description: Returned when the API fails unexpectedly. The body never says why. No body (HEAD).
+          headers:
             Cache-Control:
               $ref: '#/components/headers/CacheControlNoStore'
             X-Content-Type-Options:
@@ -104,6 +124,20 @@ components:
         example: GET, HEAD
 
   responses:
+    Forbidden:
+      description: |
+        Returned when the `X-Origin-Verify` header is missing, empty or wrong. The body is the same generic problem in
+        every case, so it never says which, and it is checked before the path, so even an unknown path or another
+        method gets this instead of 404 or 405.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
     NotFound:
       description: Returned for any path not listed in this spec.
       headers:
@@ -120,6 +154,18 @@ components:
       headers:
         Allow:
           $ref: '#/components/headers/Allow'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
+    InternalServerError:
+      description: Returned when the API fails unexpectedly. The body is a generic problem and never says why; the cause is only in the server log.
+      headers:
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
         X-Content-Type-Options:
