@@ -706,6 +706,31 @@ Carried:
 - **WP11:** an unknown email costs one `GetItem`, a known one two; accepted (A9 already reveals existence through the register `409`, and both are throttled), but the dummy Argon2id verify must stay on the unknown-email path so the hash dominates the timing.
 - **If account deletion is ever added:** recheck the uniqueness argument and the "no lock" branch of the A19 re-read.
 
+### Notes from the WP8 reviews (2026-10-19)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP8 diff (base `6a95fc9`); round 2 (opus/high) on the fix hunks approved; its one recommended follow-up (below) is under 30 lines and was reviewed inline by the main session. No CRITICAL or HIGH findings. The security reviewer found no way for an expired, deleted or tampered session to authenticate:
+- both expiry checks are strict (`> now`), run in `find()` and again in the authenticator, against one `$now`;
+- the renewal condition `attribute_exists(PK) AND expiresAt > :now` cannot recreate a deleted item, so a logout racing a renewal gives `ConditionFailed`, which is anonymous; `absoluteExpiresAt` is never rewritten, so the 7-day cap holds;
+- reads are strongly consistent, so a deleted session is never read back from a stale replica;
+- a renewal that fails for another reason still authenticates: the consistent read had just shown the session active, so the failure only means the expiry is not extended;
+- the raw token never reaches a key, and absent, malformed and duplicate cookies cost no read (tests count the calls);
+- every `401` has the same body and `WWW-Authenticate: Session`; the cookie is cleared for every reason except "no cookie"; a storage failure (500/503) does not clear it, so a transient fault never logs anyone out;
+- logging an enum or a date (new in `JsonLogger`, the WP2 carried item) opens no path around redaction.
+
+The fix batch covers:
+- **Unit tests for `SessionRepository`** with simulated DynamoDB answers (create, retry and collision paths, find, renew, delete, invalid input with zero requests), like `UserRepository`.
+- **No weak token generator in production:** an architecture test fails if anything in `src/` passes `SessionRepository` its own generator (the closure is a test seam only).
+- **Absolute lifetime enforced on read:** the effective cap is `min(absoluteExpiresAt, createdAt + 7 days)`, so a bad writer can never make a session immortal, and lowering `SessionLifetime::ABSOLUTE` later simply ends older sessions sooner (round 2: rejecting such items would have turned them into `500`s). An `absoluteExpiresAt` at or before `createdAt`, or a `createdAt` more than 5 minutes in the future, is corrupt.
+- **A corrupt item returned by a renewal is a `500`,** not a logged warning.
+- Explicit `match` arms instead of `default` (a new reason or an impossible state can no longer be swallowed); comments for the deliberate double expiry check and for two overlapping renewals (they may lower `expiresAt` by a few seconds, harmlessly); test tidy-ups.
+
+Optional, not done (round 2): the token-generator architecture test does not catch deliberate obfuscation (`new (SessionRepository::class)(…)`, `new $class`, spread arguments, `class_alias`, `new self` inside the class, files outside `src/`); it guards against accidental misuse, and code review covers the rest. Non-transient renewal failures (`ValidationException`, `AccessDenied`…) are only logged; sessions then end after the idle limit, which fails safe.
+
+Decisions recorded: a second token collision in a row is a `500` (`SessionCollision`; with 256-bit tokens it does not happen); the request line always carries `userId`, `null` when anonymous.
+
+Carried:
+- **WP14 / threat model:** a corrupt session item makes every request with that cookie a `500` until TTL removes it (fails closed; the cookie is not cleared).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
