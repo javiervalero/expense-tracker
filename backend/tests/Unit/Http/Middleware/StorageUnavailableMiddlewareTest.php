@@ -73,6 +73,7 @@ final class StorageUnavailableMiddlewareTest extends TestCase
         yield 'provisioned throughput' => ['ProvisionedThroughputExceededException'];
         yield 'throttling' => ['ThrottlingException'];
         yield 'request limit' => ['RequestLimitExceeded'];
+        yield 'transaction in progress' => ['TransactionInProgressException'];
     }
 
     #[DataProvider('throttlingCodes')]
