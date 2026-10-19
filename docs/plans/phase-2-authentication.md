@@ -643,6 +643,22 @@ The LOW fix batch covers: `APP_ORIGINS` refuses default ports (`:80` on http, `:
 
 Optional, not done: a separate `null-origin` log reason (today `Origin: null` logs as `foreign-origin`); refusing `Sec-Fetch-Site: cross-site` as extra defence (needs CloudFront to forward it); a raw integration request with two `Origin` lines (unit tests cover the comma-joined form, and both nginx and API Gateway join repeated headers).
 
+### Notes from the WP5 reviews (2026-10-19)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP5 diff (base `698eead`); round 2 (opus/high) on the fix hunks approved, and confirmed each new test fails without its fix. Both approved with **no CRITICAL, HIGH or MEDIUM** findings. The security reviewer could not make `read()` return `present(attacker)` while the victim's cookie is also sent: names are compared byte for byte (`__host-session`, `__HOST-session`, `__Host%2Dsession` and `name =v` are other names or skipped), values are never URL-decoded, the header is split only on `;` (a `,`-joined value can never pass the 43-character check), and every join point (Bref payload v2, nginx since 1.23, HTTP/2 cookie crumbs) joins with `"; "`, so a second `__Host-session` always arrives as its own pair and gives `duplicate`. An oversize header (over 8 KiB) gives `absent`, which fails closed. `zend.exception_ignore_args = On` in both `app.ini` files keeps arguments out of traces.
+
+`SessionToken` keeps its value in a private static `WeakMap` keyed by the instance, not in a property. Both reviewers agreed to keep this: `var_export`, `(array)` and `get_object_vars` ignore `__debugInfo`, so a private property would leak through them. Deliberate `Reflection` on the static can still read it (out of scope, as for any private property).
+
+The LOW fix batch covers: `#[\SensitiveParameter]` on every parameter that receives the raw cookie header or token (`CookieHeader::parse` and its pair helper, `SessionCookie`'s builder), checked by a reflection test; `cookieValue()` fails with a clear `LogicException` when the token has no value; member order in `SessionToken`; a comment on the `SessionCookieRead` invariant; tests for two distinct live tokens and for a `;` inside a quoted value (it splits, as documented); a duplicate `ResponseTest` case and an unreachable assertion removed.
+
+Optional, not done: an `Oversize` state so cookie-jar stuffing is logged (today it is indistinguishable from `absent`); a single import style for exception classes in the tests.
+
+Carried:
+- **Phase 7/8 (deployed smoke test):** A20 is verified only at the Bref hop. Send `Cookie: __Host-session=<A>; __Host-session=<B>` through CloudFront and API Gateway and assert the request is anonymous and logs `duplicate session cookie`. Keep the HTTP API on **payload v2**: with v1 / `multiValueHeaders` (REST API, ALB), Bref's `FpmHandler` keeps only the last value of a repeated `Cookie` header.
+- **WP8:** on `Duplicate`, also send the clearing cookie (and log the A20 warning).
+- **WP14 / threat model:** nameless-cookie tossing (a cookie with no name whose value is `__Host-session=<x>`, set over plain HTTP before HSTS is cached) cannot be told apart by any server parser; current Chrome, Firefox and Safari refuse such cookies, and `*.cloudfront.net` is on the Public Suffix List. Mitigation is HSTS from ADR 0005's response-headers policy; record the residual risk.
+- **Before the first handler calls `SessionCookie::issue()` (WP10):** the token is plain text once it is in a `Set-Cookie` value or `Request::$headers['cookie']`. `JsonLogger` already redacts `cookie` / `set-cookie` keys and lines (WP2); never `var_dump`/`print_r` a `Request` or `Response`, or add a `__debugInfo` that hides those headers if one is ever needed.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
