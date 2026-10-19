@@ -15,6 +15,7 @@ final class RequestLogContext
 
     private ?string $clientIp = null;
     private bool $clientIpRecorded = false;
+    private ?string $userId = null;
 
     /** Records the canonical client address (null if unknown). Write-once: a second call is ignored. */
     public function recordClientIp(?string $ip): void
@@ -30,5 +31,17 @@ final class RequestLogContext
     public function clientIp(): ?string
     {
         return $this->clientIp;
+    }
+
+    /** Records the id of the authenticated user (an opaque UUID). Write-once: a second call is ignored. */
+    public function recordUserId(string $userId): void
+    {
+        $this->userId ??= $userId;
+    }
+
+    /** The authenticated user's id; null while no session or login is known. */
+    public function userId(): ?string
+    {
+        return $this->userId;
     }
 }

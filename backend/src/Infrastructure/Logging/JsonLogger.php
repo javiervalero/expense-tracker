@@ -18,7 +18,10 @@ namespace App\Infrastructure\Logging;
  * text (values and string keys), `Authorization: ...`, `Cookie: ...` and `Set-Cookie: ...` lines (to the end of
  * the line), `__Host-session=<value>` (also URL-encoded) and Argon2 hashes are redacted too.
  *
- * Objects in the context: a `JsonSerializable` is logged as its `jsonSerialize()` result, redacted like any other
+ * Enums and dates in the context: a `BackedEnum` is logged as its value, any other enum as its case name, and a
+ * `DateTimeInterface` in `DATE_ATOM` format.
+ *
+ * Other objects in the context: a `JsonSerializable` is logged as its `jsonSerialize()` result, redacted like any other
  * value; every other object is logged as its class name only (its properties never reach the log).
  *
  * A failed write is dropped on purpose: a broken log sink must not fail the work being logged.
@@ -140,6 +143,9 @@ final readonly class JsonLogger
         return match (true) {
             \is_string($value) => $this->redactText($value),
             \is_array($value) => $this->redactContext($value, $depth),
+            $value instanceof \BackedEnum => $this->redactValue($value->value, $depth),
+            $value instanceof \UnitEnum => $value->name,
+            $value instanceof \DateTimeInterface => $value->format(DATE_ATOM),
             $value instanceof \JsonSerializable => $this->redactSerializable($value, $depth),
             \is_object($value) => ['class' => $value::class],
             default => $value,

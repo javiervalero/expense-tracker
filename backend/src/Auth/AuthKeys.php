@@ -14,6 +14,8 @@ use InvalidArgumentException;
  */
 final class AuthKeys
 {
+    private const SHA256_HEX = '/\A[0-9a-f]{64}\z/D';
+
     /**
      * @return array{PK: string, SK: string}
      *
@@ -34,5 +36,19 @@ final class AuthKeys
     public static function emailLock(Email $email): array
     {
         return [TableLayout::PK => 'EMAIL#' . $email->value(), TableLayout::SK => 'EMAIL'];
+    }
+
+    /**
+     * @return array{PK: string, SK: string}
+     *
+     * @throws InvalidArgumentException when the hash is not 64 lower-case hex characters (a SHA-256 of a token)
+     */
+    public static function session(#[\SensitiveParameter] string $tokenHash): array
+    {
+        if (preg_match(self::SHA256_HEX, $tokenHash) !== 1) {
+            throw new InvalidArgumentException('A session token hash is 64 lower-case hex characters.');
+        }
+
+        return [TableLayout::PK => 'SESSION#' . $tokenHash, TableLayout::SK => 'SESSION'];
     }
 }
