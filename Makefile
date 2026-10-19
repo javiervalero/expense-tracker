@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -49,6 +49,9 @@ php-install: $(PHP_IMAGE_DEP) ## Install backend Composer dependencies from comp
 test-unit: $(PHP_IMAGE_DEP) ## Backend unit + architecture tests with coverage, 80% bar on src/
 	$(COMPOSER) run test:coverage
 	$(COMPOSER) run coverage:check
+
+test-slow-unit: $(PHP_IMAGE_DEP) ## Backend unit tests marked `slow` (one production Argon2id hash, timed into build/tmp/argon2-timing.txt)
+	$(COMPOSER) run test:slow
 
 # The contract suite: the validator against the real bundle, route parity and the documented errors. It runs in the php
 # tools container and needs no stack, but it does need contract/dist/openapi.json (`make contract-bundle`). CI sets CI,
@@ -174,7 +177,7 @@ test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local,
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
 #      does not run an EXIT trap on a signal, so INT, TERM and HUP are trapped too and turned into `exit`, which fires
 #      the EXIT trap; the trap keeps the original exit code (130 for INT, 143 for TERM/HUP).
-# FAST=1 leaves out the tests marked `slow` (the ~35 s dead-letter test); `make test-fast` sets it for the whole suite.
+# FAST=1 leaves out the tests marked `slow` (the ~35 s dead-letter test and `make test-slow-unit`); `make test-fast` sets it for the whole suite.
 PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
 # One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
 EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
@@ -226,6 +229,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 # Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
 test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
 	$(MAKE) --no-print-directory test-unit
+	$(if $(FAST),,$(MAKE) --no-print-directory test-slow-unit)
 	$(MAKE) --no-print-directory contract-bundle
 	$(MAKE) --no-print-directory test-contract
 	$(MAKE) --no-print-directory test-local-aws
@@ -234,7 +238,7 @@ test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then 
 	$(MAKE) --no-print-directory test-conformance
 	$(MAKE) --no-print-directory test-integration
 
-test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s)
+test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s, and the production Argon2id hash)
 	$(MAKE) --no-print-directory test FAST=1
 
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
