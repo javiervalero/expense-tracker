@@ -25,7 +25,7 @@ use App\Infrastructure\Logging\JsonLogger;
 final readonly class StorageUnavailableMiddleware implements Middleware
 {
     private const RETRY_AFTER_SECONDS = '1';
-    private const THROTTLING_CODES = ['ProvisionedThroughputExceededException', 'ThrottlingException', 'RequestLimitExceeded'];
+    private const THROTTLING_CODES = ['ProvisionedThroughputExceededException', 'ThrottlingException', 'RequestLimitExceeded', 'TransactionInProgressException'];
     private const OVERLOAD_REASONS = ['ThrottlingError', 'ProvisionedThroughputExceeded', 'TransactionConflict'];
     private const NO_REASON = 'None';
 
