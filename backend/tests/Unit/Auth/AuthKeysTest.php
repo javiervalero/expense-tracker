@@ -54,4 +54,32 @@ final class AuthKeysTest extends TestCase
 
         self::assertSame('EMAIL#a#b@example.com', AuthKeys::emailLock($email)['PK']);
     }
+
+    public function testSessionKeyIsTheSessionItemOfAHash(): void
+    {
+        $hash = str_repeat('ab12', 16);
+
+        self::assertSame(['PK' => 'SESSION#' . $hash, 'SK' => 'SESSION'], AuthKeys::session($hash));
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function badHashes(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'too short' => [str_repeat('a', 63)];
+        yield 'too long' => [str_repeat('a', 65)];
+        yield 'upper case' => [str_repeat('A', 64)];
+        yield 'not hex' => [str_repeat('g', 64)];
+        yield 'trailing newline' => [str_repeat('a', 64) . "\n"];
+    }
+
+    #[DataProvider('badHashes')]
+    public function testSessionKeyRefusesAnythingButSixtyFourLowerCaseHexCharacters(string $hash): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        AuthKeys::session($hash);
+    }
 }

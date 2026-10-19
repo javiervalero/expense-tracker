@@ -486,4 +486,39 @@ final class JsonLoggerTest extends TestCase
         self::assertStringNotContainsString('TAIL', $this->logged());
         self::assertStringContainsString('value [REDACTED] end', $this->logged());
     }
+
+    public function testALoggedBackedEnumIsItsValueAndAUnitEnumItsName(): void
+    {
+        $this->logger()->info('x', ['reason' => LoggerBackedEnum::Gone, 'count' => LoggerBackedEnum::Seven, 'kind' => LoggerUnitEnum::Plain]);
+
+        $entry = $this->firstEntry();
+        self::assertSame('gone', $entry['reason']);
+        self::assertSame('7', $entry['count']);
+        self::assertSame('Plain', $entry['kind']);
+    }
+
+    public function testADateIsLoggedInAtomFormatAndAnEnumValueIsStillRedacted(): void
+    {
+        $this->logger(['gone'])->info('x', [
+            'at' => new \DateTimeImmutable('2026-10-16T12:00:00+02:00'),
+            'mutable' => new \DateTime('2026-10-16T12:00:00+00:00'),
+            'reason' => LoggerBackedEnum::Gone,
+        ]);
+
+        $entry = $this->firstEntry();
+        self::assertSame('2026-10-16T12:00:00+02:00', $entry['at']);
+        self::assertSame('2026-10-16T12:00:00+00:00', $entry['mutable']);
+        self::assertSame('[REDACTED]', $entry['reason']);
+    }
+}
+
+enum LoggerBackedEnum: string
+{
+    case Gone = 'gone';
+    case Seven = '7';
+}
+
+enum LoggerUnitEnum
+{
+    case Plain;
 }
