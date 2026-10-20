@@ -783,6 +783,27 @@ Carried:
 - **WP12:** build route handlers lazily in `Routes::all()` (today every request builds the register handler and its stores).
 - **Phase 7:** reserved concurrency on the API Lambda is the backstop for hash cost from many addresses (each `/64` or `/48` buys 5 or 20 hashes an hour; there is no global cap); smoke-check `CLIENT_IP_HEADER` in production, because a misconfiguration puts everyone in `unknown` (5 registrations an hour for all, fails safe).
 
+### Notes from the WP11 reviews (2026-10-20)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP11 diff (base `eca798f`); round 2 (opus/high) on the fix hunks approved with one LOW, closed and checked inline. No CRITICAL or HIGH findings. The security reviewer confirmed:
+- a blocked attempt exits before any read or verify; `succeeded()` is reachable only after `verify()` returns true; any failure after `attempt()` leaves every increment in place (favours the defender);
+- unknown email and wrong password both do two consistent `GetItem`s and one Argon2id verify at production cost, and give identical status, headers and body (no cookie, no `Retry-After`); a stored `DUMMY_HASH` is refused by `User` (deliberate dependency, commented) and `readDummyUser()` never builds a user;
+- the 422 checks before the throttle (body shape, email syntax, password over 128 characters) are syntactic, do no reads or hashing and do not depend on existence, so leaving them uncounted is acceptable;
+- logs carry only `requestId`, `reason` (`unknown_email` / `wrong_password` / `throttled`) and `userId` when known.
+
+Order as built: body and 422 checks, throttle, lookup (or dummy verify + dummy read), verify, `succeeded()`, best-effort rehash, new session, carried session ended best effort, `200`. Login and register share `FieldMessages`, `UserResponse::signedIn()`, `CarriedSession::endBestEffort()` and `ClientIpMiddleware::addressOf()`.
+
+The fix batch covers:
+- **Rehash cannot undo a password change:** `updatePasswordHash` takes the hash it replaces and is conditional on it (`#passwordHash = :expected`); a lost race is logged and the login still succeeds. Tested on DynamoDB Local.
+- **Rehash is best effort for `\ValueError` too** (Argon2id failing to allocate memory), logged by class name only; nothing broader is caught.
+- **A16 is pinned without wall-clock timing:** handlers depend on a `PasswordVerifier` interface; a test spy asserts unknown email → `verifyDummy` once and `verify` never, known email → the reverse, blocked or refused input → neither. Equal cost rests on the existing tests pinning `DUMMY_HASH` and `production()` to the constants. `PasswordVerifierImplementationTest` makes `PasswordHasher` the only implementation under `src/` (named, anonymous, qualified or aliased); an interface extending it and runtime names are documented gaps.
+- Test-first was observed for the interface and the architecture test; the conditional update, the `\ValueError` catch and the shared helpers were written test and code in one pass (their tests assert the behaviour, including the stale-hash case on DynamoDB Local).
+
+Carried:
+- **WP12:** add `securitySchemes.sessionCookie` and `ClearSessionCookie` with their first users; lazy route construction (from WP10).
+- **Phase 7:** successful logins are never throttled (a correct password resets the account bucket and refunds the address buckets), so one account can log in repeatedly at about one Argon2id hash and one session item each; add an API Gateway / WAF rate-based rule on `/auth/*` per address next to reserved concurrency (R2).
+- **Any future password change or reset:** must also use a conditional write, and should end the user's other sessions.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
