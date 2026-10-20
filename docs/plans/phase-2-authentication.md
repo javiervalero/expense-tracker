@@ -804,6 +804,21 @@ Carried:
 - **Phase 7:** successful logins are never throttled (a correct password resets the account bucket and refunds the address buckets), so one account can log in repeatedly at about one Argon2id hash and one session item each; add an API Gateway / WAF rate-based rule on `/auth/*` per address next to reserved concurrency (R2).
 - **Any future password change or reset:** must also use a conditional write, and should end the user's other sessions.
 
+### Notes from the WP12 reviews (2026-10-20)
+
+From ecc:php-reviewer (sonnet, approved) and ecc:security-reviewer (opus/high) on the uncommitted WP12 diff (base `2a55851`). No CRITICAL, HIGH or (security) MEDIUM findings. The fix batch touched no security behaviour, so the owner chose an inline check instead of a round-2 security review (2026-10-20). The security reviewer confirmed:
+- **A8 and `GET /auth/me`:** ending the session of a user that no longer exists is kept. `SameSite=Lax` keeps the cookie off cross-site images, prefetches and `fetch`; a cross-site top-level navigation can only make the visitor's own, already useless session go away (like TTL clean-up); the read is `ConsistentRead`, so a just-registered user never looks missing. **A8 clarification for WP14:** "a GET/HEAD/OPTIONS handler never makes a state change the sender can choose; the only exception is housekeeping of the session the request itself carries (A3 renewal, ending a session whose user is gone)."
+- **Logout (A5):** the same `204` + clearing cookie for known, unknown, malformed, absent and duplicate cookies; CSRF refuses forced logout (missing `X-Requested-With` or a foreign `Origin`, session survives); only the presented session is deleted, and a duplicate deletes nothing. The delete is **strict**: a storage failure gives 500/503 without a clearing cookie, so the user can retry instead of keeping a live session they believe is gone.
+- **`/auth/me`:** key only from the session principal; `{id, email}` only; `WWW-Authenticate: Session` and a clearing cookie whenever a cookie was sent; `no-store` from the kernel.
+- **R10:** `ProtectedRoutesMatchContractTest` builds every route's handler, so lazy routes cannot hide a missing `RequireSession`.
+
+Lazy routes: each `Route` holds a factory, the dispatcher builds only the matched route's handler, and `Route::handler()` refuses a factory that returns no `Handler`. The fix batch covers: `RoutesTest` builds every route's handler and checks its class twice (route factories must not branch, commented in `Routes.php` with "`RequireSession` stays the outermost wrapper"); one `SessionRepository` per factory; a `logout()` factory; the `challenge()` docblock. Coverage is back to 99.75% (the drop came from the register and login wiring no longer running in unit tests). RED was observed for the unit and contract tests and for the unguarded `/auth/me` step; the integration tests and the fix-batch tests were first run green.
+
+Carried:
+- **Phase 4 (front end):** never show "signed out" when logout answers 5xx.
+- **Account deletion (later phase):** only `/auth/me` notices a deleted user; deletion must end the user's sessions, or `RequireSession` must check that the user exists.
+- **WP14:** the A8 clarification above; keep `RequireSession` outermost if a decorator is ever added (a wrapper around it would be reported as unguarded, which fails safe).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
