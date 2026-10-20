@@ -756,6 +756,14 @@ Carried:
 - **Phase 7:** alarm on `CorruptItem` and on the warning "Login throttle clean-up after a successful login failed" (an IAM gap such as a missing `dynamodb:DeleteItem` would otherwise show up only as warnings); rely on API Gateway / WAF rate limits for floods (each blocked login still costs two or three DynamoDB writes).
 - **WP14 (ADR notes / threat model), accepted by design (A13, A14, R3, owner decision 5):** fixed windows allow a burst of up to twice a limit around a window boundary; IPv4 has no coarse tier; each successful login by the owner gives an attacker a fresh 10 attempts on that account; an attacker whose address is already blocked can still push a victim's account bucket over its limit (a lockout for at most 15 minutes); the account key is an unsalted SHA-256 of the email, so someone who can read the table can confirm that a guessed email was tried in the last 15 minutes (registered emails are stored in plain text anyway; an HMAC with an SSM key is the upgrade if ever wanted).
 
+### Notes from the WP11 hardening reviews (2026-10-20)
+
+The WP9 round-2 LOW-1/LOW-2 items, done before any handler uses `LoginAttempt`. Reviewed by ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high); no CRITICAL, HIGH or (security) MEDIUM findings; the fix batch was re-checked inline.
+- `LoginAttempt` refuses `clone`, `serialize` and `unserialize` (`LogicException`) and dumps as `[]` (`__debugInfo`), so a receipt cannot be copied and accepted twice and the account key never reaches a dump.
+- `ThrottleRefundBypassTest` (shares `tests/Architecture/Support/TokenScanner` with `PasswordHasherConstructionTest`) fails if anything under `src/` other than `LoginThrottle.php` calls `issuedBy` (any owner, so aliases and `self::` are caught), `->consume(` / `->refund(` (any receiver, nullsafe included), `->delete(` in a file naming a throttle type, or names one of those methods in a string callable. A future legitimate `refund` / `consume` elsewhere means renaming it or adding a commented exclusion.
+- `NetworkPrefix` derives its byte count with `intdiv`; a test pins the prefix bits to a multiple of 8.
+- **Accepted limits (WP14 threat model):** reflection or `Closure::bind` can reset a receipt's `used` flag, dynamic method names (`$o->$m()`) and a store reached through an untyped value are not caught by the scan. Code doing that could reach the store directly anyway; review is the control.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
