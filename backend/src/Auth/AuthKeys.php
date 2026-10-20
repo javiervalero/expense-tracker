@@ -14,7 +14,24 @@ use InvalidArgumentException;
  */
 final class AuthKeys
 {
+    public const string LOGIN_EMAIL = 'LOGIN-EMAIL';
+    public const string LOGIN_IP = 'LOGIN-IP';
+    public const string LOGIN_NET = 'LOGIN-NET';
+    public const string REGISTER_IP = 'REGISTER-IP';
+    public const string REGISTER_NET = 'REGISTER-NET';
+
+    /** The coarse IPv6 throttle tier, the one place the `/48` is defined: NetworkPrefix derives its byte count and suffix from it. */
+    public const int IPV6_NETWORK_PREFIX_BITS = 48;
+
+    /** The sort key of every throttle bucket (shared with ThrottleCounter, which checks it on read). */
+    public const string THROTTLE_SORT_KEY = 'THROTTLE';
+
+    /** The five throttle scopes (A15). */
+    public const array THROTTLE_SCOPES = [self::LOGIN_EMAIL, self::LOGIN_IP, self::LOGIN_NET, self::REGISTER_IP, self::REGISTER_NET];
+
     private const SHA256_HEX = '/\A[0-9a-f]{64}\z/D';
+    private const UNKNOWN_ADDRESS = 'unknown';
+    private const IPV6_ADDRESS_PREFIX_BITS = 64;
 
     /**
      * @return array{PK: string, SK: string}
@@ -50,5 +67,50 @@ final class AuthKeys
         }
 
         return [TableLayout::PK => 'SESSION#' . $tokenHash, TableLayout::SK => 'SESSION'];
+    }
+
+    /**
+     * A throttle bucket (A15): `THROTTLE#<scope>#<key>`. The key is checked against what its scope produces, so a raw
+     * e-mail or a free-form string can never become a key: `LOGIN-EMAIL` takes the SHA-256 hex of the normalised
+     * e-mail; `*-IP` takes `unknown`, an IPv4 address or an IPv6 `/64` prefix (`ClientAddress::$throttleKey`); `*-NET`
+     * takes an IPv6 `/48` prefix.
+     *
+     * @return array{PK: string, SK: string}
+     *
+     * @throws InvalidArgumentException for an unknown scope or a key of the wrong shape for its scope
+     */
+    public static function throttle(string $scope, string $key): array
+    {
+        $valid = match ($scope) {
+            self::LOGIN_EMAIL => preg_match(self::SHA256_HEX, $key) === 1,
+            self::LOGIN_IP, self::REGISTER_IP => $key === self::UNKNOWN_ADDRESS
+                || filter_var($key, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
+                || self::isIpv6Prefix($key, self::IPV6_ADDRESS_PREFIX_BITS),
+            self::LOGIN_NET, self::REGISTER_NET => self::isIpv6Prefix($key, self::IPV6_NETWORK_PREFIX_BITS),
+            default => throw new InvalidArgumentException('Unknown throttle scope.'),
+        };
+        if (!$valid) {
+            throw new InvalidArgumentException('The throttle key does not fit its scope.');
+        }
+
+        return [TableLayout::PK => 'THROTTLE#' . $scope . '#' . $key, TableLayout::SK => self::THROTTLE_SORT_KEY];
+    }
+
+    /**
+     * Canonical `<ipv6>/<bits>` with every bit after the prefix zero, exactly as ClientIp and NetworkPrefix write it.
+     */
+    private static function isIpv6Prefix(string $key, int $bits): bool
+    {
+        $suffix = '/' . $bits;
+        if (!str_ends_with($key, $suffix)) {
+            return false;
+        }
+        $address = substr($key, 0, -strlen($suffix));
+        $binary = str_contains($address, ':') ? @inet_pton($address) : false;
+        if ($binary === false || strlen($binary) !== 16 || inet_ntop($binary) !== $address) {
+            return false;
+        }
+
+        return substr($binary, intdiv($bits, 8)) === str_repeat("\0", 16 - intdiv($bits, 8));
     }
 }
