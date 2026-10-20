@@ -82,4 +82,54 @@ final class AuthKeysTest extends TestCase
 
         AuthKeys::session($hash);
     }
+
+    public function testThrottleKeyIsScopeAndKeyUnderOneSortKey(): void
+    {
+        $hash = hash('sha256', 'ana@example.com');
+
+        self::assertSame(['PK' => 'THROTTLE#LOGIN-EMAIL#' . $hash, 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::LOGIN_EMAIL, $hash));
+        self::assertSame(['PK' => 'THROTTLE#LOGIN-IP#192.0.2.7', 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::LOGIN_IP, '192.0.2.7'));
+        self::assertSame(['PK' => 'THROTTLE#REGISTER-IP#2001:db8:1:2::/64', 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::REGISTER_IP, '2001:db8:1:2::/64'));
+        self::assertSame(['PK' => 'THROTTLE#LOGIN-NET#2001:db8:1::/48', 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::LOGIN_NET, '2001:db8:1::/48'));
+        self::assertSame(['PK' => 'THROTTLE#REGISTER-NET#::/48', 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::REGISTER_NET, '::/48'));
+        self::assertSame(['PK' => 'THROTTLE#LOGIN-IP#unknown', 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::LOGIN_IP, 'unknown'));
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function badThrottleKeys(): iterable
+    {
+        $hash = hash('sha256', 'ana@example.com');
+        yield 'unknown scope' => ['LOGIN-OTHER', '192.0.2.7'];
+        yield 'lower-case scope' => ['login-ip', '192.0.2.7'];
+        yield 'empty scope' => ['', '192.0.2.7'];
+        yield 'email scope with the raw email' => [AuthKeys::LOGIN_EMAIL, 'ana@example.com'];
+        yield 'email scope with upper-case hex' => [AuthKeys::LOGIN_EMAIL, strtoupper($hash)];
+        yield 'email scope with a short hash' => [AuthKeys::LOGIN_EMAIL, substr($hash, 1)];
+        yield 'email scope with a newline' => [AuthKeys::LOGIN_EMAIL, $hash . "\n"];
+        yield 'ip scope empty' => [AuthKeys::LOGIN_IP, ''];
+        yield 'ip scope with a hostname' => [AuthKeys::LOGIN_IP, 'example.com'];
+        yield 'ip scope with a leading space' => [AuthKeys::LOGIN_IP, ' 192.0.2.7'];
+        yield 'ip scope with a trailing newline' => [AuthKeys::REGISTER_IP, "192.0.2.7\n"];
+        yield 'ip scope with a port' => [AuthKeys::LOGIN_IP, '192.0.2.7:443'];
+        yield 'ip scope with an ipv6 address, not a prefix' => [AuthKeys::LOGIN_IP, '2001:db8::1'];
+        yield 'ip scope with the wrong prefix length' => [AuthKeys::LOGIN_IP, '2001:db8:1::/48'];
+        yield 'ip scope with host bits set' => [AuthKeys::REGISTER_IP, '2001:db8:1:2::1/64'];
+        yield 'ip scope with a non-canonical prefix' => [AuthKeys::LOGIN_IP, '2001:0db8:1:2::/64'];
+        yield 'ip scope with upper case unknown' => [AuthKeys::LOGIN_IP, 'UNKNOWN'];
+        yield 'net scope with unknown' => [AuthKeys::LOGIN_NET, 'unknown'];
+        yield 'net scope with ipv4' => [AuthKeys::REGISTER_NET, '192.0.2.7'];
+        yield 'net scope with a /64' => [AuthKeys::LOGIN_NET, '2001:db8:1:2::/64'];
+        yield 'net scope with host bits set' => [AuthKeys::LOGIN_NET, '2001:db8:1:2::/48'];
+        yield 'net scope with a newline' => [AuthKeys::LOGIN_NET, "2001:db8:1::/48\n"];
+    }
+
+    #[DataProvider('badThrottleKeys')]
+    public function testThrottleKeyRefusesAnUnknownScopeOrAKeyOfTheWrongShape(string $scope, string $key): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        AuthKeys::throttle($scope, $key);
+    }
 }
