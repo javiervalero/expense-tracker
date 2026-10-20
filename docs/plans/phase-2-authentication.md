@@ -764,6 +764,25 @@ The WP9 round-2 LOW-1/LOW-2 items, done before any handler uses `LoginAttempt`. 
 - `NetworkPrefix` derives its byte count with `intdiv`; a test pins the prefix bits to a multiple of 8.
 - **Accepted limits (WP14 threat model):** reflection or `Closure::bind` can reset a receipt's `used` flag, dynamic method names (`$o->$m()`) and a store reached through an untyped value are not caught by the scan. Code doing that could reach the store directly anyway; review is the control.
 
+### Notes from the WP10 reviews (2026-10-20)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP10 diff (base `59fb301`); round 2 (opus/high) on the fix hunks approved with no findings. No CRITICAL or HIGH findings. The security reviewer confirmed:
+- the throttle runs before the body is read and before any Argon2id work; a body over 64 KiB is answered 413 before routing (not counted, not hashed); a missing address falls into `unknown`; a throttle-store failure refuses the request;
+- the A19 re-read cannot sign anyone into an account they did not create: a retried create counts as ours only if the email lock holds this request's fresh UUID **and** `createdAt` **and** the salted hash match (`hash_equals`, `ConsistentRead`);
+- 503 + `Retry-After` for throttling cancellations, a generic 5xx body, one 429 body for every bucket, and a 409 that carries neither the address nor a reason;
+- logs carry only `requestId` and `userId`; CSRF runs before the router; every operation declares `security` explicitly.
+
+The fix batch covers:
+- **Carried session ended best effort:** after the user is created, the new session is created first, then the carried one is deleted; a `StorageFailure` on that delete is logged (`requestId`, operation, AWS code) and the response is still `201` + `Set-Cookie`. The browser's cookie is replaced, and the old token still maps only to its original user until it expires, so A4's fixation guarantee holds. `CarriedSession` (new, reused by WP11) also logs `duplicate session cookie` (A20) and deletes nothing in that case. It lives outside `RegisterHandler` so `ThrottleRefundBypassTest`'s `->delete(` rule stays strict.
+- **Field errors:** exhaustive `match` over `InvalidEmail` / `PasswordViolation`, texts built from `Email::MAX_BYTES` and `PasswordPolicy` constants; at most 5 unknown-member errors (`MAX_UNKNOWN_KEY_ERRORS`), so a 422 cannot be much larger than the request; `CredentialsInput` dumps redact both fields.
+- **Contract:** `Credentials.email` has no `maxLength` (the server trims first; the description states the 254-byte limit after trimming). `securitySchemes.sessionCookie`, `ClearSessionCookie` and `WWWAuthenticate` wait for WP11/WP12, their first users (the contract lint rejects unused components).
+- **409 after a 503 retry:** "An account with this email address already exists. If your previous attempt ended with a temporary error, it may have gone through: try signing in."
+- **One commit:** contract and implementation are committed together (owner decision 2026-10-20), because the contract alone fails `RoutesMatchContractTest` until the route exists.
+
+Carried:
+- **WP12:** build route handlers lazily in `Routes::all()` (today every request builds the register handler and its stores).
+- **Phase 7:** reserved concurrency on the API Lambda is the backstop for hash cost from many addresses (each `/64` or `/48` buys 5 or 20 hashes an hour; there is no global cap); smoke-check `CLIENT_IP_HEADER` in production, because a misconfiguration puts everyone in `unknown` (5 registrations an hour for all, fails safe).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
