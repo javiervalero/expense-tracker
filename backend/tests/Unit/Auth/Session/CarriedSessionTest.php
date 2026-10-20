@@ -6,6 +6,7 @@ namespace App\Tests\Unit\Auth\Session;
 
 use App\Auth\Session\CarriedSession;
 use App\Http\Request;
+use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\Logging\JsonLogger;
 use App\Tests\Support\FrozenClock;
 use App\Tests\Support\InMemorySessionStore;
@@ -102,5 +103,37 @@ final class CarriedSessionTest extends TestCase
         $this->end(['cookie' => '__Host-session=short']);
 
         self::assertSame('', $this->logged());
+    }
+
+    public function testEndBestEffortDeletesTheSessionLikeEnd(): void
+    {
+        $token = $this->store->seed(self::USER_ID);
+
+        $this->endBestEffort(['cookie' => '__Host-session=' . $token->cookieValue()]);
+
+        self::assertSame([], $this->store->sessions);
+    }
+
+    public function testEndBestEffortLogsAStorageFailureWithoutTheTokenAndDoesNotThrow(): void
+    {
+        $token = $this->store->seed(self::USER_ID);
+        $this->store->deleteFailure = new StorageFailure('DeleteItem', 'InternalServerError');
+
+        $this->endBestEffort(['cookie' => '__Host-session=' . $token->cookieValue()]);
+
+        $log = $this->logged();
+        self::assertStringContainsString('could not end the carried session', $log);
+        self::assertStringContainsString('req-1', $log);
+        self::assertStringContainsString('DeleteItem', $log);
+        self::assertStringContainsString('InternalServerError', $log);
+        self::assertStringNotContainsString($token->cookieValue(), $log);
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    private function endBestEffort(array $headers): void
+    {
+        (new CarriedSession($this->store, new JsonLogger($this->log)))->endBestEffort(new Request('POST', '/api/v1/auth/login', [], $headers, '', [Request::REQUEST_ID => 'req-1']));
     }
 }

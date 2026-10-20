@@ -29,6 +29,7 @@ use App\Infrastructure\Logging\JsonLogger;
 use App\Tests\Support\FrozenClock;
 use App\Tests\Support\InMemorySessionStore;
 use App\Tests\Support\InMemoryThrottleStore;
+use App\Tests\Support\TestPasswordHashers;
 use Aws\CommandInterface;
 use Aws\DynamoDb\Exception\DynamoDbException;
 use Aws\MockHandler;
@@ -88,7 +89,7 @@ final class RegisterHandlerTest extends TestCase
         return new RegisterHandler(
             new RegisterThrottle($this->throttleStore),
             new PasswordPolicy(),
-            $hasher ?? new PasswordHasher(8, 1, 1),
+            $hasher ?? TestPasswordHashers::cheap(),
             new UserRepository(new ItemStore($client, $settings->tableName)),
             $this->sessions,
             new CarriedSession($this->sessions, new JsonLogger($this->logStream)),

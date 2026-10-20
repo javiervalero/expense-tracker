@@ -60,6 +60,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign in
+         * @description Checks the address and password and, if they match, signs the user in: the `200` carries a new session cookie.
+         *     If the request carried a session cookie, that session is ended and a new one is issued (a token chosen by the
+         *     client is never adopted). The address is trimmed and lower-cased.
+         *
+         *     A wrong password and an address without an account get the same `401` (same status, headers and body), and
+         *     take about the same time. Sign-in only enforces the maximum password length (128 characters; a longer one
+         *     gives `422`), so a later change of the password rules never locks anyone out.
+         *
+         *     Throttling counts failures: per account (10 per 15 minutes), per client address (30 per 15 minutes) and per
+         *     IPv6 `/48` (100 per 15 minutes). A successful sign-in resets the account's count and gives the address counts
+         *     back. An attempt over a limit gets `429` without the password being checked, even if it is the right one; the
+         *     body never says which limit fired.
+         */
+        post: operations["loginUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -249,7 +280,22 @@ export interface components {
             };
         };
         /**
-         * @description Returned when the client address (or its network) has used up its attempts for the current window. `Retry-After` is
+         * @description Returned when sign-in fails. One answer for a wrong password and for an address without an account: the same
+         *     status, headers and body. The problem never says which part was wrong.
+         */
+        Unauthorized: {
+            headers: {
+                "WWW-Authenticate": components["headers"]["WWWAuthenticate"];
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /**
+         * @description Returned when the client address (or its network, or the account) has used up its attempts for the current window. `Retry-After` is
          *     the time to the end of the window. One generic body, whichever limit fired.
          */
         TooManyRequests: {
@@ -300,6 +346,8 @@ export interface components {
          *     `Max-Age` is the absolute session lifetime. The attributes are the same on every environment.
          */
         SetSessionCookie: string;
+        /** @description The challenge required on every `401` (RFC 9110): the scheme name `Session`, meaning the session cookie. */
+        WWWAuthenticate: "Session";
         /** @description Whole seconds to wait before trying again. */
         RetryAfter: number;
     };
@@ -428,6 +476,50 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             405: components["responses"]["MethodNotAllowed"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["ContentTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    loginUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Credentials"];
+            };
+        };
+        responses: {
+            /** @description The credentials are right and the response signs the user in. */
+            200: {
+                headers: {
+                    "Set-Cookie": components["headers"]["SetSessionCookie"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowed"];
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];

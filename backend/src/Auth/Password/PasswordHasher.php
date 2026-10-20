@@ -13,7 +13,7 @@ namespace App\Auth\Password;
  * neither the tools image nor the Bref image. Production code uses only {@see self::production()}; an architecture
  * test forbids `new PasswordHasher` elsewhere in src/.
  */
-final class PasswordHasher
+final class PasswordHasher implements PasswordVerifier
 {
     public const MEMORY_COST = 65536;
     public const TIME_COST = 4;

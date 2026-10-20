@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.5.0
+  version: 0.6.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration; sign-in and the session endpoints follow. The other endpoints arrive in later phases.
+    Phase 2 adds registration and sign-in; the other session endpoints follow. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -170,6 +170,68 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /auth/login:
+    post:
+      operationId: loginUser
+      tags: [auth]
+      summary: Sign in
+      description: |
+        Checks the address and password and, if they match, signs the user in: the `200` carries a new session cookie.
+        If the request carried a session cookie, that session is ended and a new one is issued (a token chosen by the
+        client is never adopted). The address is trimmed and lower-cased.
+
+        A wrong password and an address without an account get the same `401` (same status, headers and body), and
+        take about the same time. Sign-in only enforces the maximum password length (128 characters; a longer one
+        gives `422`), so a later change of the password rules never locks anyone out.
+
+        Throttling counts failures: per account (10 per 15 minutes), per client address (30 per 15 minutes) and per
+        IPv6 `/48` (100 per 15 minutes). A successful sign-in resets the account's count and gives the address counts
+        back. An attempt over a limit gets `429` without the password being checked, even if it is the right one; the
+        body never says which limit fired.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '200':
+          description: The credentials are right and the response signs the user in.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   parameters:
     XRequestedWith:
@@ -211,6 +273,13 @@ components:
       schema:
         type: string
         example: __Host-session=0123456789abcdef; Max-Age=604800; Path=/; Secure; HttpOnly; SameSite=Lax
+    WWWAuthenticate:
+      description: |
+        The challenge required on every `401` (RFC 9110): the scheme name `Session`, meaning the session cookie.
+      required: true
+      schema:
+        type: string
+        const: Session
     RetryAfter:
       description: Whole seconds to wait before trying again.
       required: true
@@ -335,9 +404,24 @@ components:
         application/problem+json:
           schema:
             $ref: '#/components/schemas/ProblemDetails'
+    Unauthorized:
+      description: |
+        Returned when sign-in fails. One answer for a wrong password and for an address without an account: the same
+        status, headers and body. The problem never says which part was wrong.
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
     TooManyRequests:
       description: |
-        Returned when the client address (or its network) has used up its attempts for the current window. `Retry-After` is
+        Returned when the client address (or its network, or the account) has used up its attempts for the current window. `Retry-After` is
         the time to the end of the window. One generic body, whichever limit fired.
       headers:
         Retry-After:

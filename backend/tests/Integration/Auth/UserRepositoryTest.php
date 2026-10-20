@@ -154,7 +154,7 @@ final class UserRepositoryTest extends TestCase
     {
         $this->users->create(self::user());
 
-        $this->users->updatePasswordHash(self::ID, self::OTHER_HASH);
+        $this->users->updatePasswordHash(self::ID, self::HASH, self::OTHER_HASH);
 
         $found = $this->users->findById(self::ID);
         self::assertNotNull($found);
@@ -165,7 +165,7 @@ final class UserRepositoryTest extends TestCase
     public function testUpdatePasswordHashOnAMissingUserFailsTheConditionAndCreatesNothing(): void
     {
         try {
-            $this->users->updatePasswordHash(self::ID, self::OTHER_HASH);
+            $this->users->updatePasswordHash(self::ID, self::HASH, self::OTHER_HASH);
             self::fail('expected ConditionFailed');
         } catch (ConditionFailed) {
         }

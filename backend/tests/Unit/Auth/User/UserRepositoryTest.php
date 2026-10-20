@@ -5,14 +5,17 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Auth\User;
 
 use App\Auth\Email;
+use App\Auth\Password\PasswordHasher;
 use App\Auth\User\EmailTaken;
 use App\Auth\User\User;
 use App\Auth\User\UserRepository;
+use App\Infrastructure\DynamoDb\ConditionFailed;
 use App\Infrastructure\DynamoDb\DynamoDbClientFactory;
 use App\Infrastructure\DynamoDb\DynamoDbSettings;
 use App\Infrastructure\DynamoDb\ItemStore;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
+use App\Infrastructure\Id\Uuid;
 use App\Tests\Support\FrozenClock;
 use Aws\CommandInterface;
 use Aws\DynamoDb\Exception\DynamoDbException;
@@ -301,7 +304,7 @@ final class UserRepositoryTest extends TestCase
     public function testUpdatePasswordHashRefusesAHashThatIsNotArgon2idAndSendsNothing(string $hash): void
     {
         try {
-            $this->repository()->updatePasswordHash(self::ID, $hash);
+            $this->repository()->updatePasswordHash(self::ID, self::HASH, $hash);
             self::fail('expected InvalidArgumentException');
         } catch (InvalidArgumentException $refused) {
             if ($hash !== '') {
@@ -342,14 +345,109 @@ final class UserRepositoryTest extends TestCase
         $this->repository()->findByEmail($email);
     }
 
-    public function testUpdatePasswordHashIsConditionalOnTheUserExisting(): void
+    public function testUpdatePasswordHashIsConditionalOnTheUserExistingAndOnTheHashItReplaces(): void
     {
         $this->mock->append(new Result(['Attributes' => []]));
 
-        $this->repository()->updatePasswordHash(self::ID, self::OTHER_HASH);
+        $this->repository()->updatePasswordHash(self::ID, self::HASH, self::OTHER_HASH);
 
         self::assertSame('UpdateItem', $this->commands[0]->getName());
-        self::assertSame('attribute_exists(PK)', $this->commands[0]['ConditionExpression']);
+        self::assertSame('attribute_exists(PK) AND #passwordHash = :expected', $this->commands[0]['ConditionExpression']);
         self::assertSame('SET #passwordHash = :passwordHash', $this->commands[0]['UpdateExpression']);
+        self::assertSame(['#passwordHash' => 'passwordHash'], $this->commands[0]['ExpressionAttributeNames']);
+        $values = $this->commands[0]['ExpressionAttributeValues'];
+        self::assertIsArray($values);
+        self::assertSame(['S' => self::HASH], $values[':expected'] ?? null);
+        self::assertSame(['S' => self::OTHER_HASH], $values[':passwordHash'] ?? null);
+    }
+
+    public function testAStaleExpectedHashIsAConditionFailureForTheCaller(): void
+    {
+        $this->mock->append(new DynamoDbException('stale', new \Aws\Command('UpdateItem'), ['code' => 'ConditionalCheckFailedException']));
+
+        $this->expectException(ConditionFailed::class);
+
+        $this->repository()->updatePasswordHash(self::ID, self::HASH, self::OTHER_HASH);
+    }
+
+    #[DataProvider('storedHashesThatAreNotArgon2id')]
+    public function testUpdatePasswordHashRefusesAnExpectedHashThatIsNotArgon2idAndSendsNothing(string $expected): void
+    {
+        try {
+            $this->repository()->updatePasswordHash(self::ID, $expected, self::OTHER_HASH);
+            self::fail('expected InvalidArgumentException');
+        } catch (InvalidArgumentException $refused) {
+            if ($expected !== '') {
+                self::assertStringNotContainsString($expected, $refused->getMessage());
+            }
+        }
+
+        self::assertSame([], $this->commands);
+    }
+
+    public function testUpdatePasswordHashRefusesTheDummyHashAndSendsNothing(): void
+    {
+        try {
+            $this->repository()->updatePasswordHash(self::ID, self::HASH, PasswordHasher::DUMMY_HASH);
+            self::fail('expected InvalidArgumentException');
+        } catch (InvalidArgumentException) {
+        }
+
+        self::assertSame([], $this->commands);
+    }
+
+    public function testAStoredUserWithTheDummyHashIsACorruptItem(): void
+    {
+        $this->mock->append(self::userResult(['passwordHash' => ['S' => PasswordHasher::DUMMY_HASH]]));
+
+        try {
+            $this->repository()->findById(self::ID);
+            self::fail('expected StorageFailure');
+        } catch (StorageFailure $failure) {
+            self::assertSame('CorruptItem', $failure->awsErrorCode);
+        }
+    }
+
+    public function testReadDummyUserSendsOneGetItemWithTheSameParametersAsFindByIdAndReturnsNothing(): void
+    {
+        $this->mock->append(new Result([]));
+        $this->mock->append(new Result([]));
+
+        $this->repository()->readDummyUser();
+        $this->repository()->findById(self::ID);
+
+        self::assertCount(2, $this->commands);
+        self::assertSame('GetItem', $this->commands[0]->getName());
+        $dummy = $this->commands[0]->toArray();
+        $real = $this->commands[1]->toArray();
+        self::assertSame(['PK' => ['S' => 'USER#' . UserRepository::DUMMY_USER_ID], 'SK' => ['S' => 'PROFILE']], $dummy['Key'] ?? null);
+        self::assertTrue(Uuid::isValid(UserRepository::DUMMY_USER_ID));
+        unset($real['Key'], $dummy['Key']);
+        self::assertSame($real, $dummy, 'the dummy read must differ from a real one only by its key');
+    }
+
+    public function testReadDummyUserReturnsNothingAtAll(): void
+    {
+        $method = new \ReflectionMethod(UserRepository::class, 'readDummyUser');
+
+        self::assertSame('void', (string) $method->getReturnType());
+    }
+
+    public function testReadDummyUserNeverYieldsAnAccountEvenIfTheItemExists(): void
+    {
+        $this->mock->append(self::userResult(['userId' => ['S' => UserRepository::DUMMY_USER_ID]]));
+
+        $this->repository()->readDummyUser();
+
+        self::assertCount(1, $this->commands);
+    }
+
+    public function testReadDummyUserPropagatesAStorageFailure(): void
+    {
+        $this->mock->append(new DynamoDbException('bad', new \Aws\Command('GetItem'), ['code' => 'ValidationException']));
+
+        $this->expectException(StorageFailure::class);
+
+        $this->repository()->readDummyUser();
     }
 }

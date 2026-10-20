@@ -210,4 +210,25 @@ final class ClientIpMiddlewareTest extends TestCase
 
         self::assertNull($context->clientIp());
     }
+
+    public function testAddressOfReturnsTheAddressTheMiddlewareSet(): void
+    {
+        $address = ClientAddress::of('203.0.113.7', '203.0.113.7');
+        $request = new Request('POST', '/x', [], [], '', [ClientIpMiddleware::ATTRIBUTE => $address]);
+
+        self::assertSame($address, ClientIpMiddleware::addressOf($request));
+    }
+
+    public function testAddressOfAMissingOrForeignAttributeIsTheSharedUnknownAddressNeverAnExemption(): void
+    {
+        $bare = new Request('POST', '/x', [], [], '');
+        $foreign = new Request('POST', '/x', [], [], '', [ClientIpMiddleware::ATTRIBUTE => '203.0.113.7']);
+
+        foreach ([$bare, $foreign] as $request) {
+            $address = ClientIpMiddleware::addressOf($request);
+            self::assertSame(ClientAddress::UNKNOWN_KEY, $address->throttleKey);
+            self::assertNull($address->ip);
+            self::assertSame('missing', $address->reason);
+        }
+    }
 }

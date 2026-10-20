@@ -31,4 +31,22 @@ final readonly class CarriedSession
             $this->sessions->delete($carried->token->hash());
         }
     }
+
+    /**
+     * For a flow whose account and new session already exist (register, login): a storage failure must not turn the
+     * answer into an error, so it is logged as a warning (request id, operation and AWS code, never a token) and the
+     * old session simply expires on its own.
+     */
+    public function endBestEffort(Request $request): void
+    {
+        try {
+            $this->end($request);
+        } catch (StorageFailure $failure) {
+            $this->logger->warning('could not end the carried session', [
+                'requestId' => $request->attribute(Request::REQUEST_ID),
+                'operation' => $failure->operation,
+                'code' => $failure->awsErrorCode,
+            ]);
+        }
+    }
 }

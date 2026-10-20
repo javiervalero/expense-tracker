@@ -100,6 +100,16 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
+     * From now on in this test, sends this client address as the `CloudFront-Viewer-Address` (in CloudFront's form:
+     * `[ip]:port` for IPv6, `ip:port` for IPv4), instead of the random one of the test. For tests that need several
+     * addresses, such as the per-account and per-network throttle limits.
+     */
+    final protected function withViewerAddress(string $ip): void
+    {
+        $this->viewerAddress = str_contains($ip, ':') ? sprintf('[%s]:%d', $ip, random_int(1024, 65535)) : sprintf('%s:%d', $ip, random_int(1024, 65535));
+    }
+
+    /**
      * From now on in this test, sends `Cookie: __Host-session=$value` on every call (null: no cookie). The value is
      * sent as given, so a test can send a malformed one.
      */

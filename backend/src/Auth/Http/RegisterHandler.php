@@ -6,7 +6,7 @@ namespace App\Auth\Http;
 
 use App\Auth\Email;
 use App\Auth\InvalidEmail;
-use App\Auth\Password\PasswordHasher;
+use App\Auth\Password\PasswordVerifier;
 use App\Auth\Password\PasswordPolicy;
 use App\Auth\Password\PasswordViolation;
 use App\Auth\Session\CarriedSession;
@@ -17,7 +17,6 @@ use App\Auth\Throttle\RegisterThrottle;
 use App\Auth\User\EmailTaken;
 use App\Auth\User\User;
 use App\Auth\User\UserRepository;
-use App\Http\ClientAddress;
 use App\Http\Handler;
 use App\Http\JsonBody;
 use App\Http\Middleware\ClientIpMiddleware;
@@ -58,7 +57,7 @@ final readonly class RegisterHandler implements Handler
     public function __construct(
         private RegisterThrottle $throttle,
         private PasswordPolicy $policy,
-        private PasswordHasher $hasher,
+        private PasswordVerifier $hasher,
         private UserRepository $users,
         private SessionStore $sessions,
         private CarriedSession $carriedSession,
@@ -86,18 +85,16 @@ final readonly class RegisterHandler implements Handler
         }
 
         $cookie = SessionCookie::issue($this->sessions->create($user->userId), SessionLifetime::ABSOLUTE);
-        $this->endCarriedSessionIfPossible($request);
+        $this->carriedSession->endBestEffort($request);
 
         $this->recordRegistration($request, $user->userId);
 
-        return Response::json(201, ['id' => $user->userId, 'email' => $email->value()], ['Set-Cookie' => [$cookie]]);
+        return UserResponse::signedIn(201, $user->userId, $email, $cookie);
     }
 
     private function enforceThrottle(Request $request): void
     {
-        $address = $request->attribute(ClientIpMiddleware::ATTRIBUTE);
-        // Without an address the request counts in the shared `unknown` bucket: never an exemption.
-        $decision = $this->throttle->attempt($address instanceof ClientAddress ? $address : ClientAddress::unknown('missing'));
+        $decision = $this->throttle->attempt(ClientIpMiddleware::addressOf($request));
         if (!$decision->isAllowed) {
             throw HttpProblem::of(429, self::TOO_MANY, headers: ['Retry-After' => [(string) $decision->retryAfterSeconds]]);
         }
@@ -124,52 +121,13 @@ final readonly class RegisterHandler implements Handler
     {
         $errors = [];
         if ($email instanceof InvalidEmail) {
-            $errors[] = new FieldError('/email', self::emailMessage($email));
+            $errors[] = new FieldError('/email', FieldMessages::email($email));
         }
         if ($violation instanceof PasswordViolation) {
-            $errors[] = new FieldError('/password', self::passwordMessage($violation));
+            $errors[] = new FieldError('/password', FieldMessages::password($violation));
         }
 
         return $errors;
-    }
-
-    private static function emailMessage(InvalidEmail $problem): string
-    {
-        return match ($problem) {
-            InvalidEmail::Empty => 'Enter an email address.',
-            InvalidEmail::TooLong => 'The email address must have at most ' . Email::MAX_BYTES . ' bytes.',
-            InvalidEmail::ControlCharacter => 'The email address must not contain control characters.',
-            InvalidEmail::NonAscii => 'The email address must use ASCII characters only.',
-            InvalidEmail::Malformed => 'Enter a valid email address.',
-        };
-    }
-
-    private static function passwordMessage(PasswordViolation $problem): string
-    {
-        return match ($problem) {
-            PasswordViolation::InvalidEncoding => 'The password must be valid UTF-8.',
-            PasswordViolation::TooShort => 'The password must have at least ' . PasswordPolicy::MIN_CHARS . ' characters.',
-            PasswordViolation::TooLong => 'The password must have at most ' . PasswordPolicy::MAX_CHARS . ' characters.',
-            PasswordViolation::ControlCharacter => 'The password must not contain control characters.',
-        };
-    }
-
-    /**
-     * Best effort: the account and the new session exist, so failing to delete the old session must not turn the
-     * answer into an error (a retry would then see 409). The old session simply expires on its own. Only the error
-     * code is logged, never a token.
-     */
-    private function endCarriedSessionIfPossible(Request $request): void
-    {
-        try {
-            $this->carriedSession->end($request);
-        } catch (StorageFailure $failure) {
-            $this->logger->warning('could not end the carried session after registering', [
-                'requestId' => $request->attribute(Request::REQUEST_ID),
-                'operation' => $failure->operation,
-                'code' => $failure->awsErrorCode,
-            ]);
-        }
     }
 
     private function recordRegistration(Request $request, string $userId): void

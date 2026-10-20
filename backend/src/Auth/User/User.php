@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Auth\User;
 
 use App\Auth\Email;
+use App\Auth\Password\PasswordHasher; // Deliberate (A16): a stored dummy hash must never be loginable.
 use App\Infrastructure\Clock\Clock;
 use DateTimeImmutable;
 use InvalidArgumentException;
@@ -50,10 +51,14 @@ final class User implements JsonSerializable
         return new self($userId, $email, $passwordHash, $clock->now());
     }
 
-    /** True for a string that starts with `$argon2id$`: nothing else is stored or read back as a hash. */
+    /**
+     * True for a string that starts with `$argon2id$`: nothing else is stored or read back as a hash. The one
+     * exception is {@see PasswordHasher::DUMMY_HASH} (A16): it exists only to equalise login timing for unknown
+     * e-mails, so it must never become a real user's hash, whether written or read back.
+     */
     public static function isAcceptableHash(#[\SensitiveParameter] string $passwordHash): bool
     {
-        return str_starts_with($passwordHash, self::HASH_PREFIX);
+        return str_starts_with($passwordHash, self::HASH_PREFIX) && !hash_equals(PasswordHasher::DUMMY_HASH, $passwordHash);
     }
 
     public function passwordHash(): string

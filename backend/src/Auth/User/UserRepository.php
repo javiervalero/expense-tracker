@@ -24,6 +24,12 @@ use InvalidArgumentException;
  */
 final readonly class UserRepository
 {
+    /**
+     * The key of the dummy read of a login for an unknown e-mail (A16). A valid UUID that no user is given (users get
+     * random ones), so the read finds nothing; {@see self::readDummyUser()} discards whatever it finds anyway.
+     */
+    public const DUMMY_USER_ID = '00000000-0000-4000-8000-000000000000';
+
     private const CORRUPT_ITEM = 'CorruptItem';
     private const DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
     private const CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
@@ -75,6 +81,18 @@ final readonly class UserRepository
     }
 
     /**
+     * Costs what the second read of a known login costs (same GetItem, same parameters, different key) so that known
+     * and unknown e-mails do the same number of reads (A16). It returns nothing and never builds a user, so the dummy
+     * key can never lead to a loginable account, even if an item were ever stored there.
+     *
+     * @throws StorageFailure
+     */
+    public function readDummyUser(): void
+    {
+        $this->items->getItem(AuthKeys::user(self::DUMMY_USER_ID));
+    }
+
+    /**
      * @throws InvalidArgumentException when the id is not a lower-case UUID
      * @throws StorageFailure
      */
@@ -86,22 +104,31 @@ final readonly class UserRepository
     }
 
     /**
-     * @throws InvalidArgumentException when the id is not a lower-case UUID, or the hash is not an Argon2id hash
-     *                                  (the message never holds the hash)
-     * @throws ConditionFailed when the user does not exist
+     * Replaces the hash only if the stored one is still `$expectedOldHash`, the one the caller verified the password
+     * against. A slow login that read the hash long ago therefore cannot overwrite a newer password (a password
+     * change would be a second writer): it gets a {@see ConditionFailed}, and nothing is written.
+     *
+     * @throws InvalidArgumentException when the id is not a lower-case UUID, or a hash is not an Argon2id hash
+     *                                  (the message never holds a hash)
+     * @throws ConditionFailed when the user does not exist or no longer has the expected hash
      * @throws StorageFailure
      */
-    public function updatePasswordHash(string $userId, #[\SensitiveParameter] string $passwordHash): void
-    {
-        if (!User::isAcceptableHash($passwordHash)) {
+    public function updatePasswordHash(
+        string $userId,
+        #[\SensitiveParameter]
+        string $expectedOldHash,
+        #[\SensitiveParameter]
+        string $newHash,
+    ): void {
+        if (!User::isAcceptableHash($newHash) || !User::isAcceptableHash($expectedOldHash)) {
             throw new InvalidArgumentException('A password hash must be an Argon2id hash.');
         }
         $this->items->updateItem(
             AuthKeys::user($userId),
             'SET #passwordHash = :passwordHash',
             ['#passwordHash' => 'passwordHash'],
-            [':passwordHash' => $passwordHash],
-            'attribute_exists(PK)',
+            [':passwordHash' => $newHash, ':expected' => $expectedOldHash],
+            'attribute_exists(PK) AND #passwordHash = :expected',
         );
     }
 

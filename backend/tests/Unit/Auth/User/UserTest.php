@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Auth\User;
 
 use App\Auth\Email;
+use App\Auth\Password\PasswordHasher;
 use App\Auth\User\User;
 use App\Tests\Support\FrozenClock;
 use DateTimeImmutable;
@@ -135,6 +136,14 @@ final class UserTest extends TestCase
         $this->expectException(InvalidArgumentException::class);
 
         new User(self::ID, self::user()->email, 'plain-invented-secret', new DateTimeImmutable());
+    }
+
+    public function testTheDummyHashOfTheTimingEqualisationIsNeverAcceptedAsAUsersHash(): void
+    {
+        self::assertFalse(User::isAcceptableHash(PasswordHasher::DUMMY_HASH));
+        $this->expectException(InvalidArgumentException::class);
+
+        User::register(self::ID, self::user()->email, PasswordHasher::DUMMY_HASH, new FrozenClock());
     }
 
     public function testTheUserCannotBeEncodedAsJson(): void
