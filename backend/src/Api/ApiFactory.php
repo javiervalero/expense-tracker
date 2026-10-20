@@ -47,15 +47,13 @@ final class ApiFactory
     }
 
     /**
-     * The `$routes` plain-list form is for tests that need no services. The closure form exists for the WP7 wiring
-     * test (tests/Integration/Api/ApiFactoryStoreWiringTest.php), whose route needs the ItemStore built here.
-     *
      * @param Closure(): ApiConfig $loadConfig
      * @param resource|null $logStream
-     * @param list<Route>|Closure(ApiServices): list<Route>|null $routes the route table, or a function that builds it from the
-     *                                                                 services; {@see Routes::all()} when omitted (a seam for tests)
+     * @param list<Route>|null $routes a fixed route table for tests that need no services; {@see Routes::all()} when
+     *                                 omitted. There is no seam to build routes from the services: a test that needs
+     *                                 the store goes through a real route (ApiFactoryStoreWiringTest).
      */
-    public static function fromConfigLoader(Closure $loadConfig, mixed $logStream = null, array|Closure|null $routes = null): ApiKernel
+    public static function fromConfigLoader(Closure $loadConfig, mixed $logStream = null, ?array $routes = null): ApiKernel
     {
         $logStream ??= JsonLogger::stderrStream();
         // Until the configuration is valid there are no secrets to hide, and the line is about variable names only.
@@ -94,7 +92,7 @@ final class ApiFactory
                     new StorageUnavailableMiddleware($requestLogger),
                     new CsrfMiddleware($requestLogger, $config->appOrigins),
                 ],
-                new RouteDispatcher(new Router(self::routeTable($routes, $services))),
+                new RouteDispatcher(new Router($routes ?? Routes::all($services))),
             ), null, $requestLogger);
         } catch (InvalidConfiguration $invalid) {
             $logger->error('invalid configuration, answering 500 to every request', ['errors' => $invalid->errors]);
@@ -104,20 +102,6 @@ final class ApiFactory
         }
 
         return new ApiKernel(self::alwaysInternalError(), null, $logger);
-    }
-
-    /**
-     * @param list<Route>|Closure(ApiServices): list<Route>|null $routes
-     *
-     * @return list<Route>
-     */
-    private static function routeTable(array|Closure|null $routes, ApiServices $services): array
-    {
-        return match (true) {
-            $routes === null => Routes::all($services),
-            $routes instanceof Closure => $routes($services),
-            default => $routes,
-        };
     }
 
     private static function alwaysInternalError(): Handler

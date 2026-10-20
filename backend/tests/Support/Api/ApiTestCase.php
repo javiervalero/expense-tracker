@@ -43,10 +43,18 @@ abstract class ApiTestCase extends TestCase
     /** Whether `X-Requested-With: XMLHttpRequest` is sent on every call except GET and HEAD. Reset for each test. */
     private bool $sendRequestedWith = true;
 
+    /** The `CloudFront-Viewer-Address` sent on every call, random for each test; null sends none. */
+    private ?string $viewerAddress = null;
+
+    /** The value of the session cookie sent on every call; null sends no cookie. Reset for each test. */
+    private ?string $sessionCookie = null;
+
     final protected function setUp(): void
     {
         $this->browserOrigin = self::defaultBrowserOrigin();
         $this->sendRequestedWith = true;
+        $this->viewerAddress = self::randomViewerAddress();
+        $this->sessionCookie = null;
         $fromEnv = getenv('API_BASE_URL');
         $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
         $this->originHeader = self::localOriginSecret();
@@ -80,6 +88,41 @@ abstract class ApiTestCase extends TestCase
     final protected function withoutRequestedWith(): void
     {
         $this->sendRequestedWith = false;
+    }
+
+    /**
+     * From now on in this test, sends no `CloudFront-Viewer-Address`, so nginx fills it in from the socket (the
+     * default is a random IPv6 address per test, which keeps the throttle buckets of one test from counting another's calls).
+     */
+    final protected function withoutViewerAddress(): void
+    {
+        $this->viewerAddress = null;
+    }
+
+    /**
+     * From now on in this test, sends `Cookie: __Host-session=$value` on every call (null: no cookie). The value is
+     * sent as given, so a test can send a malformed one.
+     */
+    final protected function withSessionCookie(?string $value): void
+    {
+        $this->sessionCookie = $value;
+    }
+
+    /**
+     * The value of the `__Host-session` cookie that the response sets, or null when it sets none. Fails the test if
+     * the response sets it more than once.
+     */
+    final protected function sessionCookieFrom(ResponseInterface $response): ?string
+    {
+        $values = [];
+        foreach ($response->getHeader('Set-Cookie') as $cookie) {
+            if (preg_match('/\A__Host-session=([^;]*)/', $cookie, $match) === 1) {
+                $values[] = $match[1];
+            }
+        }
+        self::assertLessThanOrEqual(1, count($values), 'The response sets the session cookie more than once.');
+
+        return $values[0] ?? null;
     }
 
     /**
@@ -161,7 +204,8 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
-     * The options plus the headers sent by default: `X-Origin-Verify` always, and on every method except GET and HEAD
+     * The options plus the headers sent by default: `X-Origin-Verify` always, the random `CloudFront-Viewer-Address`
+     * (unless the test removed it), the session cookie when the test set one, and on every method except GET and HEAD
      * the browser's `Origin` and `X-Requested-With` (what the CSRF check wants). A header the test sets itself in the
      * options wins, whatever its letter case.
      *
@@ -174,6 +218,12 @@ abstract class ApiTestCase extends TestCase
         $defaults = [];
         if ($this->originHeader !== null) {
             $defaults['X-Origin-Verify'] = $this->originHeader;
+        }
+        if ($this->viewerAddress !== null) {
+            $defaults['CloudFront-Viewer-Address'] = $this->viewerAddress;
+        }
+        if ($this->sessionCookie !== null) {
+            $defaults['Cookie'] = '__Host-session=' . $this->sessionCookie;
         }
         // OPTIONS gets the browser headers too, on purpose: harmless, the middleware exempts it.
         if (!in_array(strtoupper($method), ['GET', 'HEAD'], true)) {
@@ -192,6 +242,15 @@ abstract class ApiTestCase extends TestCase
         }
 
         return $options;
+    }
+
+    /**
+     * A random address in the documentation range `2001:db8::/32`, in CloudFront's form (`[ip]:port`). The /48 and
+     * the /64 both differ from test to test, so no throttle bucket is shared.
+     */
+    private static function randomViewerAddress(): string
+    {
+        return sprintf('[2001:db8:%x:%x::1]:%d', random_int(0, 0xFFFF), random_int(0, 0xFFFF), random_int(1024, 65535));
     }
 
     /**

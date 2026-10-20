@@ -25,6 +25,11 @@ final class InMemorySessionStore implements SessionStore
     public bool $renewFails = false;
     public ?StorageFailure $renewFailure = null;
     public bool $findIgnoresExpiry = false;
+    public ?StorageFailure $createFailure = null;
+    public ?StorageFailure $deleteFailure = null;
+
+    /** @var list<string> 'create' and 'delete' calls, in order */
+    public array $operations = [];
 
     public function __construct(private readonly FrozenClock $clock) {}
 
@@ -45,6 +50,10 @@ final class InMemorySessionStore implements SessionStore
     public function create(string $userId): SessionToken
     {
         ++$this->calls;
+        $this->operations[] = 'create';
+        if ($this->createFailure !== null) {
+            throw $this->createFailure;
+        }
 
         return $this->seed($userId);
     }
@@ -81,6 +90,10 @@ final class InMemorySessionStore implements SessionStore
     public function delete(string $tokenHash): void
     {
         ++$this->calls;
+        $this->operations[] = 'delete';
+        if ($this->deleteFailure !== null) {
+            throw $this->deleteFailure;
+        }
         unset($this->sessions[$tokenHash]);
     }
 }

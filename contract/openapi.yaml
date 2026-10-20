@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.4.0
+  version: 0.5.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -11,7 +11,13 @@ info:
 
     Errors are RFC 9457 problem details (`application/problem+json`, ADR 0003).
 
-    Phase 0 only has the health check; the real endpoints arrive in later phases.
+    Authentication is a session cookie (`__Host-session`, ADR 0004) set by registering or signing in. Every state-changing
+    request (any method except `GET`, `HEAD` and `OPTIONS`) must also carry `X-Requested-With: XMLHttpRequest`, and a
+    browser's `Origin` header must be one of the app's origins; browsers set `Origin` themselves and JavaScript cannot
+    change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
+    needs the session (`security: []` means public); there is no global default.
+
+    Phase 2 adds registration; sign-in and the session endpoints follow. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -20,6 +26,8 @@ servers:
 tags:
   - name: health
     description: Liveness of the API.
+  - name: auth
+    description: Registering, signing in and out, and the current session.
 
 paths:
   /health:
@@ -102,7 +110,80 @@ paths:
             X-Content-Type-Options:
               $ref: '#/components/headers/ContentTypeOptionsNoSniff'
 
+  /auth/register:
+    post:
+      operationId: registerUser
+      tags: [auth]
+      summary: Register a new account
+      description: |
+        Creates an account and signs the new user in: the `201` carries the session cookie. The address is trimmed and
+        lower-cased; the password must have 12 to 128 characters (spaces and Unicode are fine, control characters are
+        not) and is compared byte for byte, with no Unicode normalisation.
+
+        An address that already has an account gets `409`. That is deliberate (a fake success would leave the person
+        unable to sign in); registration is throttled per address to limit probing (`429`). If the request carried a
+        session cookie, that session is ended and a new one is issued.
+
+        Throttling is per client address (5 per hour) and per IPv6 `/48` (20 per hour); every attempt counts, whatever
+        its outcome. The body of a `429` never says which limit fired.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Credentials'
+      responses:
+        '201':
+          description: The account exists and the response signs the user in.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/SetSessionCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
+  parameters:
+    XRequestedWith:
+      name: X-Requested-With
+      in: header
+      required: true
+      description: |
+        Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+        check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+        declared here because browsers set it and JavaScript cannot.
+      schema:
+        type: string
+        const: XMLHttpRequest
+
   headers:
     CacheControlNoStore:
       description: Always `no-store`; nothing in the API may be cached.
@@ -122,6 +203,21 @@ components:
       schema:
         type: string
         example: GET, HEAD
+    SetSessionCookie:
+      description: |
+        Sets the session cookie: `__Host-session=<token>; Max-Age=<seconds>; Path=/; Secure; HttpOnly; SameSite=Lax`.
+        `Max-Age` is the absolute session lifetime. The attributes are the same on every environment.
+      required: true
+      schema:
+        type: string
+        example: __Host-session=0123456789abcdef; Max-Age=604800; Path=/; Secure; HttpOnly; SameSite=Lax
+    RetryAfter:
+      description: Whole seconds to wait before trying again.
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+        example: 60
 
   responses:
     Forbidden:
@@ -178,7 +274,153 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetails'
 
+    BadRequest:
+      description: |
+        Returned when the request body is not valid JSON (or not valid UTF-8, or nested too deeply, or holds a number out of range),
+        or is not a JSON object. The problem never repeats the input.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ContentTooLarge:
+      description: Returned when the request body is larger than 65536 bytes.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    UnsupportedMediaType:
+      description: Returned when the request body is not `application/json` (`charset=utf-8` is the only parameter allowed).
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ValidationFailed:
+      description: |
+        Returned when the body is JSON but a field is wrong. `errors` lists each one by JSON Pointer (`/email`, `/password`, or
+        `/<name>` for an unexpected field) with a message. The messages never repeat the value.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ValidationProblemDetails'
+    Conflict:
+      description: |
+        Returned when the address already has an account. If an earlier attempt of yours ended with a temporary error
+        (`503`), it may have gone through: try signing in.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    TooManyRequests:
+      description: |
+        Returned when the client address (or its network) has used up its attempts for the current window. `Retry-After` is
+        the time to the end of the window. One generic body, whichever limit fired.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ServiceUnavailable:
+      description: |
+        Returned when the storage is overloaded. The request had no lasting effect or may have succeeded; try again after
+        `Retry-After`.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+
   schemas:
+    User:
+      type: object
+      description: The signed-in user. The password is never returned.
+      additionalProperties: false
+      required: [id, email]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque identifier.
+        email:
+          type: string
+          maxLength: 254
+          description: The normalised address (trimmed, lower-case).
+    Credentials:
+      type: object
+      description: An address and a password. Exactly these two members; anything else is a validation error.
+      additionalProperties: false
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          description: |
+            Any case and surrounding spaces are accepted; it is stored trimmed and lower-case. The trimmed address may
+            have at most 254 bytes (a longer one gives `422`), so the raw value has no `maxLength`.
+        password:
+          type: string
+          maxLength: 128
+          writeOnly: true
+          description: |
+            At most 128 characters. Registration also wants at least 12, no control characters and valid UTF-8; sign-in
+            only enforces the maximum.
+    ValidationProblemDetails:
+      description: A problem with the list of invalid fields in `errors`.
+      allOf:
+        - $ref: '#/components/schemas/ProblemDetails'
+        - type: object
+          required: [errors]
+          properties:
+            errors:
+              type: array
+              minItems: 1
+              items:
+                type: object
+                additionalProperties: false
+                required: [pointer, detail]
+                properties:
+                  pointer:
+                    type: string
+                    description: JSON Pointer (RFC 6901) to the invalid member of the request body.
+                    example: /password
+                  detail:
+                    type: string
+                    description: What is wrong, for the person who sent it. Never repeats the value.
     HealthResponse:
       type: object
       description: Body of a successful health check.
