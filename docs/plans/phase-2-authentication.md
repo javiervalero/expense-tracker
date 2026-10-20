@@ -731,6 +731,31 @@ Decisions recorded: a second token collision in a row is a `500` (`SessionCollis
 Carried:
 - **WP14 / threat model:** a corrupt session item makes every request with that cookie a `500` until TTL removes it (fails closed; the cookie is not cleared).
 
+### Notes from the WP9 reviews (2026-10-20)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP9 diff (base `d8bca51`); round 2 (opus/high) on the fix hunks approved, with two LOW hardening items carried to the start of WP11 (below). No CRITICAL or HIGH findings. The security reviewer found that limits hold under races, TTL lag and SDK retries:
+- the increment is one atomic `ADD` returning the new count, so parallel hits get distinct counts;
+- the reset put applies only to an ended window, so it never overwrites a live one, and when two requests reset at once the loser counts into the new window (the integration test forces this interleaving deterministically through an SDK middleware, with no production hook);
+- blocked hits keep counting but never move `expiresAt`, so a flood cannot lock anyone out beyond the window;
+- the throttle never learns whether an account exists, so known and unknown emails get the same writes, decision and `Retry-After`;
+- every failure refuses the request (503 for DynamoDB throttling, otherwise 500), and no email, hash or key reaches a log or exception message.
+
+The fix batch covers:
+- **`LoginAttempt` (API shape for WP11):** `LoginThrottle::attempt()` hands out an opaque `LoginAttempt` only when the decision is allowed; `succeeded(LoginAttempt)` is the only way to delete or refund, and refuses a second use. A refund is tied to the window that counted the attempt (`expiresAt = :countedWindow`), so it can never give back an attempt in a later window.
+- **Clean-up after a correct login is best effort:** each delete and refund runs on its own; a storage error is logged with the scope and error code only and never fails the login.
+- **Self-repair:** the reset condition is the exact complement of the increment guard, so a bucket with a missing or non-numeric `expiresAt` becomes a fresh window instead of a permanent `500`. A far-future `expiresAt` stays a `500` (fails closed).
+- The `/48` and the throttle sort key are each defined once; test names and setup tidied; IPv4 whitespace cases added to the key checks.
+
+Carried:
+- **WP11, first step (round 2 LOW-1 and LOW-2, before any handler uses `LoginAttempt`):**
+  - `LoginAttempt` can be cloned or serialised, and a copy is accepted a second time (round 2 proved it: two refunds and two deletes). Add `__clone`, `__serialize` and `__unserialize` that throw `LogicException`, as `SessionToken` and `User` do, with tests.
+  - The `@internal` factory `LoginAttempt::issuedBy()` and `consume()` are public, so any code holding the `LoginThrottle` could forge an attempt, and `ThrottleStore::refund()` / `delete()` can be called directly. Add an architecture test (like `PasswordHasherConstructionTest`) that fails if `LoginAttempt::issuedBy`, `->consume(`, or a throttle store's `->refund(` / `->delete(` appear anywhere outside `LoginThrottle.php`.
+  - `NetworkPrefix` should derive its byte count with `intdiv` (or a test should pin the prefix bits to a multiple of 8), so it can never disagree with `AuthKeys`.
+- **WP11:** a blocked attempt must never reach `password_verify` or `succeeded()`; a wrong password must never call `succeeded()`; `succeeded()` runs only after the password is verified (the account-bucket delete is deliberately unconditional: any real success resets it, A13); test all three.
+- **WP13:** the race test must send truly concurrent `UpdateItem`s (for example `executeAsync` / `CommandPool`) and expect exactly `limit` allowed; the WP9 integration test is sequential.
+- **Phase 7:** alarm on `CorruptItem` and on the warning "Login throttle clean-up after a successful login failed" (an IAM gap such as a missing `dynamodb:DeleteItem` would otherwise show up only as warnings); rely on API Gateway / WAF rate limits for floods (each blocked login still costs two or three DynamoDB writes).
+- **WP14 (ADR notes / threat model), accepted by design (A13, A14, R3, owner decision 5):** fixed windows allow a burst of up to twice a limit around a window boundary; IPv4 has no coarse tier; each successful login by the owner gives an attacker a fresh 10 attempts on that account; an attacker whose address is already blocked can still push a victim's account bucket over its limit (a lockout for at most 15 minutes); the account key is an unsalted SHA-256 of the email, so someone who can read the table can confirm that a guessed email was tried in the last 15 minutes (registered emails are stored in plain text anyway; an HMAC with an SSM key is the upgrade if ever wanted).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
