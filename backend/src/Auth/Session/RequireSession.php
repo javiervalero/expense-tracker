@@ -39,8 +39,18 @@ final readonly class RequireSession implements Handler
 
     private function unauthorized(Authentication $authentication): Response
     {
+        return self::challenge($authentication->cookieWasSent());
+    }
+
+    /**
+     * The `401` of a request without a valid session: always the `Session` challenge, and the clearing cookie when
+     * the request carried a cookie (callers pass true whenever a session cookie was presented, valid or not). Shared
+     * with handlers that find, after the guard, that the session is of no use.
+     */
+    public static function challenge(bool $clearCookie): Response
+    {
         $headers = ['WWW-Authenticate' => [self::CHALLENGE]];
-        if ($authentication->cookieWasSent()) {
+        if ($clearCookie) {
             $headers['Set-Cookie'] = [SessionCookie::clear()];
         }
 

@@ -91,6 +91,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Current user
+         * @description Returns the signed-in user. It never sets a cookie on success (the sliding expiry is renewed on the server and
+         *     the cookie's `Max-Age` is the absolute lifetime). Without a valid session (no cookie, a malformed or repeated one, an unknown or
+         *     expired session, or a session whose user no longer exists) the answer is `401` with `WWW-Authenticate: Session`;
+         *     when the request carried a session cookie, the `401` also clears it. A session of a user that no longer exists
+         *     is ended as well.
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sign out
+         * @description Ends the session the request carries and clears the cookie. The answer is always `204` with the clearing cookie,
+         *     also when there is no cookie, or it is malformed, repeated, unknown or already ended, so it is safe to repeat and
+         *     says nothing about whether a session existed. It needs no session, but it is a state-changing request, so the
+         *     cross-site request check applies and a forged sign-out is refused with `403`. Only the session that the request
+         *     carries is ended; this is not "sign out everywhere". If the storage fails (`503`) the session may still be
+         *     active: try again.
+         */
+        post: operations["logoutUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -295,6 +344,27 @@ export interface components {
             };
         };
         /**
+         * @description Returned when the request has no valid session. One answer for every cause (no cookie, malformed, repeated,
+         *     unknown, expired or ended), so it never says why. When the request carried a session cookie, the response also
+         *     clears it with `Set-Cookie`.
+         */
+        SessionRequired: {
+            headers: {
+                "WWW-Authenticate": components["headers"]["WWWAuthenticate"];
+                /**
+                 * @description Present only when the request carried a session cookie: `__Host-session=; Max-Age=0; Path=/; Secure;
+                 *     HttpOnly; SameSite=Lax`.
+                 */
+                "Set-Cookie"?: string;
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /**
          * @description Returned when the client address (or its network, or the account) has used up its attempts for the current window. `Retry-After` is
          *     the time to the end of the window. One generic body, whichever limit fired.
          */
@@ -346,6 +416,8 @@ export interface components {
          *     `Max-Age` is the absolute session lifetime. The attributes are the same on every environment.
          */
         SetSessionCookie: string;
+        /** @description Clears the session cookie: `__Host-session=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax`. */
+        ClearSessionCookie: string;
         /** @description The challenge required on every `401` (RFC 9110): the scheme name `Session`, meaning the session cookie. */
         WWWAuthenticate: "Session";
         /** @description Whole seconds to wait before trying again. */
@@ -524,6 +596,65 @@ export interface operations {
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
             429: components["responses"]["TooManyRequests"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session is valid. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["User"];
+                };
+            };
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    logoutUser: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The session is ended, or there was none. */
+            204: {
+                headers: {
+                    "Set-Cookie": components["headers"]["ClearSessionCookie"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };

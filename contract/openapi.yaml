@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.6.0
+  version: 0.7.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration and sign-in; the other session endpoints follow. The other endpoints arrive in later phases.
+    Phase 2 adds registration, sign-in, the current user and sign-out. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -232,7 +232,86 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Current user
+      description: |
+        Returns the signed-in user. It never sets a cookie on success (the sliding expiry is renewed on the server and
+        the cookie's `Max-Age` is the absolute lifetime). Without a valid session (no cookie, a malformed or repeated one, an unknown or
+        expired session, or a session whose user no longer exists) the answer is `401` with `WWW-Authenticate: Session`;
+        when the request carried a session cookie, the `401` also clears it. A session of a user that no longer exists
+        is ended as well.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The session is valid.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /auth/logout:
+    post:
+      operationId: logoutUser
+      tags: [auth]
+      summary: Sign out
+      description: |
+        Ends the session the request carries and clears the cookie. The answer is always `204` with the clearing cookie,
+        also when there is no cookie, or it is malformed, repeated, unknown or already ended, so it is safe to repeat and
+        says nothing about whether a session existed. It needs no session, but it is a state-changing request, so the
+        cross-site request check applies and a forged sign-out is refused with `403`. Only the session that the request
+        carries is ended; this is not "sign out everywhere". If the storage fails (`503`) the session may still be
+        active: try again.
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204':
+          description: The session is ended, or there was none.
+          headers:
+            Set-Cookie:
+              $ref: '#/components/headers/ClearSessionCookie'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: __Host-session
+      description: |
+        The session cookie set by registering or signing in (ADR 0004). It is `HttpOnly`, so scripts never see it; the
+        browser sends it with every same-origin request.
+
   parameters:
     XRequestedWith:
       name: X-Requested-With
@@ -273,6 +352,13 @@ components:
       schema:
         type: string
         example: __Host-session=0123456789abcdef; Max-Age=604800; Path=/; Secure; HttpOnly; SameSite=Lax
+    ClearSessionCookie:
+      description: |
+        Clears the session cookie: `__Host-session=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax`.
+      required: true
+      schema:
+        type: string
+        example: __Host-session=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax
     WWWAuthenticate:
       description: |
         The challenge required on every `401` (RFC 9110): the scheme name `Session`, meaning the session cookie.
@@ -411,6 +497,30 @@ components:
       headers:
         WWW-Authenticate:
           $ref: '#/components/headers/WWWAuthenticate'
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    SessionRequired:
+      description: |
+        Returned when the request has no valid session. One answer for every cause (no cookie, malformed, repeated,
+        unknown, expired or ended), so it never says why. When the request carried a session cookie, the response also
+        clears it with `Set-Cookie`.
+      headers:
+        WWW-Authenticate:
+          $ref: '#/components/headers/WWWAuthenticate'
+        Set-Cookie:
+          description: |
+            Present only when the request carried a session cookie: `__Host-session=; Max-Age=0; Path=/; Secure;
+            HttpOnly; SameSite=Lax`.
+          required: false
+          schema:
+            type: string
+            example: __Host-session=; Max-Age=0; Path=/; Secure; HttpOnly; SameSite=Lax
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
         X-Content-Type-Options:

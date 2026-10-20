@@ -31,6 +31,6 @@ final readonly class RouteDispatcher implements Handler
             return $result->problemResponse();
         }
 
-        return $route->handler->handle($request->withAttributes([Request::ROUTE_PARAMS => $result->params]));
+        return $route->handler()->handle($request->withAttributes([Request::ROUTE_PARAMS => $result->params]));
     }
 }
