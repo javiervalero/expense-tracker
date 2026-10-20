@@ -13,7 +13,6 @@ use App\Http\ClientAddress;
  */
 final class NetworkPrefix
 {
-    private const PREFIX_BYTES = AuthKeys::IPV6_NETWORK_PREFIX_BITS / 8;
     private const IPV6_BYTES = 16;
 
     public static function of(ClientAddress $address): ?string
@@ -26,7 +25,8 @@ final class NetworkPrefix
         if ($binary === false || strlen($binary) !== self::IPV6_BYTES) {
             return null;
         }
-        $prefix = substr($binary, 0, self::PREFIX_BYTES) . str_repeat("\0", self::IPV6_BYTES - self::PREFIX_BYTES);
+        $prefixBytes = intdiv(AuthKeys::IPV6_NETWORK_PREFIX_BITS, 8);
+        $prefix = substr($binary, 0, $prefixBytes) . str_repeat("\0", self::IPV6_BYTES - $prefixBytes);
 
         return inet_ntop($prefix) . '/' . AuthKeys::IPV6_NETWORK_PREFIX_BITS;
     }

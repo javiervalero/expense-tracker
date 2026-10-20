@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Architecture;
 
+use App\Tests\Architecture\Support\TokenScanner;
 use PHPUnit\Framework\TestCase;
 
 /**
@@ -20,7 +21,6 @@ final class PasswordHasherConstructionTest extends TestCase
 {
     private const FIXTURES = __DIR__ . '/Fixtures/passwordhasher';
     private const CLASS_NAME = 'passwordhasher';
-    private const NAME_TOKENS = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
 
     public function testCleanFixtureHasNoConstruction(): void
     {
@@ -50,11 +50,8 @@ final class PasswordHasherConstructionTest extends TestCase
         $own = $root . '/Auth/Password/PasswordHasher.php';
         self::assertFileExists($own);
         $hits = [];
-        $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
-        foreach ($files as $entry) {
-            if ($entry instanceof \SplFileInfo && $entry->getExtension() === 'php' && $entry->getPathname() !== $own) {
-                $hits = [...$hits, ...$this->scanFile($entry->getPathname())];
-            }
+        foreach (TokenScanner::phpFilesExcept($root, $own) as $path) {
+            $hits = [...$hits, ...$this->scanFile($path)];
         }
 
         self::assertSame([], $hits, 'Use PasswordHasher::production() in src/, never new PasswordHasher.');
@@ -65,17 +62,15 @@ final class PasswordHasherConstructionTest extends TestCase
      */
     private function scanFile(string $path): array
     {
-        $source = file_get_contents($path);
-        self::assertIsString($source, $path);
-        $tokens = array_values(\PhpToken::tokenize($source));
+        $tokens = TokenScanner::tokens($path);
         $hits = [];
 
         foreach ($tokens as $index => $token) {
-            if (!$token->is(self::NAME_TOKENS) || !$this->isHasherName($token->text)) {
+            if (!$token->is(TokenScanner::NAME_TOKENS) || !$this->isHasherName($token->text)) {
                 continue;
             }
-            $previous = $this->neighbour($tokens, $index, -1);
-            $next = $this->neighbour($tokens, $index, 1);
+            $previous = TokenScanner::neighbour($tokens, $index, -1);
+            $next = TokenScanner::neighbour($tokens, $index, 1);
             if ($previous?->is(T_NEW) === true) {
                 $hits[] = "{$path}:{$token->line}: new {$token->text}";
             } elseif ($next?->is(T_AS) === true) {
@@ -88,22 +83,6 @@ final class PasswordHasherConstructionTest extends TestCase
 
     private function isHasherName(string $name): bool
     {
-        $name = strtolower($name);
-
-        return substr($name, (int) strrpos('\\' . $name, '\\')) === self::CLASS_NAME;
-    }
-
-    /**
-     * @param list<\PhpToken> $tokens
-     */
-    private function neighbour(array $tokens, int $index, int $step): ?\PhpToken
-    {
-        for ($i = $index + $step; isset($tokens[$i]); $i += $step) {
-            if (!$tokens[$i]->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT])) {
-                return $tokens[$i];
-            }
-        }
-
-        return null;
+        return TokenScanner::lastSegment($name) === self::CLASS_NAME;
     }
 }

@@ -10,7 +10,8 @@ use LogicException;
  * Proof that one login attempt was counted and allowed, and where: the buckets it was counted in, each with the end of
  * the window it was counted in. Opaque to callers; the only thing to do with it is
  * {@see LoginThrottle::succeeded()}, which accepts it once. Only LoginThrottle can create one (the constructor is
- * private and the factory needs the LoginThrottle itself), so a refund can only follow a counted, allowed attempt.
+ * private and the factory needs the LoginThrottle itself), so a refund can only follow a counted, allowed attempt. It cannot be cloned, serialised or unserialised, because a
+ * copy would allow a double refund, and `var_dump` and `print_r` show nothing (the buckets hold the account key).
  */
 final class LoginAttempt
 {
@@ -46,5 +47,34 @@ final class LoginAttempt
         $this->used = true;
 
         return $this->buckets;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function __debugInfo(): array
+    {
+        return [];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function __serialize(): array
+    {
+        throw new LogicException('A login attempt must not be serialised.');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     */
+    public function __unserialize(array $data): void
+    {
+        throw new LogicException('A login attempt must not be unserialised.');
+    }
+
+    public function __clone()
+    {
+        throw new LogicException('A login attempt must not be cloned.');
     }
 }

@@ -63,4 +63,12 @@ final class NetworkPrefixTest extends TestCase
         self::assertNotNull($prefix);
         self::assertStringEndsWith('/' . AuthKeys::IPV6_NETWORK_PREFIX_BITS, $prefix);
     }
+
+    public function testThePrefixLengthIsWholeBytes(): void
+    {
+        $bits = (new \ReflectionClassConstant(AuthKeys::class, 'IPV6_NETWORK_PREFIX_BITS'))->getValue();
+
+        self::assertIsInt($bits);
+        self::assertSame(0, $bits % 8);
+    }
 }
