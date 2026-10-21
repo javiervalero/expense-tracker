@@ -236,7 +236,7 @@ final class SessionRepositoryTest extends TestCase
             $this->repository([$token])->create(self::ID);
             self::fail('expected StorageFailure');
         } catch (StorageFailure $failure) {
-            self::assertSame(SessionStore::CORRUPT_ITEM, $failure->awsErrorCode);
+            self::assertSame(StorageFailure::CORRUPT_ITEM, $failure->awsErrorCode);
         }
         $this->assertCommandNames('PutItem', 'GetItem');
     }
@@ -305,7 +305,7 @@ final class SessionRepositoryTest extends TestCase
             $this->repository()->find($hash, self::NOW);
             self::fail('expected StorageFailure');
         } catch (StorageFailure $failure) {
-            self::assertSame(SessionStore::CORRUPT_ITEM, $failure->awsErrorCode);
+            self::assertSame(StorageFailure::CORRUPT_ITEM, $failure->awsErrorCode);
             self::assertSame('GetItem', $failure->operation);
         }
     }
@@ -395,7 +395,7 @@ final class SessionRepositoryTest extends TestCase
             $this->repository()->renew(Session::start(self::ID, hash('sha256', 'invented'), self::NOW), self::NOW + 900);
             self::fail('expected StorageFailure');
         } catch (StorageFailure $failure) {
-            self::assertSame(SessionStore::CORRUPT_ITEM, $failure->awsErrorCode);
+            self::assertSame(StorageFailure::CORRUPT_ITEM, $failure->awsErrorCode);
             self::assertSame('UpdateItem', $failure->operation);
         }
     }

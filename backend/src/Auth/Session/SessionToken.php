@@ -23,7 +23,7 @@ final class SessionToken implements JsonSerializable
     public const LENGTH = 43;
 
     private const BYTES = 32;
-    private const FORMAT = '/\A[A-Za-z0-9_-]{43}\z/D';
+    private const FORMAT = '/\A[A-Za-z0-9_-]{' . self::LENGTH . '}\z/D';
 
     /** @var WeakMap<self, string>|null */
     private static ?WeakMap $values = null;

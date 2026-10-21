@@ -51,7 +51,6 @@ use App\Infrastructure\Logging\JsonLogger;
  */
 final readonly class RegisterHandler implements Handler
 {
-    private const TOO_MANY = 'Too many attempts. Try again later.';
     private const TAKEN = 'An account with this email address already exists. If your previous attempt ended with a temporary error, it may have gone through: try signing in.';
 
     public function __construct(
@@ -96,7 +95,13 @@ final readonly class RegisterHandler implements Handler
     {
         $decision = $this->throttle->attempt(ClientIpMiddleware::addressOf($request));
         if (!$decision->isAllowed) {
-            throw HttpProblem::of(429, self::TOO_MANY, headers: ['Retry-After' => [(string) $decision->retryAfterSeconds]]);
+            // Never the address: only the reason.
+            $this->logger->warning('registration failed', [
+                'requestId' => $request->attribute(Request::REQUEST_ID),
+                'reason' => 'throttled',
+            ]);
+
+            throw TooManyAttempts::problem($decision->retryAfterSeconds);
         }
     }
 

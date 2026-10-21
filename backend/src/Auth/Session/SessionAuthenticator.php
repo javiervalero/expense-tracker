@@ -54,8 +54,7 @@ final readonly class SessionAuthenticator
     private function withoutToken(SessionCookieState $state, Request $request): Authentication
     {
         if ($state === SessionCookieState::Duplicate) {
-            // No values: two attacker-chosen cookies must not reach the log.
-            $this->logger->warning('duplicate session cookie', ['requestId' => $request->attribute(Request::REQUEST_ID)]);
+            SessionCookie::warnDuplicate($this->logger, $request);
         }
 
         return Authentication::anonymous(match ($state) {
@@ -76,7 +75,7 @@ final readonly class SessionAuthenticator
         } catch (ConditionFailed) {
             return false;
         } catch (StorageFailure $failure) {
-            if ($failure->awsErrorCode === SessionStore::CORRUPT_ITEM) {
+            if ($failure->awsErrorCode === StorageFailure::CORRUPT_ITEM) {
                 throw $failure; // A bad item is a bug or tampering, not a hiccup: surface it as a 500.
             }
             $this->logger->warning('session renewal failed', [

@@ -6,13 +6,14 @@ namespace App\Auth\Session;
 
 use App\Http\Cookie\CookieHeader;
 use App\Http\Request;
+use App\Infrastructure\Logging\JsonLogger;
 use InvalidArgumentException;
 
 /**
  * The session cookie (A1, A20). Attributes are always `Max-Age`, `Path=/`, `Secure`, `HttpOnly`, `SameSite=Lax`,
  * in that order, with no `Domain`; the same string is used locally and on AWS. The `__Host-` prefix makes the
  * browser enforce `Secure`, `Path=/` and no `Domain`. `Max-Age` is the absolute session lifetime, so renewing
- * the session never needs a new Set-Cookie. Logging of the duplicate case belongs to the caller.
+ * the session never needs a new Set-Cookie. The caller logs the duplicate case, through {@see self::warnDuplicate()}.
  */
 final class SessionCookie
 {
@@ -34,6 +35,12 @@ final class SessionCookie
     public static function clear(): string
     {
         return self::build('', 0);
+    }
+
+    /** The one warning for a repeated session cookie (A20). No values: two attacker-chosen cookies must not reach the log. */
+    public static function warnDuplicate(JsonLogger $logger, Request $request): void
+    {
+        $logger->warning('duplicate session cookie', ['requestId' => $request->attribute(Request::REQUEST_ID)]);
     }
 
     public static function read(Request $request): SessionCookieRead

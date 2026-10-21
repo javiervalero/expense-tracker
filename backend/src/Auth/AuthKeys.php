@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Auth;
 
+use App\Http\ClientAddress;
 use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\Id\Uuid;
 use InvalidArgumentException;
@@ -23,6 +24,12 @@ final class AuthKeys
     /** The coarse IPv6 throttle tier, the one place the `/48` is defined: NetworkPrefix derives its byte count and suffix from it. */
     public const int IPV6_NETWORK_PREFIX_BITS = 48;
 
+    /** The IPv6 prefix of the per-address throttle key (`/64`); ClientIp writes it, and ClientIpTest pins the two together. */
+    public const int IPV6_ADDRESS_PREFIX_BITS = 64;
+
+    /** The sort key of a session item (shared with SessionRepository, which checks it on read). Not `SESSION_SORT_KEY`: NoNativeSessionsTest rejects any name starting `session_`. */
+    public const string AUTH_SESSION_SORT_KEY = 'SESSION';
+
     /** The sort key of every throttle bucket (shared with ThrottleCounter, which checks it on read). */
     public const string THROTTLE_SORT_KEY = 'THROTTLE';
 
@@ -30,8 +37,6 @@ final class AuthKeys
     public const array THROTTLE_SCOPES = [self::LOGIN_EMAIL, self::LOGIN_IP, self::LOGIN_NET, self::REGISTER_IP, self::REGISTER_NET];
 
     private const SHA256_HEX = '/\A[0-9a-f]{64}\z/D';
-    private const UNKNOWN_ADDRESS = 'unknown';
-    private const IPV6_ADDRESS_PREFIX_BITS = 64;
 
     /**
      * @return array{PK: string, SK: string}
@@ -66,7 +71,7 @@ final class AuthKeys
             throw new InvalidArgumentException('A session token hash is 64 lower-case hex characters.');
         }
 
-        return [TableLayout::PK => 'SESSION#' . $tokenHash, TableLayout::SK => 'SESSION'];
+        return [TableLayout::PK => 'SESSION#' . $tokenHash, TableLayout::SK => self::AUTH_SESSION_SORT_KEY];
     }
 
     /**
@@ -83,7 +88,7 @@ final class AuthKeys
     {
         $valid = match ($scope) {
             self::LOGIN_EMAIL => preg_match(self::SHA256_HEX, $key) === 1,
-            self::LOGIN_IP, self::REGISTER_IP => $key === self::UNKNOWN_ADDRESS
+            self::LOGIN_IP, self::REGISTER_IP => $key === ClientAddress::UNKNOWN_KEY
                 || filter_var($key, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false
                 || self::isIpv6Prefix($key, self::IPV6_ADDRESS_PREFIX_BITS),
             self::LOGIN_NET, self::REGISTER_NET => self::isIpv6Prefix($key, self::IPV6_NETWORK_PREFIX_BITS),

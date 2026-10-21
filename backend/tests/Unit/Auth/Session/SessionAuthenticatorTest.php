@@ -232,13 +232,13 @@ final class SessionAuthenticatorTest extends TestCase
     {
         $token = $this->newSession();
         $this->clock->advance(900);
-        $this->store->renewFailure = new StorageFailure('UpdateItem', SessionStore::CORRUPT_ITEM);
+        $this->store->renewFailure = new StorageFailure('UpdateItem', StorageFailure::CORRUPT_ITEM);
 
         try {
             $this->authenticator->authenticate(self::requestWith($token));
             self::fail('expected StorageFailure');
         } catch (StorageFailure $failure) {
-            self::assertSame(SessionStore::CORRUPT_ITEM, $failure->awsErrorCode);
+            self::assertSame(StorageFailure::CORRUPT_ITEM, $failure->awsErrorCode);
         }
         self::assertSame('', $this->logged());
     }

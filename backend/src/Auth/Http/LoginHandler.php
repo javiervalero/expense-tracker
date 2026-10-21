@@ -10,6 +10,7 @@ use App\Auth\Password\PasswordVerifier;
 use App\Auth\Password\PasswordPolicy;
 use App\Auth\Password\PasswordViolation;
 use App\Auth\Session\CarriedSession;
+use App\Auth\Session\RequireSession;
 use App\Auth\Session\SessionCookie;
 use App\Auth\Session\SessionLifetime;
 use App\Auth\Session\SessionStore;
@@ -50,9 +51,7 @@ use App\Infrastructure\Logging\JsonLogger;
  */
 final readonly class LoginHandler implements Handler
 {
-    private const TOO_MANY = 'Too many attempts. Try again later.';
     private const INVALID_CREDENTIALS = 'Invalid email or password.';
-    private const CHALLENGE = 'Session';
 
     public function __construct(
         private LoginThrottle $throttle,
@@ -86,7 +85,7 @@ final readonly class LoginHandler implements Handler
         }
 
         // From here on the password is verified.
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, $request->attribute(Request::REQUEST_ID));
         $this->upgradeHashIfOutdated($request, $user, $input->password());
 
         $cookie = SessionCookie::issue($this->sessions->create($user->userId), SessionLifetime::ABSOLUTE);
@@ -129,7 +128,7 @@ final readonly class LoginHandler implements Handler
         if (!$result->decision->isAllowed || $result->attempt === null) {
             $this->logFailure($request, 'throttled');
 
-            throw HttpProblem::of(429, self::TOO_MANY, headers: ['Retry-After' => [(string) $result->decision->retryAfterSeconds]]);
+            throw TooManyAttempts::problem($result->decision->retryAfterSeconds);
         }
 
         return $result->attempt;
@@ -140,7 +139,7 @@ final readonly class LoginHandler implements Handler
     {
         $this->logFailure($request, $reason, $userId);
 
-        return HttpProblem::of(401, self::INVALID_CREDENTIALS, headers: ['WWW-Authenticate' => [self::CHALLENGE]]);
+        return HttpProblem::of(401, self::INVALID_CREDENTIALS, headers: ['WWW-Authenticate' => [RequireSession::CHALLENGE]]);
     }
 
     private function logFailure(Request $request, string $reason, ?string $userId = null): void

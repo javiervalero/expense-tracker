@@ -10,9 +10,6 @@ use App\Infrastructure\DynamoDb\StorageFailure;
 /** Where sessions live. {@see SessionRepository} is the DynamoDB one; tests use an in-memory one. */
 interface SessionStore
 {
-    /** The error code of a StorageFailure for an item that cannot be trusted; a caller must not paper over it. */
-    public const string CORRUPT_ITEM = 'CorruptItem';
-
     /**
      * Starts a session for the user and returns its token, which only the caller may put in a cookie.
      *

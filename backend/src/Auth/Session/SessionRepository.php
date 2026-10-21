@@ -23,7 +23,6 @@ use InvalidArgumentException;
 final readonly class SessionRepository implements SessionStore
 {
     private const COLLISION = 'SessionCollision';
-    private const SESSION_SORT_KEY = 'SESSION';
     private const MAX_ATTEMPTS = 2;
     /** How far ahead of the clock a creation time may be before the item is not believed. */
     private const CLOCK_SKEW_SECONDS = 300;
@@ -154,13 +153,13 @@ final readonly class SessionRepository implements SessionStore
         foreach (['createdAt', 'renewedAt', 'absoluteExpiresAt', TableLayout::EXPIRES_AT] as $field) {
             $value = $item[$field] ?? null;
             if (!is_int($value) || $value < 1) {
-                throw new StorageFailure($operation, SessionStore::CORRUPT_ITEM);
+                throw new StorageFailure($operation, StorageFailure::CORRUPT_ITEM);
             }
             $times[$field] = $value;
         }
         if (
             ($item[TableLayout::PK] ?? null) !== AuthKeys::session($tokenHash)[TableLayout::PK]
-            || ($item[TableLayout::SK] ?? null) !== self::SESSION_SORT_KEY
+            || ($item[TableLayout::SK] ?? null) !== AuthKeys::AUTH_SESSION_SORT_KEY
             || !is_string($userId)
             || !Uuid::isValid($userId)
             || $times['renewedAt'] < $times['createdAt']
@@ -168,7 +167,7 @@ final readonly class SessionRepository implements SessionStore
             || $times['createdAt'] > $now + self::CLOCK_SKEW_SECONDS
             || $times[TableLayout::EXPIRES_AT] > $times['absoluteExpiresAt']
         ) {
-            throw new StorageFailure($operation, SessionStore::CORRUPT_ITEM);
+            throw new StorageFailure($operation, StorageFailure::CORRUPT_ITEM);
         }
 
         // If ABSOLUTE was lowered since the item was written, the session just ends sooner.

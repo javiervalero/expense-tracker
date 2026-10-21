@@ -24,8 +24,7 @@ final readonly class CarriedSession
     {
         $carried = SessionCookie::read($request);
         if ($carried->state === SessionCookieState::Duplicate) {
-            // Same message as SessionAuthenticator. No values: two attacker-chosen cookies must not reach the log.
-            $this->logger->warning('duplicate session cookie', ['requestId' => $request->attribute(Request::REQUEST_ID)]);
+            SessionCookie::warnDuplicate($this->logger, $request);
         }
         if ($carried->state === SessionCookieState::Present && $carried->token !== null) {
             $this->sessions->delete($carried->token->hash());

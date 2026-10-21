@@ -148,7 +148,7 @@ are read only by the tests, but keep the `.env.example` value unless you know wh
 | `AWS_ACCESS_KEY_ID` | Yes | Fake access key, accepted only by the emulators (also the S3 emulator's root user) | `localdev` |
 | `AWS_SECRET_ACCESS_KEY` | Yes | Fake secret key, the pair of the line above (also the S3 emulator's root password) | `localdevsecret` |
 | `AWS_EC2_METADATA_DISABLED` | No | Stops the SDK from asking the EC2 metadata service for credentials | `true` |
-| `DYNAMODB_ENDPOINT` | Yes | DynamoDB Local, as seen from other containers. Local stand-ins only; unset on AWS. The API refuses to start without it | `http://dynamodb:8000` |
+| `DYNAMODB_ENDPOINT` | Yes | DynamoDB Local, as seen from other containers. Required locally (`APP_ENV=local`): the API refuses to start without it. Local stand-ins only; unset on AWS | `http://dynamodb:8000` |
 | `DYNAMODB_TABLE` | Yes | The app table that `make up` creates from `infra/dynamodb/table.json` | `expense-tracker-local` |
 | `SQS_ENDPOINT` | No | ElasticMQ, as seen from other containers | `http://sqs:9324` |
 | `SQS_RECEIPTS_QUEUE_URL` | Yes | URL of the `receipts` queue | `http://sqs:9324/000000000000/receipts` |
@@ -192,8 +192,9 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | Target | What it does |
 |---|---|
 | `make test` | All tests: backend unit and architecture, `docker/local-aws` unit, front-end (Vitest), then starts the stack for conformance and integration. Leaves the stack running |
-| `make test-fast` | Like `make test`, without the tests marked `slow` (the dead-letter test, about 35 s) |
+| `make test-fast` | Like `make test`, without the tests marked `slow` (the dead-letter test, about 35 s, and the production Argon2id hash) |
 | `make test-unit` | Backend unit and architecture tests, 80% coverage bar on `src/` |
+| `make test-slow-unit` | Backend unit tests marked `slow`: one Argon2id hash at production cost, timed into `build/tmp/argon2-timing.txt` |
 | `make test-local-aws` | `docker/local-aws` unit tests, 80% coverage bar |
 | `make frontend-test` | Front-end Vitest with coverage, 80% bar |
 | `make test-conformance` | Conformance tests against DynamoDB Local, ElasticMQ and the S3 emulator (needs `make up`) |

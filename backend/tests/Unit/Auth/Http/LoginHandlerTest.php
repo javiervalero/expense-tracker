@@ -631,7 +631,8 @@ final class LoginHandlerTest extends TestCase
         $response = $this->handler()->handle(self::request(self::credentials()));
 
         self::assertSame(200, $response->status);
-        self::assertStringContainsString('Login throttle clean-up after a successful login failed', $this->logged());
+        self::assertStringContainsString('login throttle clean-up failed after a successful login', $this->logged());
+        self::assertStringContainsString('"requestId":"req-1"', $this->logged());
     }
 
     // --- blocked -------------------------------------------------------------------------------------------------

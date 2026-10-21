@@ -25,7 +25,6 @@ use App\Infrastructure\DynamoDb\TableLayout;
  */
 final readonly class ThrottleCounter implements ThrottleStore
 {
-    private const CORRUPT_ITEM = 'CorruptItem';
     private const RACE = 'ThrottleRace';
     /** How far past the end of the longest possible window a stored `expiresAt` may be before it is not believed. */
     private const CLOCK_SKEW_SECONDS = 300;
@@ -179,7 +178,7 @@ final readonly class ThrottleCounter implements ThrottleStore
             || $expiresAt < 1
             || $expiresAt > $windowEnd + self::CLOCK_SKEW_SECONDS
         ) {
-            throw new StorageFailure($operation, self::CORRUPT_ITEM);
+            throw new StorageFailure($operation, StorageFailure::CORRUPT_ITEM);
         }
 
         return ['attempts' => $attempts, 'expiresAt' => $expiresAt];

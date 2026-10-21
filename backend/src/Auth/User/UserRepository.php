@@ -30,7 +30,6 @@ final readonly class UserRepository
      */
     public const DUMMY_USER_ID = '00000000-0000-4000-8000-000000000000';
 
-    private const CORRUPT_ITEM = 'CorruptItem';
     private const DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
     private const CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
 
@@ -207,6 +206,6 @@ final readonly class UserRepository
 
     private static function corrupt(string $operation): StorageFailure
     {
-        return new StorageFailure($operation, self::CORRUPT_ITEM);
+        return new StorageFailure($operation, StorageFailure::CORRUPT_ITEM);
     }
 }

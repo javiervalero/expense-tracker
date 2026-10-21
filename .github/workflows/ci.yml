@@ -58,6 +58,10 @@ jobs:
       - name: Unit and architecture tests with coverage (80% bar on src/)
         run: make RUN_PHP= test-unit
 
+      # The tests excluded from test-unit by the `slow` group, notably the one Argon2id hash at production cost.
+      - name: Slow unit tests (production-cost Argon2id)
+        run: make RUN_PHP= test-slow-unit
+
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_PHP= audit
 

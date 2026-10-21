@@ -14,6 +14,9 @@ use RuntimeException;
  */
 final class StorageFailure extends RuntimeException
 {
+    /** The error code of a stored item that does not have the shape the code wrote: a bug or tampering, not a storage hiccup. */
+    public const string CORRUPT_ITEM = 'CorruptItem';
+
     public function __construct(
         public readonly string $operation,
         public readonly ?string $awsErrorCode,

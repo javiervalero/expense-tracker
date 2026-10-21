@@ -23,6 +23,7 @@ use PHPUnit\Framework\TestCase;
 final class LoginThrottleTest extends TestCase
 {
     private const IPV6 = '2001:db8:1:2::1';
+    private const REQUEST_ID = 'req-1';
     private const IPV6_PREFIX_64 = '2001:db8:1:2::/64';
     private const IPV6_PREFIX_48 = '2001:db8:1::/48';
 
@@ -220,7 +221,7 @@ final class LoginThrottleTest extends TestCase
     {
         $attempt = $this->allowedAttempt(self::ipv6());
 
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
 
         self::assertSame(
             ['delete|LOGIN-EMAIL|' . self::emailKey(), 'refund|LOGIN-IP|' . self::IPV6_PREFIX_64, 'refund|LOGIN-NET|' . self::IPV6_PREFIX_48],
@@ -237,7 +238,7 @@ final class LoginThrottleTest extends TestCase
 
     public function testSuccessFromIpv4HasNoNetworkRefund(): void
     {
-        $this->throttle->succeeded($this->allowedAttempt(self::ipv4()));
+        $this->throttle->succeeded($this->allowedAttempt(self::ipv4()), self::REQUEST_ID);
 
         self::assertSame(['delete|LOGIN-EMAIL|' . self::emailKey(), 'refund|LOGIN-IP|192.0.2.7'], $this->store->calls);
     }
@@ -246,7 +247,7 @@ final class LoginThrottleTest extends TestCase
     {
         $attempt = $this->throttle->attempt(self::email(), self::ipv6())->attempt;
         self::assertNotNull($attempt);
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
 
         self::assertSame(0, $this->store->count(AuthKeys::LOGIN_EMAIL, self::emailKey()));
         self::assertSame(0, $this->store->count(AuthKeys::LOGIN_IP, self::IPV6_PREFIX_64));
@@ -256,11 +257,11 @@ final class LoginThrottleTest extends TestCase
     public function testAnAttemptCanBeUsedForSuccessOnlyOnce(): void
     {
         $attempt = $this->allowedAttempt(self::ipv6());
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
         $this->store->calls = [];
 
         try {
-            $this->throttle->succeeded($attempt);
+            $this->throttle->succeeded($attempt, self::REQUEST_ID);
             self::fail('Expected a LogicException.');
         } catch (LogicException) {
             self::assertSame([], $this->store->calls, 'the second use touched the store');
@@ -272,7 +273,7 @@ final class LoginThrottleTest extends TestCase
         $attempt = $this->allowedAttempt(self::ipv6());
         $this->store->failures['delete|LOGIN-EMAIL'] = new StorageFailure('DeleteItem', 'ThrottlingException');
 
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
 
         self::assertSame(
             ['delete|LOGIN-EMAIL|' . self::emailKey(), 'refund|LOGIN-IP|' . self::IPV6_PREFIX_64, 'refund|LOGIN-NET|' . self::IPV6_PREFIX_48],
@@ -286,9 +287,10 @@ final class LoginThrottleTest extends TestCase
         $this->store->failures['refund|LOGIN-IP'] = new StorageFailure('UpdateItem', 'ProvisionedThroughputExceededException');
         $this->store->failures['refund|LOGIN-NET'] = new ConditionFailed('UpdateItem');
 
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
 
         self::assertCount(3, $this->store->calls);
+        self::assertStringContainsString('"operation":"UpdateItem","code":"ConditionalCheckFailedException"', $this->logged());
         self::assertStringContainsString('ProvisionedThroughputExceededException', $this->logged());
     }
 
@@ -298,7 +300,7 @@ final class LoginThrottleTest extends TestCase
         $this->store->failures['delete|LOGIN-EMAIL'] = new StorageFailure('DeleteItem', 'ThrottlingException');
         $this->store->failures['refund|LOGIN-IP'] = new StorageFailure('UpdateItem', 'InternalServerError');
 
-        $this->throttle->succeeded($attempt);
+        $this->throttle->succeeded($attempt, self::REQUEST_ID);
 
         $lines = array_values(array_filter(explode("\n", $this->logged()), static fn(string $line): bool => $line !== ""));
         self::assertCount(2, $lines);
@@ -306,7 +308,11 @@ final class LoginThrottleTest extends TestCase
         self::assertIsArray($first);
         self::assertSame('warning', $first['level']);
         self::assertSame('LOGIN-EMAIL', $first['scope']);
-        self::assertSame('ThrottlingException', $first['errorCode']);
+        self::assertSame('ThrottlingException', $first['code']);
+        self::assertSame('DeleteItem', $first['operation']);
+        self::assertSame(self::REQUEST_ID, $first['requestId']);
+        self::assertSame('login throttle clean-up failed after a successful login', $first['message']);
+        self::assertArrayNotHasKey('errorCode', $first);
         $log = $this->logged();
         foreach ([self::emailKey(), 'ana@example.com', '192.0.2.7', '2001:db8', self::IPV6_PREFIX_64] as $secret) {
             self::assertStringNotContainsString($secret, $log);

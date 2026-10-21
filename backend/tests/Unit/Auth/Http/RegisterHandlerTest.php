@@ -117,7 +117,10 @@ final class RegisterHandlerTest extends TestCase
      */
     private static function request(string $body, array $headers = [], ?ClientAddress $address = null, ?RequestLogContext $context = null): Request
     {
-        $attributes = [ClientIpMiddleware::ATTRIBUTE => $address ?? ClientAddress::of('2001:db8:1:2::1', self::ADDRESS_KEY)];
+        $attributes = [
+            ClientIpMiddleware::ATTRIBUTE => $address ?? ClientAddress::of('2001:db8:1:2::1', self::ADDRESS_KEY),
+            Request::REQUEST_ID => 'req-1',
+        ];
         if ($context !== null) {
             $attributes[RequestLogContext::ATTRIBUTE] = $context;
         }
@@ -277,6 +280,24 @@ final class RegisterHandlerTest extends TestCase
         $problem = $this->problemOf(self::request('not json at all', ['content-type' => 'text/plain']), self::hasherThatMustNotRun());
 
         self::assertSame(429, $problem->problem->status);
+    }
+
+    public function testABlockedRegistrationIsLoggedAsAWarningWithTheReasonAndNeitherTheEmailNorTheAddress(): void
+    {
+        $this->throttleStore->seed(ThrottleRule::registerAddress()->scope, self::ADDRESS_KEY, ThrottleRule::REGISTER_ADDRESS_LIMIT);
+
+        $problem = $this->problemOf(self::request(self::credentials()));
+
+        self::assertSame(429, $problem->problem->status);
+        $line = json_decode(trim($this->logged()), true, 512, JSON_THROW_ON_ERROR);
+        self::assertIsArray($line);
+        self::assertSame('warning', $line['level']);
+        self::assertSame('registration failed', $line['message']);
+        self::assertSame('throttled', $line['reason']);
+        self::assertSame('req-1', $line['requestId']);
+        foreach ([self::EMAIL, self::ADDRESS_KEY, '2001:db8'] as $secret) {
+            self::assertStringNotContainsString($secret, $this->logged());
+        }
     }
 
     public function testEveryAttemptCountsEvenOneThatFailsValidation(): void

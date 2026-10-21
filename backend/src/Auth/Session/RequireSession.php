@@ -18,7 +18,8 @@ use App\Http\Response;
  */
 final readonly class RequireSession implements Handler
 {
-    private const CHALLENGE = 'Session';
+    /** The `WWW-Authenticate` challenge of every 401 that asks for a session (login's 401 uses it too). */
+    public const string CHALLENGE = 'Session';
 
     public function __construct(private Handler $inner, private SessionAuthenticator $authenticator) {}
 

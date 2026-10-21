@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Unit\Http;
 
+use App\Auth\AuthKeys;
 use App\Http\ClientAddress;
 use App\Http\ClientIp;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -145,6 +146,14 @@ final class ClientIpTest extends TestCase
         self::assertSame($a->throttleKey, $b->throttleKey);
         self::assertNotSame($a->throttleKey, $c->throttleKey);
         self::assertSame('2001:db8:1:2::/64', $a->throttleKey);
+    }
+
+    public function testTheIpv6KeyPrefixIsTheOneAuthKeysAcceptsForAnAddressBucket(): void
+    {
+        $key = ClientIp::parse('[2001:db8:1:2::1]:1')->throttleKey;
+
+        self::assertStringEndsWith('/' . AuthKeys::IPV6_ADDRESS_PREFIX_BITS, $key);
+        self::assertSame(['PK' => 'THROTTLE#LOGIN-IP#' . $key, 'SK' => 'THROTTLE'], AuthKeys::throttle(AuthKeys::LOGIN_IP, $key));
     }
 
     public function testTheUnknownAddressIsFailClosed(): void

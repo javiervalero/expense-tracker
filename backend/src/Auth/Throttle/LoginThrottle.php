@@ -51,16 +51,18 @@ final readonly class LoginThrottle
     /**
      * Failures are what counts: the account bucket is deleted and the address buckets give the attempt back, each only
      * in the window the attempt was counted in. This is best effort: the login has already succeeded, so a storage
-     * error in one step is logged (scope and error code only, never a key) and the other steps still run. Nothing is
-     * thrown for storage errors.
+     * error in one step is logged (request id, scope, operation and error code, never a key) and the other steps still
+     * run. Nothing is thrown for storage errors. The request id is a parameter so the log line can be tied to the
+     * request without the throttle knowing about requests.
      *
      * @throws LogicException when the attempt was already used
      */
-    public function succeeded(LoginAttempt $attempt): void
+    public function succeeded(LoginAttempt $attempt, mixed $requestId): void
     {
         foreach ($attempt->consume($this) as [$rule, $key, $windowExpiresAt]) {
             $this->bestEffort(
                 $rule,
+                $requestId,
                 $rule->scope === AuthKeys::LOGIN_EMAIL
                     ? fn() => $this->store->delete($rule, $key)
                     : fn() => $this->store->refund($rule, $key, $windowExpiresAt),
@@ -68,20 +70,25 @@ final readonly class LoginThrottle
         }
     }
 
-    private function bestEffort(ThrottleRule $rule, \Closure $step): void
+    private function bestEffort(ThrottleRule $rule, mixed $requestId, \Closure $step): void
     {
         try {
             $step();
         } catch (StorageFailure $failure) {
-            $this->warn($rule, $failure->awsErrorCode ?? 'unknown');
-        } catch (ConditionFailed) {
-            $this->warn($rule, 'ConditionalCheckFailedException');
+            $this->warn($rule, $requestId, $failure->operation, $failure->awsErrorCode ?? 'unknown');
+        } catch (ConditionFailed $failure) {
+            $this->warn($rule, $requestId, $failure->operation, 'ConditionalCheckFailedException');
         }
     }
 
-    private function warn(ThrottleRule $rule, string $errorCode): void
+    private function warn(ThrottleRule $rule, mixed $requestId, string $operation, string $code): void
     {
-        $this->logger->warning('Login throttle clean-up after a successful login failed', ['scope' => $rule->scope, 'errorCode' => $errorCode]);
+        $this->logger->warning('login throttle clean-up failed after a successful login', [
+            'requestId' => $requestId,
+            'scope' => $rule->scope,
+            'operation' => $operation,
+            'code' => $code,
+        ]);
     }
 
     private static function accountKey(Email $email): string

@@ -283,8 +283,9 @@ request policy is an allow-list with no underscore header names; generated slots
 
 Decisions A13 and A14 in [the Phase 2 plan](../plans/phase-2-authentication.md).
 
-- **Throttle keys come from `ClientAddress::$ip`** (§4.3), unchanged. "Per IP" means one address for IPv4 and the
-  `/64` for IPv6; requests whose address is unknown share one `unknown` bucket.
+- **Throttle keys come from `ClientAddress`** (§4.3), unchanged. The address buckets use `$throttleKey`: one address
+  for IPv4, the `/64` for IPv6, and one shared `unknown` bucket for requests whose address is unknown. The `/48` tier
+  below is derived from `$ip`.
 - **A coarse IPv6 `/48` tier sits next to the `/64`** (100 failed logins and 20 registrations per window), so a holder
   of a `/48` cannot spread over 65,536 `/64` keys. It is additive to "per email and per IP". IPv4 has no coarse tier.
 
