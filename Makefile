@@ -25,13 +25,17 @@ NPM_CONTRACT = $(RUN_NODE) npm --prefix contract
 NPM_FRONTEND = $(RUN_NODE) npm --prefix frontend
 GENERATED_TYPES = frontend/src/api/schema.gen.ts
 
-COMPOSE = docker compose -p expense-tracker
+# Compose takes AWS_ACCESS_KEY_ID and the other AWS_* variables of the CALLER'S SHELL before it reads .env. api-php runs
+# request code that can read its environment, so a real key exported in the shell must never reach it: `env -u`
+# removes them from every docker compose call, and only the (fake) values of .env remain. `make check-env` refuses an
+# .env that holds anything else. (RUN_PHP and RUN_NODE pass no AWS variable: `-e CI` and `-e ORIGIN_VERIFY_LOCAL` only.)
+COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_PROFILE docker compose -p expense-tracker
 
 # Building the image is only needed when the tools run in a container.
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -45,6 +49,9 @@ php-install: $(PHP_IMAGE_DEP) ## Install backend Composer dependencies from comp
 test-unit: $(PHP_IMAGE_DEP) ## Backend unit + architecture tests with coverage, 80% bar on src/
 	$(COMPOSER) run test:coverage
 	$(COMPOSER) run coverage:check
+
+test-slow-unit: $(PHP_IMAGE_DEP) ## Backend unit tests marked `slow` (one production Argon2id hash, timed into build/tmp/argon2-timing.txt)
+	$(COMPOSER) run test:slow
 
 # The contract suite: the validator against the real bundle, route parity and the documented errors. It runs in the php
 # tools container and needs no stack, but it does need contract/dist/openapi.json (`make contract-bundle`). CI sets CI,
@@ -106,17 +113,11 @@ check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned br
 	cp .env.example .env
 	@echo "Created .env from .env.example (local, non-secret values)."
 
-# Keys that docker-compose.yml reads WITHOUT a default (a silent default would let a stale .env start a stack with an
-# empty value). `check-env` fails fast, before anything starts, naming the line to add (the example comes from .env.example).
-REQUIRED_ENV_KEYS = DYNAMODB_TABLE
-
+# `check-env` fails fast, before anything starts: a key that docker-compose.yml reads WITHOUT a default is missing
+# (it names the line to add), or the AWS credentials in .env are not the fake pair of .env.example, or .env sets a
+# session token. It never prints a value. The logic is scripts/check-env.sh (tested by scripts/tests/check-env.test.sh).
 check-env: .env
-	@for key in $(REQUIRED_ENV_KEYS); do \
-		tr -d '\r' < .env | grep -Eq "^[[:space:]]*(export[[:space:]]+)?$$key=[[:space:]]*[^[:space:]\"'#]" || { \
-			example=$$(grep -m 1 "^$$key=" .env.example || echo "$$key=<value>"); \
-			echo "$$key is missing from .env: add '$$example' (see .env.example)" >&2; exit 1; \
-		}; \
-	done
+	@scripts/check-env.sh .env .env.example
 
 # `make up` starts the stack in three steps, so that a service that needs the bootstrap to have finished is never
 # started (or waited for) before it:
@@ -124,13 +125,13 @@ check-env: .env
 #   2. ONE_SHOT_SERVICES: run in the foreground. They exit on purpose, and `up --wait` counts "exited (0)" as a
 #      failure, so they cannot be in step 1. Their log is shown and a non-zero exit code fails `make up`;
 #   3. LATE_SERVICES: services that depend on a one-shot finishing, started with `up -d --wait` after it.
-# LATE_SERVICES is empty for now: nothing yet depends on the bootstrap. `worker-runner`, the API (`api`, `api-php`) and
-# `frontend` are in step 1 on purpose: the runner needs only sqs and worker (queues come from elasticmq.conf), Phase 0's
-# API serves only /api/v1/health, and `frontend` (Vite) needs only `api` healthy (Compose orders them with depends_on).
-# When the API needs DynamoDB tables or buckets, set `LATE_SERVICES = api frontend` (api-php follows api).
+# LATE_SERVICES = api frontend: the API uses the DynamoDB table that `local-aws-init` creates, so the entry point `api`
+# (nginx) and `frontend` (Vite, which needs `api` healthy) start after it. `api-php` is in step 1 (it does not touch
+# DynamoDB until it serves a request; only `api` and `dynamodb` can reach it, see docker-compose.yml). `worker-runner` stays in step 1: it needs
+# only sqs and worker (queues come from elasticmq.conf).
 # `make frontend-install` must have run (like `make php-install` for the API): Vite runs from frontend/node_modules.
 ONE_SHOT_SERVICES = local-aws-init
-LATE_SERVICES =
+LATE_SERVICES = api frontend
 
 # The step-1 list is computed once and checked: if `docker compose config --services` fails (broken compose file,
 # a missing required variable) or yields nothing to start, `make up` stops with an error instead of running
@@ -176,13 +177,16 @@ test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local,
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
 #      does not run an EXIT trap on a signal, so INT, TERM and HUP are trapped too and turned into `exit`, which fires
 #      the EXIT trap; the trap keeps the original exit code (130 for INT, 143 for TERM/HUP).
-# FAST=1 leaves out the tests marked `slow` (the ~35 s dead-letter test); `make test-fast` sets it for the whole suite.
+# FAST=1 leaves out the tests marked `slow` (the ~35 s dead-letter test and `make test-slow-unit`); `make test-fast` sets it for the whole suite.
 PHPUNIT_INTEGRATION = $(COMPOSE) --profile tools run --rm --user $(shell id -u):$(shell id -g) php vendor/bin/phpunit --testsuite integration
 # One --exclude-group per group: PHPUnit 13 does not split a comma-separated list.
 EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
 PIPE_MARKERS = build/pipe-test
 # ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
 CLIENT_IP_MARKERS = build/client-ip-test
+# AuthFlowApiTest and LoginThrottleRaceTest write markers.json here (password, wrongPassword, sessionToken,
+# revokedSessionToken, userId, csrfOrigin), merged; the checks below need the whole suite to have run (not --filter).
+AUTH_MARKERS = build/auth-test
 
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
@@ -190,7 +194,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
 	$(COMPOSE) stop worker-runner; \
-	rm -rf $(CLIENT_IP_MARKERS); \
+	rm -rf $(CLIENT_IP_MARKERS) $(AUTH_MARKERS); \
 	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
 	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
@@ -209,6 +213,22 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	printf '%s\n' "$$requests" | grep -F "\"requestId\":\"$$requestid\"" | grep -qF '"clientIp":"unknown"' || fail "the request $$requestid (duplicated header) was not logged with clientIp unknown"; \
 	printf '%s\n' "$$requests" | grep -F "\"path\":\"$$socketpath\"" | grep -qE '"clientIp":"(172|10)\.[0-9]+\.[0-9]+\.[0-9]+"' || fail "the request for $$socketpath (no header) was not logged with a 172.x or 10.x clientIp (the socket address nginx fills in)"; \
 	echo "make test-integration: client IP log checks passed"; \
+	[ -f $(AUTH_MARKERS)/markers.json ] || fail "the auth tests left no $(AUTH_MARKERS)/markers.json"; \
+	amarker() { v=$$(sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(AUTH_MARKERS)/markers.json); [ $${#v} -ge 16 ] || fail "auth markers.json has no usable '$$1' marker (empty or shorter than 16 characters; did its test run? it needs the whole suite, not --filter)"; printf '%s' "$$v"; }; \
+	authpw=$$(amarker password); authwrong=$$(amarker wrongPassword); authtoken=$$(amarker sessionToken); authrevoked=$$(amarker revokedSessionToken); \
+	authuser=$$(amarker userId); authorigin=$$(amarker csrfOrigin); \
+	nginxlogs=$$($(COMPOSE) logs --no-log-prefix --since "$$ip_since" api) || fail "could not read the api (nginx) logs"; \
+	[ -n "$$nginxlogs" ] || fail "no api (nginx) log output since $$ip_since"; \
+	leak() { [ $${#2} -ge 10 ] || fail "the leak check for $$1 has a value shorter than 10 characters (vacuous)"; \
+		if printf '%s\n' "$$apilogs" | grep -qF -e "$$2"; then fail "$$1 appears in the api-php logs (a secret leaked into a log)"; fi; \
+		if printf '%s\n' "$$nginxlogs" | grep -qF -e "$$2"; then fail "$$1 appears in the api (nginx) logs (a secret leaked into a log)"; fi; }; \
+	leak "the test PASSWORD" "$$authpw"; leak "the password prefix pw-marker-" "pw-marker-"; \
+	leak "the wrong PASSWORD" "$$authwrong"; leak "the wrong-password prefix wrong-marker-" "wrong-marker-"; \
+	leak "the SESSION TOKEN" "$$authtoken"; leak "the first 16 characters of the SESSION TOKEN" "$$(printf '%s' "$$authtoken" | cut -c1-16)"; \
+	leak "the REVOKED session token" "$$authrevoked"; leak "the first 16 characters of the REVOKED session token" "$$(printf '%s' "$$authrevoked" | cut -c1-16)"; \
+	printf '%s\n' "$$requests" | grep -F '"path":"/api/v1/auth/me"' | grep -qF -e "\"userId\":\"$$authuser\"" || fail "no request line for /api/v1/auth/me carries \"userId\":\"$$authuser\" (the session user is not logged)"; \
+	printf '%s\n' "$$apilogs" | grep -F 'csrf check failed' | grep -qF -e "\"origin\":\"$$authorigin\"" || fail "no 'csrf check failed' line with \"origin\":\"$$authorigin\" in the api-php logs (the CSRF refusal of the auth flow test was not logged)"; \
+	echo "make test-integration: auth log checks passed"; \
 	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
 	rm -rf $(PIPE_MARKERS); \
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
@@ -228,6 +248,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 # Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
 test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
 	$(MAKE) --no-print-directory test-unit
+	$(if $(FAST),,$(MAKE) --no-print-directory test-slow-unit)
 	$(MAKE) --no-print-directory contract-bundle
 	$(MAKE) --no-print-directory test-contract
 	$(MAKE) --no-print-directory test-local-aws
@@ -236,7 +257,7 @@ test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then 
 	$(MAKE) --no-print-directory test-conformance
 	$(MAKE) --no-print-directory test-integration
 
-test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s)
+test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s, and the production Argon2id hash)
 	$(MAKE) --no-print-directory test FAST=1
 
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the

@@ -29,6 +29,18 @@ final readonly class ClientIpMiddleware implements Middleware
 
     public function __construct(private JsonLogger $logger, private string $headerName) {}
 
+    /**
+     * The address this middleware set on the request. Without one (the middleware did not run, or the attribute is
+     * not an address) it is the shared `unknown` address: such a request counts in the `unknown` bucket and is never
+     * exempt from a throttle.
+     */
+    public static function addressOf(Request $request): ClientAddress
+    {
+        $address = $request->attribute(self::ATTRIBUTE);
+
+        return $address instanceof ClientAddress ? $address : ClientAddress::unknown('missing');
+    }
+
     public function process(Request $request, Handler $next): Response
     {
         $value = $request->header($this->headerName);

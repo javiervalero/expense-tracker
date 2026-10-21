@@ -123,4 +123,58 @@ final class OpenApiDocumentTest extends TestCase
             self::fixture()->operations(),
         );
     }
+
+    private static function operations(): OpenApiDocument
+    {
+        return OpenApiDocument::fromFile(__DIR__ . '/../../../Fixtures/contract/openapi.operations.fixture.json');
+    }
+
+    public function testSecurityIsAnEmptyListWhenTheOperationOptsOut(): void
+    {
+        self::assertSame([], self::operations()->security('GET', '/open'));
+    }
+
+    public function testSecurityListsTheRequirementsOfAnOperation(): void
+    {
+        self::assertSame([['sessionCookie' => []]], self::operations()->security('POST', '/things'));
+    }
+
+    public function testSecurityIsNullWhenTheOperationSaysNothing(): void
+    {
+        self::assertNull(self::operations()->security('GET', '/forgot'));
+    }
+
+    public function testSecurityIsNullForAnUnknownOperation(): void
+    {
+        self::assertNull(self::operations()->security('DELETE', '/open'));
+    }
+
+    public function testHasRequestBodyTellsOperationsWithAndWithoutOne(): void
+    {
+        self::assertTrue(self::operations()->hasRequestBody('POST', '/things'));
+        self::assertFalse(self::operations()->hasRequestBody('GET', '/open'));
+        self::assertFalse(self::operations()->hasRequestBody('DELETE', '/open'));
+    }
+
+    public function testHeaderParametersResolveRefsAndSkipOtherLocations(): void
+    {
+        $parameters = self::operations()->headerParameters('POST', '/things');
+
+        self::assertSame(['x-requested-with', 'x-optional'], array_keys($parameters));
+        self::assertTrue($parameters['x-requested-with']->required);
+        self::assertSame('XMLHttpRequest', $parameters['x-requested-with']->constant);
+        self::assertFalse($parameters['x-optional']->required);
+        self::assertNull($parameters['x-optional']->constant);
+    }
+
+    public function testHeaderParametersOfAnOperationWithoutAnyAreEmpty(): void
+    {
+        self::assertSame([], self::operations()->headerParameters('GET', '/open'));
+        self::assertSame([], self::operations()->headerParameters('DELETE', '/open'));
+    }
+
+    public function testGlobalSecurityIsNullWhenTheDocumentHasNone(): void
+    {
+        self::assertNull(self::operations()->globalSecurity());
+    }
 }

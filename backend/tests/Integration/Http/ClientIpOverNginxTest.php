@@ -57,6 +57,8 @@ final class ClientIpOverNginxTest extends ApiTestCase
     public function testNoViewerAddressIsLoggedWithTheSocketAddressFromNginxForAUniquePath(): void
     {
         $path = '/api/v1/socket-' . bin2hex(random_bytes(4));
+        // The base class sends a random address by default; this case is about nginx filling it in.
+        $this->withoutViewerAddress();
 
         $response = $this->requestAs('GET', '/health', 'GET', $path);
 

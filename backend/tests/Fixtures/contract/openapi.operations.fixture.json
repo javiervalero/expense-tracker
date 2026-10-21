@@ -1,0 +1,39 @@
+{
+  "openapi": "3.1.0",
+  "info": { "title": "Operations fixture", "version": "1.0.0" },
+  "paths": {
+    "/open": {
+      "get": {
+        "security": [],
+        "responses": { "200": { "description": "Public." } }
+      }
+    },
+    "/forgot": {
+      "get": {
+        "responses": { "200": { "description": "No security key at all." } }
+      }
+    },
+    "/things": {
+      "post": {
+        "security": [{ "sessionCookie": [] }],
+        "parameters": [
+          { "$ref": "#/components/parameters/XRequestedWith" },
+          { "name": "X-Optional", "in": "header", "schema": { "type": "string" } },
+          { "name": "page", "in": "query", "schema": { "type": "integer" } }
+        ],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" } } } },
+        "responses": { "201": { "description": "Created." } }
+      }
+    }
+  },
+  "components": {
+    "parameters": {
+      "XRequestedWith": {
+        "name": "X-Requested-With",
+        "in": "header",
+        "required": true,
+        "schema": { "type": "string", "const": "XMLHttpRequest" }
+      }
+    }
+  }
+}

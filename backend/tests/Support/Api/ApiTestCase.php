@@ -9,6 +9,8 @@ use App\Tests\Support\Contract\ContractValidator;
 use App\Tests\Support\Contract\ContractViolation;
 use App\Tests\Support\Contract\OpenApiDocument;
 use GuzzleHttp\Client as HttpClient;
+use GuzzleHttp\Pool;
+use GuzzleHttp\Promise\PromiseInterface;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 
@@ -25,6 +27,7 @@ abstract class ApiTestCase extends TestCase
 {
     private const string DEFAULT_BASE = 'http://api:8080';
     private const string API_PREFIX = '/api/v1';
+    private const int QUEUED_CALL_TIMEOUT_SECONDS = 30;
 
     private static ?OpenApiDocument $document = null;
 
@@ -37,8 +40,24 @@ abstract class ApiTestCase extends TestCase
     /** The `X-Origin-Verify` value sent with every call; null sends none. Reset for each test. */
     private ?string $originHeader = null;
 
+    /** The browser `Origin` sent on every call except GET and HEAD; null sends none. Reset for each test. */
+    private ?string $browserOrigin = null;
+
+    /** Whether `X-Requested-With: XMLHttpRequest` is sent on every call except GET and HEAD. Reset for each test. */
+    private bool $sendRequestedWith = true;
+
+    /** The `CloudFront-Viewer-Address` sent on every call, random for each test; null sends none. */
+    private ?string $viewerAddress = null;
+
+    /** The value of the session cookie sent on every call; null sends no cookie. Reset for each test. */
+    private ?string $sessionCookie = null;
+
     final protected function setUp(): void
     {
+        $this->browserOrigin = self::defaultBrowserOrigin();
+        $this->sendRequestedWith = true;
+        $this->viewerAddress = self::randomViewerAddress();
+        $this->sessionCookie = null;
         $fromEnv = getenv('API_BASE_URL');
         $this->base = is_string($fromEnv) && $fromEnv !== '' ? rtrim($fromEnv, '/') : self::DEFAULT_BASE;
         $this->originHeader = self::localOriginSecret();
@@ -59,11 +78,121 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
+     * From now on in this test, sends `Origin: $origin` on the calls that need one (null: no `Origin` at all).
+     */
+    final protected function withBrowserOrigin(?string $origin): void
+    {
+        $this->browserOrigin = $origin;
+    }
+
+    /**
+     * From now on in this test, sends no `X-Requested-With` header.
+     */
+    final protected function withoutRequestedWith(): void
+    {
+        $this->sendRequestedWith = false;
+    }
+
+    /**
+     * From now on in this test, sends no `CloudFront-Viewer-Address`, so nginx fills it in from the socket (the
+     * default is a random IPv6 address per test, which keeps the throttle buckets of one test from counting another's calls).
+     */
+    final protected function withoutViewerAddress(): void
+    {
+        $this->viewerAddress = null;
+    }
+
+    /**
+     * From now on in this test, sends this client address as the `CloudFront-Viewer-Address` (in CloudFront's form:
+     * `[ip]:port` for IPv6, `ip:port` for IPv4), instead of the random one of the test. For tests that need several
+     * addresses, such as the per-account and per-network throttle limits.
+     */
+    final protected function withViewerAddress(string $ip): void
+    {
+        $this->viewerAddress = str_contains($ip, ':') ? sprintf('[%s]:%d', $ip, random_int(1024, 65535)) : sprintf('%s:%d', $ip, random_int(1024, 65535));
+    }
+
+    /**
+     * From now on in this test, sends `Cookie: __Host-session=$value` on every call (null: no cookie). The value is
+     * sent as given, so a test can send a malformed one.
+     */
+    final protected function withSessionCookie(?string $value): void
+    {
+        $this->sessionCookie = $value;
+    }
+
+    /**
+     * The value of the `__Host-session` cookie that the response sets, or null when it sets none. Fails the test if
+     * the response sets it more than once.
+     */
+    final protected function sessionCookieFrom(ResponseInterface $response): ?string
+    {
+        $values = [];
+        foreach ($response->getHeader('Set-Cookie') as $cookie) {
+            if (preg_match('/\A__Host-session=([^;]*)/', $cookie, $match) === 1) {
+                $values[] = $match[1];
+            }
+        }
+        self::assertLessThanOrEqual(1, count($values), 'The response sets the session cookie more than once.');
+
+        return $values[0] ?? null;
+    }
+
+    /**
      * From now on in this test, sends `X-Origin-Verify: $value` instead of the local value of `ORIGIN_VERIFY_LOCAL`.
      */
     final protected function withOriginHeader(string $value): void
     {
         $this->originHeader = $value;
+    }
+
+    /**
+     * Sends all calls under `/api/v1` at once through a Guzzle Pool (up to `$concurrency` in flight) and validates each
+     * response against the contract, like request(). The calls get the defaults of the test; a header a call sets
+     * itself wins, so each can carry its own `CloudFront-Viewer-Address`. A transport failure fails the test. The result
+     * has the same keys as `$calls`.
+     *
+     * @param array<int, array{0: string, 1: string, 2?: array{body?: string, headers?: array<string, string|non-empty-list<string>>}}> $calls [method, path, options]
+     *
+     * @return array<int, ResponseInterface>
+     */
+    final protected function requestConcurrently(array $calls, int $concurrency): array
+    {
+        foreach ($calls as [, $path]) {
+            self::assertStringStartsWith('/', $path, 'requestConcurrently() takes a path relative to the server URL of the spec');
+            self::assertFalse(str_starts_with($path, '/api/'), "requestConcurrently() adds the /api/v1 prefix itself; got $path");
+        }
+        $requests = function () use ($calls): \Generator {
+            foreach ($calls as $key => $call) {
+                [$method, $path] = $call;
+                $options = $this->withDefaults($method, $call[2] ?? []);
+                // The Pool hands its own `options` to the callable; per-call options win over them (the later array of array_merge).
+                /** @param array{timeout?: int|float} $poolOptions */
+                // @phpstan-ignore argument.type (phpstan cannot see that the merge of two request-option shapes is one)
+                yield $key => fn(array $poolOptions): PromiseInterface => $this->http->requestAsync($method, $this->base . self::API_PREFIX . $path, array_merge($poolOptions, $options));
+            }
+        };
+        $responses = [];
+        $failures = [];
+        (new Pool($this->http, $requests(), [
+            'concurrency' => $concurrency,
+            // Calls queue behind the php-fpm workers, and the time spent waiting counts against the timeout.
+            'options' => ['timeout' => self::QUEUED_CALL_TIMEOUT_SECONDS],
+            'fulfilled' => static function (ResponseInterface $response, int|string $key) use (&$responses): void {
+                $responses[$key] = $response;
+            },
+            'rejected' => static function (mixed $reason, int|string $key) use (&$failures): void {
+                $failures[$key] = $reason instanceof \Throwable ? $reason->getMessage() : 'rejected';
+            },
+        ]))->promise()->wait();
+        self::assertSame([], $failures, 'some concurrent calls failed at transport level');
+        ksort($responses);
+        foreach ($responses as $key => $response) {
+            [$method, $path] = $calls[$key];
+            self::assertMatchesContract($response, $method, $path, "$method $path (call $key)");
+        }
+
+        return $responses;
     }
 
     /**
@@ -114,7 +243,7 @@ abstract class ApiTestCase extends TestCase
             self::assertNull($documented, "$method $path is a documented operation ($documented): use request(), not rawRequest()");
         }
 
-        return $this->http->request($method, $this->base . $path, $this->withOrigin($options));
+        return $this->http->request($method, $this->base . $path, $this->withDefaults($method, $options));
     }
 
     /**
@@ -122,8 +251,18 @@ abstract class ApiTestCase extends TestCase
      */
     private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
     {
-        $response = $this->http->request($method, $this->base . $url, $this->withOrigin($options));
-        // The spec documents paths without the server prefix and without a query string.
+        $response = $this->http->request($method, $this->base . $url, $this->withDefaults($method, $options));
+        self::assertMatchesContract($response, $operationMethod, $template, "$method $url");
+
+        return $response;
+    }
+
+    /**
+     * Fails the test when the response differs from the contract. The spec documents paths without the server prefix
+     * and without a query string.
+     */
+    private static function assertMatchesContract(ResponseInterface $response, string $operationMethod, string $template, string $what): void
+    {
         $violations = self::validator()->validate(
             $operationMethod,
             $template,
@@ -131,26 +270,68 @@ abstract class ApiTestCase extends TestCase
             self::flatHeaders($response),
             (string) $response->getBody(),
         );
-        self::assertSame([], array_map(self::describe(...), $violations), "$method $url breaks the contract (as $operationMethod $template)");
-
-        return $response;
+        self::assertSame([], array_map(self::describe(...), $violations), "$what breaks the contract (as $operationMethod $template)");
     }
 
     /**
-     * The options plus the origin header. A header the test sets itself in the options wins.
+     * The options plus the headers sent by default: `X-Origin-Verify` always, the random `CloudFront-Viewer-Address`
+     * (unless the test removed it), the session cookie when the test set one, and on every method except GET and HEAD
+     * the browser's `Origin` and `X-Requested-With` (what the CSRF check wants). A header the test sets itself in the
+     * options wins, whatever its letter case.
      *
      * @param array{body?: string, headers?: array<string, string|non-empty-list<string>>} $options
      *
      * @return array{body?: string, headers?: array<string, string|non-empty-list<string>>}
      */
-    private function withOrigin(array $options): array
+    private function withDefaults(string $method, array $options): array
     {
-        if ($this->originHeader === null) {
-            return $options;
+        $defaults = [];
+        if ($this->originHeader !== null) {
+            $defaults['X-Origin-Verify'] = $this->originHeader;
         }
-        $options['headers'] = ($options['headers'] ?? []) + ['X-Origin-Verify' => $this->originHeader];
+        if ($this->viewerAddress !== null) {
+            $defaults['CloudFront-Viewer-Address'] = $this->viewerAddress;
+        }
+        if ($this->sessionCookie !== null) {
+            $defaults['Cookie'] = '__Host-session=' . $this->sessionCookie;
+        }
+        // OPTIONS gets the browser headers too, on purpose: harmless, the middleware exempts it.
+        if (!in_array(strtoupper($method), ['GET', 'HEAD'], true)) {
+            if ($this->browserOrigin !== null) {
+                $defaults['Origin'] = $this->browserOrigin;
+            }
+            if ($this->sendRequestedWith) {
+                $defaults['X-Requested-With'] = 'XMLHttpRequest';
+            }
+        }
+        $own = array_change_key_case($options['headers'] ?? [], CASE_LOWER);
+        foreach ($defaults as $name => $value) {
+            if (!array_key_exists(strtolower($name), $own)) {
+                $options['headers'][$name] = $value;
+            }
+        }
 
         return $options;
+    }
+
+    /**
+     * A random address in the documentation range `2001:db8::/32`, in CloudFront's form (`[ip]:port`). The /48 and
+     * the /64 both differ from test to test, so no throttle bucket is shared.
+     */
+    private static function randomViewerAddress(): string
+    {
+        return sprintf('[2001:db8:%x:%x::1]:%d', random_int(0, 0xFFFF), random_int(0, 0xFFFF), random_int(1024, 65535));
+    }
+
+    /**
+     * The first entry of `APP_ORIGINS` (the same list the API checks), or the Vite dev server when unset.
+     */
+    private static function defaultBrowserOrigin(): string
+    {
+        $fromEnv = getenv('APP_ORIGINS');
+        $first = is_string($fromEnv) ? trim(explode(',', $fromEnv)[0]) : '';
+
+        return $first !== '' ? $first : 'http://localhost:5173';
     }
 
     /**

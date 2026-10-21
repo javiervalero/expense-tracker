@@ -114,6 +114,64 @@ final readonly class OpenApiDocument
         return new OpenApiResponse($required, $schemas);
     }
 
+    /**
+     * The `security` requirements of an operation as written: `[]` for a public one, null when the operation has no
+     * `security` key (or does not exist).
+     *
+     * @return list<mixed>|null
+     */
+    public function security(string $method, string $template): ?array
+    {
+        $security = $this->operation($method, $template)['security'] ?? null;
+
+        return is_array($security) ? array_values($security) : null;
+    }
+
+    /**
+     * The document-level `security` default, null when there is none.
+     *
+     * @return list<mixed>|null
+     */
+    public function globalSecurity(): ?array
+    {
+        $security = $this->data['security'] ?? null;
+
+        return is_array($security) ? array_values($security) : null;
+    }
+
+    public function hasRequestBody(string $method, string $template): bool
+    {
+        return ($this->operation($method, $template)['requestBody'] ?? null) !== null;
+    }
+
+    /**
+     * The header parameters declared on the operation itself (not path-level ones), by lower-case name.
+     *
+     * @return array<string, OpenApiHeaderParameter>
+     */
+    public function headerParameters(string $method, string $template): array
+    {
+        $operation = $this->operation($method, $template);
+        if ($operation === null) {
+            return [];
+        }
+        $base = '/paths/' . self::escape($template) . '/' . strtolower($method) . '/parameters/';
+        $headers = [];
+        foreach (array_keys(array_values(self::map($operation['parameters'] ?? null))) as $index) {
+            $resolved = $this->resolve($base . $index);
+            if ($resolved === null || ($resolved[1]['in'] ?? null) !== 'header' || !is_string($resolved[1]['name'] ?? null)) {
+                continue;
+            }
+            $schema = self::map($resolved[1]['schema'] ?? null);
+            $headers[strtolower($resolved[1]['name'])] = new OpenApiHeaderParameter(
+                ($resolved[1]['required'] ?? false) === true,
+                $schema['const'] ?? null,
+            );
+        }
+
+        return $headers;
+    }
+
     /** @return array<string, mixed> */
     private function paths(): array
     {

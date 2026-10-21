@@ -279,6 +279,16 @@ an empty name is dropped. The strict `QueryString` rules therefore hold only loc
 Still open for AWS: the Phase 8 checks below, and the Phase 7 Terraform checks recorded in the Phase 1 plan (origin
 request policy is an allow-list with no underscore header names; generated slots match the slot rule).
 
+## Implemented in Phase 2 (2026-10-21, PR #5)
+
+Decisions A13 and A14 in [the Phase 2 plan](../plans/phase-2-authentication.md).
+
+- **Throttle keys come from `ClientAddress`** (§4.3), unchanged. The address buckets use `$throttleKey`: one address
+  for IPv4, the `/64` for IPv6, and one shared `unknown` bucket for requests whose address is unknown. The `/48` tier
+  below is derived from `$ip`.
+- **A coarse IPv6 `/48` tier sits next to the `/64`** (100 failed logins and 20 registrations per window), so a holder
+  of a `/48` cannot spread over 65,536 `/64` keys. It is additive to "per email and per IP". IPv4 has no coarse tier.
+
 ## To verify on first deployment (Phase 8)
 
 - A direct call to the `execute-api` URL returns 403.

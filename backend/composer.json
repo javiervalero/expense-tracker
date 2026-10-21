@@ -43,7 +43,8 @@
         "stan": "phpstan analyse --memory-limit=512M",
         "cs": "php-cs-fixer fix --dry-run --diff --show-progress=none",
         "cs:fix": "php-cs-fixer fix",
-        "test:coverage": "mkdir -p build/coverage && rm -f build/coverage/clover.xml && phpunit --testsuite unit,architecture --coverage-clover build/coverage/clover.xml --coverage-text",
+        "test:slow": "phpunit --testsuite unit --group slow",
+        "test:coverage": "mkdir -p build/coverage && rm -f build/coverage/clover.xml && phpunit --testsuite unit,architecture --exclude-group slow --coverage-clover build/coverage/clover.xml --coverage-text",
         "coverage:check": "php ../scripts/check-coverage.php build/coverage/clover.xml 80"
     },
     "scripts-descriptions": {
@@ -53,6 +54,7 @@
         "stan": "PHPStan at level max with strict rules",
         "cs": "PHP-CS-Fixer in dry-run mode (fails on any difference)",
         "cs:fix": "PHP-CS-Fixer, rewriting files",
+        "test:slow": "Run the unit tests marked slow (for example one production Argon2id hash, timed into the repo-root build/tmp/argon2-timing.txt)",
         "test:coverage": "Run the unit and architecture suites and write a Clover report to build/coverage/",
         "coverage:check": "Fail if line coverage of src/ is below 80% (an empty report fails too)"
     }

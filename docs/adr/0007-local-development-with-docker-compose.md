@@ -169,3 +169,16 @@ The fixture `docs/spikes/fixtures/silo-object-created-post.json` is the emulator
 - **Origin and client-IP headers locally** work as ADR 0012 §4.5 describes: the Vite proxy adds both headers, nginx
   fills `CloudFront-Viewer-Address` only when it is absent, the `api` healthcheck sends `X-Origin-Verify`, and the
   integration tests check the logged `clientIp` through nginx.
+
+## Implemented in Phase 2 (2026-10-21, PR #5)
+
+Decision A22 and risk R13 in [the Phase 2 plan](../plans/phase-2-authentication.md).
+
+- **The API reaches DynamoDB Local:** `api-php` gets `DYNAMODB_ENDPOINT`, `DYNAMODB_TABLE` (both required), the fake
+  key pair from `.env` and `APP_ORIGINS`. It stays only on the internal network `api-internal`, which has no route
+  out, and `dynamodb` joins that network, so the fake keys can reach nothing but DynamoDB Local. Clones made before
+  Phase 2 must add `DYNAMODB_ENDPOINT` to `.env`.
+- **Accepted risk (R13):** `api` and `dynamodb` can both reach php-fpm on port 9000, and FastCGI has no
+  authentication. Using that path needs code execution inside AWS's digest-pinned DynamoDB Local image; the target is
+  read-only, non-root, `cap_drop: ALL`, holds only the fake keys and has no route out. `listen.allowed_clients` would
+  need fixed subnets that could clash with a developer's network. Revisit if a non-AWS image ever joins `api-internal`.

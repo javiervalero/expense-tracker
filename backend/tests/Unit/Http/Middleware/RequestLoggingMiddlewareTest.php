@@ -216,6 +216,26 @@ final class RequestLoggingMiddlewareTest extends TestCase
         self::assertSame('198.51.100.4', $this->line()['clientIp']);
     }
 
+    public function testUserIdIsLoggedWhenAGuardRecordedIt(): void
+    {
+        $this->middleware()->process($this->request(), $this->handler(static function (Request $request): Response {
+            $context = $request->attribute(RequestLogContext::ATTRIBUTE);
+            self::assertInstanceOf(RequestLogContext::class, $context);
+            $context->recordUserId('3f2b8c1e-5d4a-4b7e-9a60-1c2d3e4f5a6b');
+
+            return Response::empty(204);
+        }));
+
+        self::assertSame('3f2b8c1e-5d4a-4b7e-9a60-1c2d3e4f5a6b', $this->line()['userId']);
+    }
+
+    public function testUserIdIsNullWhenNoSessionWasKnown(): void
+    {
+        $this->middleware()->process($this->request(), $this->handler(static fn(): Response => Response::empty(204)));
+
+        self::assertNull($this->line()['userId']);
+    }
+
     private function request(): Request
     {
         return new Request('GET', '/api/v1/health', [], [], '');

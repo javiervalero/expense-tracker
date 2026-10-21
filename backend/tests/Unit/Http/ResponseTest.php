@@ -78,6 +78,16 @@ final class ResponseTest extends TestCase
         self::assertSame(['Set-Cookie' => ['a=1', 'b=2']], $response->headers);
     }
 
+    public function testAddingSetCookieInAnotherSpellingLandsUnderTheExistingKey(): void
+    {
+        $response = Response::empty(204)
+            ->withAddedHeader('Set-Cookie', 'a=1')
+            ->withAddedHeader('set-cookie', 'b=2')
+            ->withAddedHeader('SET-COOKIE', 'c=3');
+
+        self::assertSame(['Set-Cookie' => ['a=1', 'b=2', 'c=3']], $response->headers);
+    }
+
     public function testHeaderValuesLookUpIgnoringCase(): void
     {
         $response = Response::json(200, [])->withAddedHeader('Vary', 'Origin');

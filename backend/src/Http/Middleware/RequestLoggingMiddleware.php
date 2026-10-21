@@ -21,7 +21,8 @@ use Throwable;
  * logged with its own status. The method is logged only if it is a known one, else "OTHER". `clientIp` is the
  * address that ClientIpMiddleware recorded in the {@see RequestLogContext} this middleware gives the request, or
  * "unknown" when it recorded none: also for a request that was rejected before ClientIp ran (origin check, deferred
- * 413/400), whose header is not trusted yet and is never read here.
+ * 413/400), whose header is not trusted yet and is never read here. `userId` (an opaque UUID, never the e-mail) is
+ * the user that a session guard or a login recorded in the same context, or null.
  */
 final readonly class RequestLoggingMiddleware implements Middleware
 {
@@ -70,6 +71,7 @@ final readonly class RequestLoggingMiddleware implements Middleware
             'method' => in_array($request->method, self::KNOWN_METHODS, true) ? $request->method : self::UNKNOWN_METHOD,
             'path' => mb_strcut($request->path, 0, self::MAX_PATH_LENGTH, 'UTF-8'),
             'clientIp' => $context->clientIp() ?? self::UNKNOWN_CLIENT_IP,
+            'userId' => $context->userId(),
             'status' => $status,
             'durationMs' => round(
                 (($this->nanoseconds)() - $start) / self::NANOSECONDS_PER_MILLISECOND,

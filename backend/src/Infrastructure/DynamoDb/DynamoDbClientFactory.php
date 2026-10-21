@@ -8,7 +8,8 @@ use Aws\DynamoDb\DynamoDbClient;
 
 /**
  * The one place a DynamoDB client is built. Short timeouts and bounded retries keep a slow table from eating the
- * Lambda's time. No credentials are passed: the SDK's default chain finds them (the execution role on Lambda).
+ * Lambda's time. No credentials are passed, ever (an architecture test guards it): the SDK's default chain finds them
+ * (the execution role on Lambda; the environment locally, where the unit tests get fake keys from phpunit.xml.dist).
  *
  * Outside Lambda (where the runtime sets `AWS_REGION`) a region must come from `AWS_REGION` in the settings or from
  * the SDK's own chain (shared config file, `AWS_DEFAULT_REGION`); with none, the first call fails and the store

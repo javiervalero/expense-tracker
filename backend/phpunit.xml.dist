@@ -30,6 +30,14 @@
             <directory>tests/Integration</directory>
         </testsuite>
     </testsuites>
+    <!-- Fake keys, the same as .env.example and the Compose stack pass to the integration run (so nothing changes there).
+         They let the AWS SDK's environment chain find credentials instead of waiting on the instance metadata
+         service. Never put real keys here. -->
+    <php>
+        <env name="AWS_ACCESS_KEY_ID" value="localdev" force="true"/>
+        <env name="AWS_SECRET_ACCESS_KEY" value="localdevsecret" force="true"/>
+        <env name="AWS_EC2_METADATA_DISABLED" value="true" force="true"/>
+    </php>
     <source>
         <include>
             <directory>src</directory>
