@@ -819,6 +819,19 @@ Carried:
 - **Account deletion (later phase):** only `/auth/me` notices a deleted user; deletion must end the user's sessions, or `RequireSession` must check that the user exists.
 - **WP14:** the A8 clarification above; keep `RequireSession` outermost if a decorator is ever added (a wrapper around it would be reported as unguarded, which fails safe).
 
+### Notes from the WP13 reviews (2026-10-21)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP13 diff (base `81d862b`), then round 2 of both on the fix hunks (both approved, no CRITICAL or HIGH). A last batch of LOW robustness items was checked inline by the main session (it changed no security assertion). WP13 is test code and `Makefile` only; no production code changed.
+
+- **Round 1 HIGH: the HTTP race could not catch the bug it was for.** Locally `pm.max_children = 5` (dynamic, 2–3 idle workers), and every allowed login holds a worker for an Argon2id verify, so attempts 10 and 11 never reach the counter together; a check-then-increment counter would also give exactly 10 × 401 and 15 × 429. Fix: `ThrottleCounterConcurrencyTest` runs the **real** `ThrottleCounter` in 25 `proc_open` children on one key. Each child warms up on a key of its own, reports `ready`, and waits on stdin; the parent releases all of them at once and asserts exactly `limit` allowed, stored `attempts === 25`, and that every hit started before any ended (`hrtime`). A deterministic companion in `ThrottleCounterTest` seeds the bucket at `limit - 1` and runs counter B's whole `hit()` on counter A's first write; exactly one is allowed. Both were shown to fail (3/3, and `[true, true]`) against a temporary read-compare-write double, since removed.
+- **`LoginThrottleRaceTest` stays as the end-to-end check** through nginx and php-fpm (a few requests overlap): exactly `LOGIN_ACCOUNT_LIMIT` × 401 and the rest 429, each `Retry-After` a plain integer between 1 and `LOGIN_WINDOW_SECONDS`, 401s without `Retry-After` or `Set-Cookie`. It clears its 25 test-only address buckets first, then reads the stack table: account bucket `attempts === 25`, each address bucket exactly 1 (25 distinct clients, blocked attempts still counted).
+- **`AuthFlowApiTest`:** register → me → logout → me (401) → login → me, contract-validated; a logout without `X-Requested-With` and with a marker `Origin` is refused (403) and the session survives; a 422 and a 400 carry the marker password and must not echo it.
+- **Log hygiene (`make test-integration`, part 1):** markers in `build/auth-test/markers.json` (gitignored; values checked sed-safe, written under `flock`). Neither the `api-php` nor the `api` (nginx) logs may contain the test passwords, the two session tokens, their 16-character prefixes, or the fixed prefixes `pw-marker-` / `wrong-marker-` (the logger caps values, so a leak could be truncated). Greps use `-F -e` (a base64url token can start with `-`). An `/api/v1/auth/me` request line must carry the marker `userId`; a `csrf check failed` line must carry the marker origin. Each check fails with its own message and was shown to fail by a temporary mutated `Makefile`.
+- **Round 2 bug fixed:** Guzzle's `Pool` passes its options to each request closure, which ignored them, so the 30 s timeout for queued requests never applied; `requestConcurrently()` now merges them (per-call options win).
+
+Carried:
+- **WP14 (threat model / testing notes):** the HTTP race test is only a few-way concurrent on the local fpm pool; the true race proof is the storage-level test. The log checks need the whole integration suite (markers come from the tests), not `--filter`.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
