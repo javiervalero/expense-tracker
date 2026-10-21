@@ -1,0 +1,43 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Categories;
+
+use App\Http\Input\Pcre;
+use App\Http\Input\PlainText;
+use App\Http\Input\TextViolation;
+
+/**
+ * A category name (B6): required, 1 to {@see self::MAX_CHARS} characters after trimming, with the B4 rules. The text
+ * is stored as given ({@see self::value()}). Uniqueness is case-insensitive: {@see self::key()} is the SHA-256 hex
+ * of the name without its allowed invisible characters (ZWSP, ZWNJ, ZWJ, LRM, RLM, ALM), with every run of space
+ * separators (`\p{Zs}`) collapsed to one U+0020, and then case-folded (`MB_CASE_FOLD`, so `Straße` and `STRASSE`
+ * collide, and so do `Eating out`, `Eating  out` and `Eating` + NBSP + `out`), the sort key of the name lock item.
+ */
+final class CategoryName
+{
+    public const MAX_CHARS = 50;
+
+    private function __construct(private readonly string $value) {}
+
+    public static function parse(string $input): self|TextViolation
+    {
+        $text = PlainText::parse($input, self::MAX_CHARS);
+
+        return $text instanceof TextViolation ? $text : new self($text);
+    }
+
+    public function value(): string
+    {
+        return $this->value;
+    }
+
+    public function key(): string
+    {
+        $visible = Pcre::replace('/[\x{200B}-\x{200F}\x{061C}]/u', '', $this->value);
+        $spaced = Pcre::replace('/\p{Zs}+/u', ' ', $visible);
+
+        return hash('sha256', mb_convert_case($spaced, MB_CASE_FOLD, 'UTF-8'));
+    }
+}
