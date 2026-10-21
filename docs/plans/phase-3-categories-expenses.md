@@ -513,6 +513,23 @@ WP1 ─► R ─► WP2 ─► WP3 ─┬─► WP4 ─► WP5 ─┬─► WP8 
 ### 7.3 Review notes
 As in Phases 1 and 2, each WP's review findings (and anything carried) are added here as "Notes from the WPn reviews" before the next WP starts.
 
+### Notes from the WP2 reviews (2026-10-21)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP2 diff (base `b5a0147`), then round 2 of both (approved). A last LOW batch, suggested by the security reviewer, was checked inline by the main session. `CredentialsInput` now uses `ObjectMembers` with identical behaviour (both reviewers compared the code paths; its tests are unchanged).
+
+- **Possible ReDoS (round 1 HIGH, security):** the edge trim was a regex whose end branch had no start anchor. Benchmarked: under 1 ms for 60,000 inner spaces of U+0020, U+3000 and U+00A0 (PCRE's optimisations kept it linear), so not exploitable as written. Fixed anyway: `mb_trim` with an explicit list (ASCII whitespace plus every `\p{Z}` code point; NUL and U+0085 deliberately absent so they are refused, not trimmed), and a byte pre-check (`> maxChars × 4 + 1024` → `TooLong`) before any regex.
+- **PCRE errors fail closed:** `App\Http\Input\Pcre` throws on `null`/`false` with `preg_last_error_msg()` only, never the subject (`zend.exception_ignore_args` keeps it out of traces); it becomes a generic `500`.
+- **Invisible text (both reviewers, MEDIUM):** `\p{Cf}` is refused (`TextViolation::InvisibleCharacter`) except ZWSP, ZWNJ, ZWJ, LRM, RLM (U+200B–U+200F), ALM (U+061C) and the tag characters U+E0020–U+E007F, which real keyboards, scripts, emoji and flags need; the blank fillers U+115F, U+1160, U+2800, U+3164 and U+FFA0 are refused; text with no letter, number, symbol or punctuation is `Empty`. U+2028/U+2029 are refused inside text (trimmed at the edges). Bidi embeddings, overrides and isolates stay refused (B4).
+- **Category name key (B6):** strips the allowed invisibles, collapses every run of `\p{Zs}` to one space, then `MB_CASE_FOLD` and SHA-256, so `Food`, `Food` + ZWSP, `Fo` + ZWJ + `od`, `Eating  out` and `Eating` + NBSP + `out` collide with their plain forms. The stored name stays byte for byte. Fold results from R2 (`İ`, `ǅ`, `Straße`) are pinned.
+- Check order: size guard, encoding, trim, empty, control, bidi, invisible, nothing visible, length (pinned by precedence tests). No field message echoes input (each message test asserts a marker is absent).
+- Deviations from the plan, accepted: `TextViolation::InvalidEncoding`; `AmountViolation` = `NotAnInteger` / `TooSmall` / `TooLarge` (a bigint-as-string is `NotAnInteger`); `ExpenseDate::parse()` returns `?self`; `ExpenseDate::isAfter()` and `Amount::MIN_CENTS` added.
+
+Carried:
+- **WP4:** store `nameKey` on the `CAT#` item (already in B20's item list) and delete or condition the lock on the **stored** key, never a recomputed one, so a future change in PHP's case-folding tables cannot orphan a `CATNAME#` lock.
+- **WP8–WP11:** `Description`, `CategoryName` and `ExpenseDate` take `string`; the input classes must check `is_string` first (one shared "string member or error" helper), or `strict_types` turns a number or `null` into a `500` instead of a `422`.
+- **Phase 4 (front end):** count characters by code point (`[...s].length`, not `s.length` / `maxlength`) so the client agrees with `mb_strlen`; clip overflow on names and descriptions (combining-mark floods pass the length check by design).
+- **Accepted (ADR 0002 note in WP13):** Arabic prepended marks (U+0600–U+0605, U+06DD) and the Mongolian vowel separator are refused as format characters; no Unicode normalisation (precomposed `é` and `e` + U+0301 are different names).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
