@@ -234,6 +234,38 @@ final class ThrottleCounterTest extends TestCase
         self::assertSame(900, $loser->retryAfterSeconds);
     }
 
+    public function testTwoRequestsAtTheBoundaryOfTheLimitLetExactlyOneThrough(): void
+    {
+        // The bucket is at limit - 1: one more attempt fits. Counter A's first WRITE (after any read it makes) is preceded
+        // by a whole hit of counter B, so a read-compare-write counter would let both through; an atomic increment
+        // gives A the count over the limit.
+        $this->store->putItem(AuthKeys::throttle(AuthKeys::LOGIN_IP, self::IP) + ['attempts' => $this->rule->limit - 1, 'expiresAt' => $this->now() + 900]);
+        $other = new ThrottleCounter(new ItemStore(LocalAws::fromGlobals()->dynamoDb(), $this->table->name), $this->clock);
+        $rule = $this->rule;
+        $interleaved = 0;
+        $bDecision = null;
+        $clientA = LocalAws::fromGlobals()->dynamoDb();
+        $clientA->getHandlerList()->appendInit(
+            Middleware::tap(function (CommandInterface $command) use ($other, $rule, &$interleaved, &$bDecision): void {
+                if ($interleaved === 0 && in_array($command->getName(), ['UpdateItem', 'PutItem'], true)) {
+                    ++$interleaved;
+                    $bDecision = $other->hit($rule, self::IP)->decision;
+                }
+            }),
+            'interleave-first-write',
+        );
+        $counterA = new ThrottleCounter(new ItemStore($clientA, $this->table->name), $this->clock);
+
+        $aDecision = $counterA->hit($rule, self::IP)->decision;
+
+        self::assertSame(1, $interleaved, 'the interleaving happened exactly once');
+        self::assertNotNull($bDecision);
+        self::assertSame([true, false], [$bDecision->isAllowed, $aDecision->isAllowed], 'exactly one of the two is allowed');
+        $item = $this->stored();
+        self::assertNotNull($item);
+        self::assertSame($rule->limit + 1, $item['attempts']);
+    }
+
     public function testABucketWithoutExpiresAtIsResetToOneInAFreshWindow(): void
     {
         $this->store->putItem(AuthKeys::throttle(AuthKeys::LOGIN_IP, self::IP) + ['attempts' => 9]);

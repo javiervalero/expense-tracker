@@ -184,6 +184,9 @@ EXCLUDE_SLOW = $(if $(FAST),--exclude-group slow)
 PIPE_MARKERS = build/pipe-test
 # ClientIpOverNginxTest writes markers.json here (one "key": "value" per line); the recipe reads it back.
 CLIENT_IP_MARKERS = build/client-ip-test
+# AuthFlowApiTest and LoginThrottleRaceTest write markers.json here (password, wrongPassword, sessionToken,
+# revokedSessionToken, userId, csrfOrigin), merged; the checks below need the whole suite to have run (not --filter).
+AUTH_MARKERS = build/auth-test
 
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
@@ -191,7 +194,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
 	$(COMPOSE) stop worker-runner; \
-	rm -rf $(CLIENT_IP_MARKERS); \
+	rm -rf $(CLIENT_IP_MARKERS) $(AUTH_MARKERS); \
 	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
 	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
@@ -210,6 +213,22 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	printf '%s\n' "$$requests" | grep -F "\"requestId\":\"$$requestid\"" | grep -qF '"clientIp":"unknown"' || fail "the request $$requestid (duplicated header) was not logged with clientIp unknown"; \
 	printf '%s\n' "$$requests" | grep -F "\"path\":\"$$socketpath\"" | grep -qE '"clientIp":"(172|10)\.[0-9]+\.[0-9]+\.[0-9]+"' || fail "the request for $$socketpath (no header) was not logged with a 172.x or 10.x clientIp (the socket address nginx fills in)"; \
 	echo "make test-integration: client IP log checks passed"; \
+	[ -f $(AUTH_MARKERS)/markers.json ] || fail "the auth tests left no $(AUTH_MARKERS)/markers.json"; \
+	amarker() { v=$$(sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(AUTH_MARKERS)/markers.json); [ $${#v} -ge 16 ] || fail "auth markers.json has no usable '$$1' marker (empty or shorter than 16 characters; did its test run? it needs the whole suite, not --filter)"; printf '%s' "$$v"; }; \
+	authpw=$$(amarker password); authwrong=$$(amarker wrongPassword); authtoken=$$(amarker sessionToken); authrevoked=$$(amarker revokedSessionToken); \
+	authuser=$$(amarker userId); authorigin=$$(amarker csrfOrigin); \
+	nginxlogs=$$($(COMPOSE) logs --no-log-prefix --since "$$ip_since" api) || fail "could not read the api (nginx) logs"; \
+	[ -n "$$nginxlogs" ] || fail "no api (nginx) log output since $$ip_since"; \
+	leak() { [ $${#2} -ge 10 ] || fail "the leak check for $$1 has a value shorter than 10 characters (vacuous)"; \
+		if printf '%s\n' "$$apilogs" | grep -qF -e "$$2"; then fail "$$1 appears in the api-php logs (a secret leaked into a log)"; fi; \
+		if printf '%s\n' "$$nginxlogs" | grep -qF -e "$$2"; then fail "$$1 appears in the api (nginx) logs (a secret leaked into a log)"; fi; }; \
+	leak "the test PASSWORD" "$$authpw"; leak "the password prefix pw-marker-" "pw-marker-"; \
+	leak "the wrong PASSWORD" "$$authwrong"; leak "the wrong-password prefix wrong-marker-" "wrong-marker-"; \
+	leak "the SESSION TOKEN" "$$authtoken"; leak "the first 16 characters of the SESSION TOKEN" "$$(printf '%s' "$$authtoken" | cut -c1-16)"; \
+	leak "the REVOKED session token" "$$authrevoked"; leak "the first 16 characters of the REVOKED session token" "$$(printf '%s' "$$authrevoked" | cut -c1-16)"; \
+	printf '%s\n' "$$requests" | grep -F '"path":"/api/v1/auth/me"' | grep -qF -e "\"userId\":\"$$authuser\"" || fail "no request line for /api/v1/auth/me carries \"userId\":\"$$authuser\" (the session user is not logged)"; \
+	printf '%s\n' "$$apilogs" | grep -F 'csrf check failed' | grep -qF -e "\"origin\":\"$$authorigin\"" || fail "no 'csrf check failed' line with \"origin\":\"$$authorigin\" in the api-php logs (the CSRF refusal of the auth flow test was not logged)"; \
+	echo "make test-integration: auth log checks passed"; \
 	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
 	rm -rf $(PIPE_MARKERS); \
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \

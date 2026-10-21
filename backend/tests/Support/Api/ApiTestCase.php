@@ -9,6 +9,8 @@ use App\Tests\Support\Contract\ContractValidator;
 use App\Tests\Support\Contract\ContractViolation;
 use App\Tests\Support\Contract\OpenApiDocument;
 use GuzzleHttp\Client as HttpClient;
+use GuzzleHttp\Pool;
+use GuzzleHttp\Promise\PromiseInterface;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Message\ResponseInterface;
 
@@ -25,6 +27,7 @@ abstract class ApiTestCase extends TestCase
 {
     private const string DEFAULT_BASE = 'http://api:8080';
     private const string API_PREFIX = '/api/v1';
+    private const int QUEUED_CALL_TIMEOUT_SECONDS = 30;
 
     private static ?OpenApiDocument $document = null;
 
@@ -144,6 +147,55 @@ abstract class ApiTestCase extends TestCase
     }
 
     /**
+     * Sends all calls under `/api/v1` at once through a Guzzle Pool (up to `$concurrency` in flight) and validates each
+     * response against the contract, like request(). The calls get the defaults of the test; a header a call sets
+     * itself wins, so each can carry its own `CloudFront-Viewer-Address`. A transport failure fails the test. The result
+     * has the same keys as `$calls`.
+     *
+     * @param array<int, array{0: string, 1: string, 2?: array{body?: string, headers?: array<string, string|non-empty-list<string>>}}> $calls [method, path, options]
+     *
+     * @return array<int, ResponseInterface>
+     */
+    final protected function requestConcurrently(array $calls, int $concurrency): array
+    {
+        foreach ($calls as [, $path]) {
+            self::assertStringStartsWith('/', $path, 'requestConcurrently() takes a path relative to the server URL of the spec');
+            self::assertFalse(str_starts_with($path, '/api/'), "requestConcurrently() adds the /api/v1 prefix itself; got $path");
+        }
+        $requests = function () use ($calls): \Generator {
+            foreach ($calls as $key => $call) {
+                [$method, $path] = $call;
+                $options = $this->withDefaults($method, $call[2] ?? []);
+                // The Pool hands its own `options` to the callable; per-call options win over them (the later array of array_merge).
+                /** @param array{timeout?: int|float} $poolOptions */
+                // @phpstan-ignore argument.type (phpstan cannot see that the merge of two request-option shapes is one)
+                yield $key => fn(array $poolOptions): PromiseInterface => $this->http->requestAsync($method, $this->base . self::API_PREFIX . $path, array_merge($poolOptions, $options));
+            }
+        };
+        $responses = [];
+        $failures = [];
+        (new Pool($this->http, $requests(), [
+            'concurrency' => $concurrency,
+            // Calls queue behind the php-fpm workers, and the time spent waiting counts against the timeout.
+            'options' => ['timeout' => self::QUEUED_CALL_TIMEOUT_SECONDS],
+            'fulfilled' => static function (ResponseInterface $response, int|string $key) use (&$responses): void {
+                $responses[$key] = $response;
+            },
+            'rejected' => static function (mixed $reason, int|string $key) use (&$failures): void {
+                $failures[$key] = $reason instanceof \Throwable ? $reason->getMessage() : 'rejected';
+            },
+        ]))->promise()->wait();
+        self::assertSame([], $failures, 'some concurrent calls failed at transport level');
+        ksort($responses);
+        foreach ($responses as $key => $response) {
+            [$method, $path] = $calls[$key];
+            self::assertMatchesContract($response, $method, $path, "$method $path (call $key)");
+        }
+
+        return $responses;
+    }
+
+    /**
      * Calls `/api/v1{$path}` and fails the test when the response differs from the contract.
      *
      * @param string                                                      $path    relative to the server URL of the spec, as in its `paths` (`/health`)
@@ -200,7 +252,17 @@ abstract class ApiTestCase extends TestCase
     private function sendAs(string $operationMethod, string $template, string $method, string $url, array $options): ResponseInterface
     {
         $response = $this->http->request($method, $this->base . $url, $this->withDefaults($method, $options));
-        // The spec documents paths without the server prefix and without a query string.
+        self::assertMatchesContract($response, $operationMethod, $template, "$method $url");
+
+        return $response;
+    }
+
+    /**
+     * Fails the test when the response differs from the contract. The spec documents paths without the server prefix
+     * and without a query string.
+     */
+    private static function assertMatchesContract(ResponseInterface $response, string $operationMethod, string $template, string $what): void
+    {
         $violations = self::validator()->validate(
             $operationMethod,
             $template,
@@ -208,9 +270,7 @@ abstract class ApiTestCase extends TestCase
             self::flatHeaders($response),
             (string) $response->getBody(),
         );
-        self::assertSame([], array_map(self::describe(...), $violations), "$method $url breaks the contract (as $operationMethod $template)");
-
-        return $response;
+        self::assertSame([], array_map(self::describe(...), $violations), "$what breaks the contract (as $operationMethod $template)");
     }
 
     /**
