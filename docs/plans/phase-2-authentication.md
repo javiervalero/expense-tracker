@@ -753,7 +753,7 @@ Carried:
   - `NetworkPrefix` should derive its byte count with `intdiv` (or a test should pin the prefix bits to a multiple of 8), so it can never disagree with `AuthKeys`.
 - **WP11:** a blocked attempt must never reach `password_verify` or `succeeded()`; a wrong password must never call `succeeded()`; `succeeded()` runs only after the password is verified (the account-bucket delete is deliberately unconditional: any real success resets it, A13); test all three.
 - **WP13:** the race test must send truly concurrent `UpdateItem`s (for example `executeAsync` / `CommandPool`) and expect exactly `limit` allowed; the WP9 integration test is sequential.
-- **Phase 7:** alarm on `CorruptItem` and on the warning "Login throttle clean-up after a successful login failed" (an IAM gap such as a missing `dynamodb:DeleteItem` would otherwise show up only as warnings); rely on API Gateway / WAF rate limits for floods (each blocked login still costs two or three DynamoDB writes).
+- **Phase 7:** alarm on `CorruptItem` and on the warning "login throttle clean-up failed after a successful login" (renamed in the whole-PR review; an IAM gap such as a missing `dynamodb:DeleteItem` would otherwise show up only as warnings); rely on API Gateway / WAF rate limits for floods (each blocked login still costs two or three DynamoDB writes).
 - **WP14 (ADR notes / threat model), accepted by design (A13, A14, R3, owner decision 5):** fixed windows allow a burst of up to twice a limit around a window boundary; IPv4 has no coarse tier; each successful login by the owner gives an attacker a fresh 10 attempts on that account; an attacker whose address is already blocked can still push a victim's account bucket over its limit (a lockout for at most 15 minutes); the account key is an unsalted SHA-256 of the email, so someone who can read the table can confirm that a guessed email was tried in the last 15 minutes (registered emails are stored in plain text anyway; an HMAC with an SSM key is the upgrade if ever wanted).
 
 ### Notes from the WP11 hardening reviews (2026-10-20)
@@ -831,6 +831,19 @@ From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the unco
 
 Carried:
 - **WP14 (threat model / testing notes):** the HTTP race test is only a few-way concurrent on the local fpm pool; the true race proof is the storage-level test. The log checks need the whole integration suite (markers come from the tests), not `--filter`.
+
+### Notes from the whole-PR review (2026-10-21)
+
+`/code-review 5` before marking the PR ready: ecc:code-reviewer (sonnet) on the whole diff, looking only for what the per-WP reviews could not see (cross-WP drift, dead code, config and contract wiring, docs against code). No CRITICAL or HIGH. Confirmed clean: no source file over 800 lines or function over 50, no TODO/debug leftovers, `schema.gen.ts` fresh, every returned `Retry-After` / `WWW-Authenticate` / `Set-Cookie` documented, the ADR and `local-dev.md` numbers match the code. The review is recorded here, like every other review of this phase, rather than in a separate `.claude/reviews/` file.
+
+Fixed (behaviour-preserving clean-up; ecc:php-reviewer and ecc:security-reviewer (opus/high) both approved it, the security reviewer confirming no security behaviour changed):
+- The throttle clean-up warning follows the log conventions: `login throttle clean-up failed after a successful login`, keys `requestId`, `scope`, `operation`, `code` (`succeeded()` takes the request id).
+- A throttled registration now logs `registration failed`, `reason` `throttled`, like login (no email, no address).
+- One source each for the `Session` challenge (`RequireSession::CHALLENGE`), the 429 (`TooManyAttempts::problem()`, its text now pinned by a test), the duplicate-cookie warning (`SessionCookie::warnDuplicate()`), `StorageFailure::CORRUPT_ITEM`, `AuthKeys::AUTH_SESSION_SORT_KEY` (not `SESSION_…`: `NoNativeSessionsTest` refuses identifiers starting `session_`) and `ClientAddress::UNKNOWN_KEY`; `SessionToken::FORMAT` is built from `LENGTH`; a test ties `ClientIp`'s `/64` to `AuthKeys`.
+- CI's backend job now runs `make test-slow-unit`, so the production-cost Argon2id test runs on every PR.
+- Docs: ADR 0012's throttle-key sentence (`$throttleKey` for address buckets, `$ip` for the `/48`), the `DYNAMODB_ENDPOINT` row (required locally), the make-targets table (`test-slow-unit`).
+
+Not done (LOW, recorded): `AnonymousReason` is only used to decide whether a cookie was sent and is never logged; logging it would be a new behaviour, so it stays as it is. Phase 7: do not alarm on single `registration failed` warnings; floods are the WAF / API Gateway rate limit's job.
 
 ## 8. Risks and decision points
 
