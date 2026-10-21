@@ -153,6 +153,15 @@ Each question, and the WP that needs the answer:
   - two operations on the same key give `ValidationException` (the reason case-only renames use one `UpdateItem`).
 - **R4 (WP7, WP11):** what reaches the handler on Lambda for `q` with `+`, `%2B`, `%20` and non-ASCII text, and for repeated `category` (from `QueryStringBrefTest` and Bref's source). Duplicate parameters collapse on AWS (last wins), which the handler must tolerate.
 
+### Step 0 results (2026-10-21)
+
+| # | Answer | Consequence |
+|---|---|---|
+| R1 | Per the [Query API reference](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_Query.html), `ExclusiveStartKey` is the start position. On DynamoDB Local 3.3.1 (throwaway table, deleted afterwards), an LSI start key must hold exactly `PK`, `SK` and `LSI1SK` (otherwise `ValidationException`). The item need not exist: after deleting the start item, or changing its `LSI1SK`, the query resumes from the old position with nothing skipped or repeated (a re-dated item moves to its new position). A `PK` that does not match the key condition is refused. The docs do not state the deleted-item case, so WP6/WP7 pin it with tests. [LSI.html](https://docs.aws.amazon.com/amazondynamodb/latest/developerguide/LSI.html): items with an **equal** index sort key come back in no defined order. | ADR 0002's cursor works; **no G2**. Ties cannot happen: `LSI1SK = EXP#<date>#<expenseId>` is unique, and B18 checks that `sk` and `lsi` carry the same id. Cursors are only ever built from a real examined item. |
+| R2 | `php:8.5-fpm-alpine` (local) and `bref/php-85:3` (Lambda): PHP 8.5.11, PCRE 10.44, mbstring on, intl off; byte-identical output for the probe strings. `Straße` and `STRASSE` both fold to `strasse`; `İ` folds to `i̇` (`69cc87`), `ǅ` to `ǆ`; the ZWJ emoji counts as 3 characters; `\p{Z}` matches U+00A0 and U+3000; `\p{Cc}` matches U+0085; the bidi class matches U+202E. | B4 holds as written. Trimming strips `\p{Z}` only at the edges (an inner NBSP stays). |
+| R3 | [TransactWriteItems](https://docs.aws.amazon.com/amazondynamodb/latest/APIReference/API_TransactWriteItems.html) on DynamoDB Local: an unconditional `Delete` of a missing item succeeds; `CancellationReasons` follow the order of the operations (`[None, ConditionalCheckFailed, ConditionalCheckFailed, None]`); two operations on one item give `ValidationException` locally (the docs also list it as a cancellation reason, so AWS may answer `TransactionCanceledException`). | B6/B14/B15 as written. The case-only rename stays one `UpdateItem`, so the same-item case never arises. |
+| R4 | Locally `QueryString` decodes `+` as space and percent-escapes (`q=a+b` → `a b`, `%2B` → `+`, `caf%C3%A9` → `café`) and refuses a repeated name with `400`. On Lambda, Bref re-encodes the query string RFC 3986 first; the values reaching the handler are the same. A repeated name becomes `name[0]…`, which `QueryString` also refuses (`400`, other detail). Pinned by `QueryStringBrefTest`. | B17/B19 as written; handlers validate their own parameters. |
+
 ### Part A: Building blocks
 
 #### WP1: Plan (S)
