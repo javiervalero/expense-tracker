@@ -16,6 +16,9 @@ use PHPUnit\Framework\TestCase;
  * moment. Exactly `limit` of them may be allowed and the stored count must be the number of processes. A counter that
  * reads, compares and then writes would let several through at the boundary.
  *
+ * Each child reports its hit's start and end (hrtime), and the test checks that the limit boundary was contended
+ * (a blocked hit started before the last allowed one ended), so the exact counts are not a result of running serially.
+ *
  * The children are `tests/Support/bin/throttle-hit.php` (no pcntl in the image, so proc_open). Every child is
  * terminated and every pipe closed in `finally`, whatever happens.
  */
@@ -65,12 +68,18 @@ final class ThrottleCounterConcurrencyTest extends TestCase
         $item = (new ItemStore(LocalAws::fromGlobals()->dynamoDb(), $this->table->name))->getItem(AuthKeys::throttle(AuthKeys::LOGIN_IP, self::IP));
         self::assertNotNull($item);
         self::assertSame(self::PROCESSES, $item['attempts'], 'every attempt is counted, also the blocked ones');
-        // All hits ran at the same time: the last one to start began before the first one ended. The barrier releases
-        // every child within about a millisecond while one hit takes several, so this holds also on a loaded host; if
-        // it ever fails the hits were not contended and the exact counts above would prove nothing.
-        $lastStart = max(PHP_INT_MIN, ...array_column($results, 'start'));
-        $firstEnd = min(PHP_INT_MAX, ...array_column($results, 'end'));
-        self::assertLessThan($firstEnd, $lastStart, 'the hits did not overlap (last start ' . ($lastStart - $firstEnd) . ' ns after the first end)');
+        // Weakest check that still proves the barrier does not serialise the hits: some blocked hit started before the
+        // last allowed hit ended, i.e. the limit boundary was contended. Run one after another, every blocked hit would
+        // start after all allowed ones ended. A strict "all 25 overlap" flaked on a 2-core CI runner (spread of ~16 ms).
+        $allowedEnds = array_column(array_filter($results, static fn(array $r): bool => $r['decision'] === 'allowed'), 'end');
+        $blockedStarts = array_column(array_filter($results, static fn(array $r): bool => $r['decision'] === 'blocked'), 'start');
+        $lastAllowedEnd = max(PHP_INT_MIN, ...$allowedEnds);
+        $firstBlockedStart = min(PHP_INT_MAX, ...$blockedStarts);
+        self::assertLessThan(
+            $lastAllowedEnd,
+            $firstBlockedStart,
+            sprintf('the hits were serialised: the first blocked hit started %.1f ms after the last allowed hit ended', ($firstBlockedStart - $lastAllowedEnd) / 1_000_000),
+        );
     }
 
     /**
