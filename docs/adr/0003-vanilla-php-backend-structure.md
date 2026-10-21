@@ -49,3 +49,17 @@ That has to stay small, readable and secure.
 - Every moving part is visible and small enough to read, which helps the owner learn how the pieces work.
 - We maintain our own router, validation and error handling. Keeping them minimal and well tested is essential.
 - The same code runs under php-fpm locally and under Bref's FPM mode on Lambda.
+
+## Implemented in Phase 2 (2026-10-21, PR #5)
+
+Decisions A7 and A8 in [the Phase 2 plan](../plans/phase-2-authentication.md).
+
+- **Authentication is a route guard, not a global middleware** (clarifies the "session authentication" middleware in
+  the list above). `RequireSession` wraps each protected handler in `Routes.php`, so public routes, 404s and `/health`
+  never read DynamoDB. `ProtectedRoutesMatchContractTest` keeps the guarded routes equal to the contract operations
+  with `security: [sessionCookie]`, so a forgotten guard fails CI. `RequireSession` must stay the outermost wrapper
+  of a handler.
+- **Middleware order** (outermost first): error handling, request logging, origin verification, deferred 413/400,
+  client IP, storage-unavailable mapping, CSRF, then the router with `RequireSession` around protected handlers. CSRF
+  runs before authentication, so a forged request costs no database read.
+- **Routes are lazy:** each route holds a factory, and the dispatcher builds only the matched route's handler.

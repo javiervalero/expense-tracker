@@ -72,6 +72,50 @@ sets it from the browser's address, and nginx fills it from the caller's socket 
 A rejected origin check writes a warning `origin verification failed` with the reason `missing` or `mismatch`. The
 header value is never logged.
 
+## Signing in from the command line
+
+The API signs you in with a cookie session. Every request needs the `X-Origin-Verify` header (see "Calling the API
+directly"). A request that changes state (POST) also needs `Origin: http://localhost:5173` (one of the `APP_ORIGINS`
+values) and `X-Requested-With: XMLHttpRequest` (exact value). Without `X-Requested-With`, the API answers 403 with
+`{"type":"about:blank","title":"Forbidden","status":403,"detail":"The request failed the cross-site request check."}`.
+JSON bodies need `Content-Type: application/json`. `GET /auth/me` needs neither extra header.
+
+The commands are for bash. `H` is a bash array of the headers. Use `localhost`, not `127.0.0.1`: the session cookie is
+`Secure`, and curl 7.79 or later keeps it over plain http://localhost when it is stored in a cookie jar. Pick your own
+email and password.
+
+```bash
+API=http://localhost:8080/api/v1
+H=(-H "X-Origin-Verify: local-origin-verify-not-a-secret" -H "Origin: http://localhost:5173" -H "X-Requested-With: XMLHttpRequest" -H "Content-Type: application/json")
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -d '{"email":"me@example.com","password":"local docs password 1"}' $API/auth/register
+# 201, Set-Cookie: __Host-session=...; body {"id":"<uuid>","email":"me@example.com"}
+
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" $API/auth/me
+# 200, body {"id":"<uuid>","email":"me@example.com"}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X POST $API/auth/logout
+# 204, Set-Cookie: __Host-session=; Max-Age=0; ... (the cookie is cleared)
+
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" $API/auth/me
+# 401, WWW-Authenticate: Session, body {"type":"about:blank","title":"Unauthorized","status":401}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -d '{"email":"me@example.com","password":"local docs password 1"}' $API/auth/login
+# 200, a new Set-Cookie: __Host-session=...; body {"id":"<uuid>","email":"me@example.com"}
+```
+
+After 10 failed logins for one email within 15 minutes, login answers `429 Too Many Requests` with a
+`Retry-After: <seconds>` header (for example 897) and the body
+`{"type":"about:blank","title":"Too Many Requests","status":429,"detail":"Too many attempts. Try again later."}`.
+A correct login resets that email's counter. There are also per-address limits.
+
+To sign in from a browser, use Chrome or Firefox on http://localhost:5173, not `127.0.0.1` and not Safari. The cookie
+is `__Host-` and `Secure`: Firefox 75 and later and current Chromium accept it from http://localhost, but Safari does
+not reliably (WebKit bug 281149). The code has no "insecure cookie" switch on purpose.
+
+The logs show `"userId":"<uuid>"` on authenticated request lines, and a refused cross-site check writes a warning
+`csrf check failed`. Passwords and session tokens are never logged; `make test-integration` checks this.
+
 ## Receipt pipeline (local)
 
 On AWS a receipt upload goes S3 → event notification → SQS → worker Lambda. Locally the same path is:
@@ -104,7 +148,7 @@ are read only by the tests, but keep the `.env.example` value unless you know wh
 | `AWS_ACCESS_KEY_ID` | Yes | Fake access key, accepted only by the emulators (also the S3 emulator's root user) | `localdev` |
 | `AWS_SECRET_ACCESS_KEY` | Yes | Fake secret key, the pair of the line above (also the S3 emulator's root password) | `localdevsecret` |
 | `AWS_EC2_METADATA_DISABLED` | No | Stops the SDK from asking the EC2 metadata service for credentials | `true` |
-| `DYNAMODB_ENDPOINT` | No | DynamoDB Local, as seen from other containers. Local stand-ins only; unset on AWS | `http://dynamodb:8000` |
+| `DYNAMODB_ENDPOINT` | Yes | DynamoDB Local, as seen from other containers. Local stand-ins only; unset on AWS. The API refuses to start without it | `http://dynamodb:8000` |
 | `DYNAMODB_TABLE` | Yes | The app table that `make up` creates from `infra/dynamodb/table.json` | `expense-tracker-local` |
 | `SQS_ENDPOINT` | No | ElasticMQ, as seen from other containers | `http://sqs:9324` |
 | `SQS_RECEIPTS_QUEUE_URL` | Yes | URL of the `receipts` queue | `http://sqs:9324/000000000000/receipts` |
@@ -117,6 +161,7 @@ are read only by the tests, but keep the `.env.example` value unless you know wh
 | `S3_WEBHOOK_AUTH_TOKEN` | Yes | Bearer token shared by the emulator and the relay. Local only; use a random value on a shared host | `localdev-webhook-token` |
 | `API_PROXY_TARGET` | No | Where the Vite dev server forwards `/api`. Running Vite on the host? Use `http://127.0.0.1:8080` | `http://api:8080` |
 | `ORIGIN_VERIFY_LOCAL` | No | The local `X-Origin-Verify` value: the proxy sends it, the API accepts it (as `ORIGIN_VERIFY_SECRETS`). At least 32 visible ASCII characters, no space, comma, `"` or `\` | `local-origin-verify-not-a-secret` |
+| `APP_ORIGINS` | No | Browser origins allowed to make state-changing API calls (the CSRF check compares the `Origin` header byte for byte). 1 to 3 comma-separated `scheme://host[:port]`, lower case, no path, no trailing slash; https except for localhost, 127.0.0.1 and [::1] | `http://localhost:5173,http://127.0.0.1:5173` |
 <!-- END AUTO-GENERATED -->
 
 ## Make targets
@@ -237,6 +282,8 @@ bash scripts/tests/check-fixtures.test.sh
 - `make down` removes this project's containers and network. The stack defines no named volumes: the emulators keep
   their data in memory (DynamoDB Local runs with `-inMemory`; the S3 emulator and the relay queue use tmpfs), so a
   stack that was stopped starts empty. The DynamoDB table is recreated by the next `make up`.
+- Users, sessions and login throttle counters are in memory too. `make down && make up` clears them: everyone is signed
+  out and the 429 limits reset.
 - If the table definition in `infra/dynamodb/table.json` changes, `make up` stops with "Table ... already exists but
   differs from infra/dynamodb/table.json". The bootstrap never deletes a table, so run `make down && make up` (the data
   is in memory anyway). A second `make up` on an unchanged table logs "no changes".
@@ -251,6 +298,14 @@ bash scripts/tests/check-fixtures.test.sh
 
 - **`make up` stops with "DYNAMODB_TABLE is missing from .env".** Clones made before Phase 1 have an older `.env`. Add
   the line `DYNAMODB_TABLE=expense-tracker-local` (from `.env.example`) to `.env`.
+- **Clones made before Phase 2 stop with "not set - add DYNAMODB_ENDPOINT=http://dynamodb:8000 to .env (see
+  .env.example)".** Add the line `DYNAMODB_ENDPOINT=http://dynamodb:8000` to `.env`. Add
+  `APP_ORIGINS=http://localhost:5173,http://127.0.0.1:5173` too: Compose already defaults to that value, and the line
+  makes it visible and editable.
+- **Login answers 429.** Wait for the number of seconds in the `Retry-After` header, or run `make down && make up` to
+  reset the counters. See "Signing in from the command line".
+- **Signed in, but `/auth/me` says 401 in the browser.** Use Chrome or Firefox on http://localhost:5173. Safari does not
+  reliably keep the `__Host-` session cookie; see "Signing in from the command line".
 - **A direct API call returns 403.** The origin header is missing or wrong; see "Calling the API directly".
 - **`DYNAMODB_ENDPOINT` must stay unset outside local development.** The back-end's DynamoDB settings accept it only
   for a local stand-in (`localhost`, loopback, `host.docker.internal` or a Compose service name such as `dynamodb`) and

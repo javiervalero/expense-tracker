@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved by the owner, 2026-10-16** (gate G1; all nine section 10 decisions answered with the recommended defaults) |
+| Status | **Done, 2026-10-21** (WP1–WP14, PR #5). Approved by the owner on 2026-10-16 (gate G1; all nine section 10 decisions answered with the recommended defaults) |
 | Phase | 2 (PLAN §12, essential track) |
 | Branch | `feat/phase-2-authentication`, from `main` (Phase 1 merged in PR #4, commit 93d2cbb) |
 | Inputs | BRIEF; PLAN §5, §6, §9, §10, §12; ADR 0002, 0003, 0004, 0005, 0011, 0012; [Phase 1 plan](phase-1-backend-core.md) section 6 (everything carried to Phase 2); the Phase 1 code (`backend/src/Api`, `backend/src/Http`, `backend/src/Infrastructure`, `ApiTestCase`, `contract/openapi.yaml`, `docker-compose.yml`, `Makefile`, `.env.example`) |

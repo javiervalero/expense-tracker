@@ -31,6 +31,9 @@ Then open:
 - the app: http://localhost:5173 (Vite, which proxies `/api` to the API)
 - the API health check: http://localhost:5173/api/v1/health (through the proxy, which adds the origin header; a direct call to port 8080 needs it too, see [docs/local-dev.md](docs/local-dev.md#calling-the-api-directly))
 
+The API also has register, login, me and logout, with a cookie session. For curl examples, see
+[Signing in from the command line](docs/local-dev.md#signing-in-from-the-command-line).
+
 Stop the stack with `make down`. It removes the containers and never removes volumes; see
 [docs/local-dev.md](docs/local-dev.md) before deleting anything.
 

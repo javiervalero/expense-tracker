@@ -125,3 +125,25 @@ items have `LSI1SK`. All ids are random UUIDs and are never reused.
   carry the AWS message or item data.
 - No keys, repositories or cursor yet: those arrive with their first features (Phases 2 and 3). The review notes
   carried to them are in [the Phase 1 plan](../plans/phase-1-backend-core.md) ("Notes from the WP9 reviews").
+
+## Implemented in Phase 2 (2026-10-21, PR #5)
+
+The first keys and repositories (decisions A15, A17, A19 in [the Phase 2 plan](../plans/phase-2-authentication.md)). Keys are built in one place,
+`App\Auth\AuthKeys`.
+
+| Item | `PK` | `SK` | Attributes |
+|---|---|---|---|
+| User | `USER#<uuid>` | `PROFILE` | `userId`, `email` (normalised), `passwordHash`, `createdAt` |
+| Email lock | `EMAIL#<normalised email>` | `EMAIL` | `userId` |
+| Session | `SESSION#<sha256 hex of the token>` | `SESSION` | `userId`, `createdAt`, `renewedAt`, `absoluteExpiresAt`, `expiresAt` (TTL) |
+| Throttle bucket | `THROTTLE#<scope>#<key>` | `THROTTLE` | `attempts`, `expiresAt` (TTL) |
+
+- **Register** writes the user and the email lock in one transaction, each conditional on `attribute_not_exists(PK)`,
+  so one email can hold one account. The ids are random UUID v4.
+- **Throttle scopes** (`LOGIN-EMAIL`, `LOGIN-IP`, `LOGIN-NET`, `REGISTER-IP`, `REGISTER-NET`) refine the
+  `THROTTLE#<email or ip>` key of this ADR. The `LOGIN-EMAIL` key is the SHA-256 hex of the normalised email, so a
+  mistyped email is never stored in clear.
+- **A create that meets `ConditionFailed` is re-read before it is reported** (an SDK retry may find its own first
+  attempt): a lock or session that holds our own new values is a success, anything else a real conflict.
+- **Overload** (DynamoDB throttling, transaction conflicts, a transaction still in progress) becomes `503` with
+  `Retry-After: 1`; every other storage failure stays a generic `500`.
