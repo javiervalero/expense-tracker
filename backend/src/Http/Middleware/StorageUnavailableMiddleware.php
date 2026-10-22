@@ -20,6 +20,8 @@ use App\Infrastructure\Logging\JsonLogger;
  * `ConditionalCheckFailed` is a domain result and a `ValidationError` is a bug, so those, and every other throwable,
  * are rethrown unchanged (the error middleware makes them a generic 500).
  *
+ * A {@see StorageFailure::PROFILE_IN_QUERY} is also logged, as a security event (operation and code only), and rethrown.
+ *
  * The log line holds the operation, the code and the AWS request id: never item data.
  */
 final readonly class StorageUnavailableMiddleware implements Middleware
@@ -36,6 +38,14 @@ final readonly class StorageUnavailableMiddleware implements Middleware
         try {
             return $next->handle($request);
         } catch (StorageFailure $failure) {
+            if ($failure->awsErrorCode === StorageFailure::PROFILE_IN_QUERY) {
+                $this->logger->error('security: profile item returned by a query', [
+                    'requestId' => $request->attribute(Request::REQUEST_ID),
+                    'operation' => $failure->operation,
+                    'code' => $failure->awsErrorCode,
+                ]);
+                throw $failure;
+            }
             if ($failure->awsErrorCode === null || !in_array($failure->awsErrorCode, self::THROTTLING_CODES, true)) {
                 throw $failure;
             }

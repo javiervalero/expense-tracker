@@ -21,6 +21,8 @@ use UnexpectedValueException;
  * Every expression string is a `literal-string` and every expression-attribute-name map holds literal strings, so
  * PHPStan rejects an expression built from input; values travel only in the values maps.
  *
+ * A query whose result holds a `PROFILE` item fails with a StorageFailure (`ProfileInQuery`) and returns nothing.
+ *
  * SDK failures become {@see ConditionFailed}, {@see TransactionCancelled} or {@see StorageFailure}; none of their
  * messages contain item data, and none chains the original exception. Client-side failures (credentials, endpoint
  * resolution, SDK validation, marshalling a value) become a StorageFailure with the code `ClientError`.
@@ -30,6 +32,8 @@ final readonly class ItemStore
     private const CONDITION_FAILED = 'ConditionalCheckFailedException';
     private const TRANSACTION_CANCELLED = 'TransactionCanceledException';
     private const CLIENT_ERROR = 'ClientError';
+    /** The sort key of a user's profile item: it shares the partition with the user's data and must never come back from a query. */
+    private const PROFILE_SORT_KEY = 'PROFILE';
     private const ATTRIBUTE_TYPES = ['S', 'N', 'B', 'BOOL', 'NULL', 'SS', 'NS', 'BS', 'L', 'M'];
     /** DynamoDB's own cap on `Limit` is the table size; 1000 keeps one page well inside the 1 MB response cap. */
     public const int MAX_QUERY_LIMIT = 1000;
@@ -147,7 +151,12 @@ final readonly class ItemStore
         $items = [];
         foreach (is_array($rawItems) ? $rawItems : [] as $rawItem) {
             if (is_array($rawItem)) {
-                $items[] = $this->unmarshal('Query', $rawItem);
+                $item = $this->unmarshal('Query', $rawItem);
+                if (($item[TableLayout::SK] ?? null) === self::PROFILE_SORT_KEY) {
+                    // Safety net behind UserPartitionQueryTest: a key condition that reaches the profile is a bug.
+                    throw new StorageFailure('Query', StorageFailure::PROFILE_IN_QUERY);
+                }
+                $items[] = $item;
             }
         }
         $lastKey = $result['LastEvaluatedKey'] ?? null;

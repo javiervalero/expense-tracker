@@ -6,6 +6,7 @@ namespace App\Tests\Unit\Auth;
 
 use App\Auth\AuthKeys;
 use App\Auth\Email;
+use App\Auth\Session\Principal;
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -17,6 +18,34 @@ final class AuthKeysTest extends TestCase
     public function testUserKeyIsTheProfileItemOfTheUser(): void
     {
         self::assertSame(['PK' => 'USER#' . self::ID, 'SK' => 'PROFILE'], AuthKeys::user(self::ID));
+    }
+
+    public function testUserPartitionIsTheKeyPrefixAndTheId(): void
+    {
+        self::assertSame('USER#' . self::ID, AuthKeys::userPartition(self::ID));
+    }
+
+    public function testUserPartitionOfTakesTheUserIdOfThePrincipal(): void
+    {
+        $owner = new Principal(self::ID, str_repeat('a', 64));
+
+        self::assertSame(AuthKeys::userPartition(self::ID), AuthKeys::userPartitionOf($owner));
+    }
+
+    #[DataProvider('badIds')]
+    public function testUserPartitionOfRefusesAPrincipalWithABadUserId(string $id): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        AuthKeys::userPartitionOf(new Principal($id, str_repeat('a', 64)));
+    }
+
+    #[DataProvider('badIds')]
+    public function testUserPartitionRefusesAnIdThatIsNotACanonicalLowerCaseUuid(string $id): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        AuthKeys::userPartition($id);
     }
 
     /**
