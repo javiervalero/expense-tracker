@@ -530,6 +530,24 @@ Carried:
 - **Phase 4 (front end):** count characters by code point (`[...s].length`, not `s.length` / `maxlength`) so the client agrees with `mb_strlen`; clip overflow on names and descriptions (combining-mark floods pass the length check by design).
 - **Accepted (ADR 0002 note in WP13):** Arabic prepended marks (U+0600–U+0605, U+06DD) and the Mongolian vowel separator are refused as format characters; no Unicode normalisation (precomposed `é` and `e` + U+0301 are different names).
 
+### Notes from the WP3 reviews (2026-10-22)
+
+From ecc:php-reviewer (sonnet) and ecc:security-reviewer (opus/high) on the uncommitted WP3 diff (base `b6ac133`), then security round 2 (opus/high) on the fixes, whose own small follow-ups were checked inline by the main session. Neither round found anything exploitable today: every finding hardens code that later WPs will write. 1915 unit tests, 99.77% line coverage.
+
+- **Query guard checked text, not the key condition (round 1 HIGH, php):** any `begins_with(` or `BETWEEN` literal anywhere in the call passed (a `FilterExpression`, `begins_with(PK, …)`, a message). Now only the key condition counts (the first argument of `ItemStore::query`, or the `'KeyConditionExpression'` value), and it must be one literal containing `begins_with(SK,` or matching `\b(SK|LSI1SK) BETWEEN\b`, case-sensitive. `#sk` placeholders are deliberately refused: a placeholder can be mapped to `PK`.
+- **Other ways to read a partition (round 1 HIGH php / MEDIUM security, round 2 MEDIUM):** `SdkOperationsTest` confines the operation literals `Query`, `Scan`, `ExecuteStatement`, `BatchExecuteStatement`, `ExecuteTransaction`, `BatchGetItem`, `TransactGetItems` and the matching SDK calls (and `*Async`, `getPaginator`, `getIterator`) to `ItemStore.php`; `DynamoDbClientFactoryCallTest` allows `DynamoDbClientFactory::create(` only in `ApiFactory.php`.
+- **Runtime safety net (security):** `ItemStore::query` throws `StorageFailure` (`ProfileInQuery`) if any item has `SK = PROFILE`, before anything is returned; `StorageUnavailableMiddleware` logs it at error level as a security event (request id, operation and code only) and it becomes a generic `500`.
+- **PK from the principal, enforced (round 1 + 2 MEDIUM, security):** `CategoryKeys` and `ExpenseKeys` take `Principal $owner`, via `AuthKeys::userPartitionOf(Principal)`; `UserPartitionCallTest` allows the string `userPartition(` only inside `AuthKeys.php` (no Phase 2 caller needs it). `PrincipalConstructionTest` allows `new Principal(`, dynamic instantiation and `Principal::class` with reflection only in `SessionAuthenticator.php`; `Principal` refuses `__clone` (including PHP 8.5 clone-with), `__serialize` and `__unserialize`.
+- **`USER#` rule:** decodes double-quoted and heredoc literals (`"USER\x23"`, `"USER\043"`, `"USER\u{23}"`), and `AuthKeys.php` is now scanned for every rule except this one.
+- Small: `Uuid::require()` message without an article; `nameLock` pinned to `CATNAME#` + 64 hex; trailing `\n` refused; `RCPT#` does not start with `EXP#`; the 2000-01-01 and 2099-12-31 index keys sort inside their day's range; the RouteId test renamed to what it really checks. Fixtures were already excluded from PHPStan and the classmap.
+- **Process note:** round 1's fixes were written test and code in one pass (only the `ItemStore` net had a red step); round 2 showed a red step per fix, except the token checks for dynamic `Principal` instantiation.
+
+Accepted limits (documented in the test docblocks): `USER#` built in pieces or by interpolation; a class name passed as a string and instantiated in another file; `begins_with(SK, :p)` with a caller-chosen `:p` (the PK still comes from the session and the safety net catches `PROFILE`).
+
+Carried:
+- **WP4–WP7:** pass sort-key prefixes only from the `*Keys::PREFIX` constants. A typed SK-prefix enum is deferred; revisit if a query ever takes a prefix from outside a `*Keys` class.
+- **WP8–WP10:** handler tests repeat "a malformed id gives `404` with zero storage reads", now against the real repository fakes.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
