@@ -565,6 +565,20 @@ Carried:
 - **WP8:** a rename that runs out of attempts can rethrow a raw `ConditionalCheckFailed` cancellation. Any cancellation that is not a name or version outcome must stay a generic `500`/`503`, never a `409` or a name message.
 - **WP8 (B8):** the 100-category cap is checked by the create handler, not the repository.
 
+### Notes from the WP5 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP5 diff (base `31549f5`). Neither found a CRITICAL, HIGH or MEDIUM issue needing code: the lister always gets the resolver's own `Principal`, non-UUID ids return before any read, `hydrate()` rejects an item from another partition, and the `foldedValue()` extraction keeps every `nameKey` byte-identical.
+
+- **One query per request, also on failure (LOW security):** a failed read was retried on every call, so one corrupt `CAT#` item could cost a full category query per expense. The resolver now keeps the exception and rethrows it; the lister is called at most once per instance.
+- **Paging (MEDIUM php / LOW security):** the 120-category integration test fits in one DynamoDB page, so it proves there is no hard cap, not paging. Paging of `listAll` is covered by the simulated two-page unit test in `Unit/Categories/CategoryRepositoryTest.php`; the test comment now says so.
+- **Smaller fixes:** a golden-hash test pins `key()` for a name with a zero-width character and an NBSP run; `@throws` lines; the private loader renamed; the docblock states that a resolver is a per-request snapshot, never kept in a long-lived service or reused after a category write; the test fake moved.
+- **Process note:** the resolver's unit tests were run red against a stub (5 of 16 failed; the rest assert empty results and only bite once the code exists); the integration tests were written after the code. A sort bug (`<=>` compares numeric-looking strings as numbers) was caught by a test and fixed with `strcmp`.
+
+Carried:
+- **WP8 (B8, security L1):** the soft cap can overshoot by as many creates as run in parallel, not "one request round", and every expense read then lists them all. WP8 bounds this at create time (and the B8 wording is corrected in WP13).
+- **WP9 (security L3):** a non-string `categoryId` in a body must be refused with `422` before `has()` is called (its `string` type would otherwise throw a `TypeError`, a generic `500`). Already covered by the "check `is_string` first" item.
+- **WP7–WP11:** a `StorageFailure` from the resolver ends the request; no caller catches it per item.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
