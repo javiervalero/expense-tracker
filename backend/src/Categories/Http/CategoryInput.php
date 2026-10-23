@@ -21,11 +21,11 @@ use App\Http\Problem\ValidationProblem;
  */
 final class CategoryInput
 {
-    private const NAME = 'name';
-    private const VERSION = 'version';
-    private const NAME_POINTER = '/name';
-    private const VERSION_POINTER = '/version';
-    private const MIN_VERSION = 1;
+    private const string NAME = 'name';
+    private const string VERSION = 'version';
+    private const string NAME_POINTER = '/name';
+    private const string VERSION_POINTER = '/version';
+    private const int MIN_VERSION = 1;
 
     private function __construct() {}
 
@@ -34,7 +34,7 @@ final class CategoryInput
      *
      * @throws ValidationProblem
      */
-    public static function newCategory(array $body): CategoryName
+    public static function newCategory(#[\SensitiveParameter] array $body): CategoryName
     {
         $name = self::name($body);
         $unknown = ObjectMembers::unknownErrors($body, [self::NAME]);
@@ -50,7 +50,7 @@ final class CategoryInput
      *
      * @throws ValidationProblem
      */
-    public static function rename(array $body): CategoryRenameInput
+    public static function rename(#[\SensitiveParameter] array $body): CategoryRenameInput
     {
         $name = self::name($body);
         $version = self::version($body);
@@ -73,7 +73,7 @@ final class CategoryInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function name(array $body): CategoryName|FieldError
+    private static function name(#[\SensitiveParameter] array $body): CategoryName|FieldError
     {
         if (!array_key_exists(self::NAME, $body)) {
             return new FieldError(self::NAME_POINTER, 'This field is required.');
@@ -90,7 +90,7 @@ final class CategoryInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function version(array $body): int|FieldError
+    private static function version(#[\SensitiveParameter] array $body): int|FieldError
     {
         if (!array_key_exists(self::VERSION, $body)) {
             return new FieldError(self::VERSION_POINTER, 'This field is required.');

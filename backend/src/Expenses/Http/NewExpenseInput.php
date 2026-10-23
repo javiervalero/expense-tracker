@@ -73,7 +73,7 @@ final readonly class NewExpenseInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function date(array $body): ExpenseDate|FieldError
+    private static function date(#[\SensitiveParameter] array $body): ExpenseDate|FieldError
     {
         $text = self::stringMember($body, self::DATE);
         if ($text instanceof FieldError) {
@@ -86,7 +86,7 @@ final readonly class NewExpenseInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function amount(array $body): Amount|FieldError
+    private static function amount(#[\SensitiveParameter] array $body): Amount|FieldError
     {
         if (!array_key_exists(self::AMOUNT, $body)) {
             return new FieldError('/' . self::AMOUNT, self::REQUIRED);
@@ -99,7 +99,7 @@ final readonly class NewExpenseInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function description(array $body): Description|FieldError
+    private static function description(#[\SensitiveParameter] array $body): Description|FieldError
     {
         $text = self::stringMember($body, self::DESCRIPTION);
         if ($text instanceof FieldError) {
@@ -113,7 +113,7 @@ final readonly class NewExpenseInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function category(array $body): string|FieldError|null
+    private static function category(#[\SensitiveParameter] array $body): string|FieldError|null
     {
         $value = $body[self::CATEGORY] ?? null;
 
@@ -123,7 +123,7 @@ final readonly class NewExpenseInput
     /**
      * @param array<array-key, mixed> $body
      */
-    private static function stringMember(array $body, string $member): string|FieldError
+    private static function stringMember(#[\SensitiveParameter] array $body, string $member): string|FieldError
     {
         if (!array_key_exists($member, $body)) {
             return new FieldError('/' . $member, self::REQUIRED);

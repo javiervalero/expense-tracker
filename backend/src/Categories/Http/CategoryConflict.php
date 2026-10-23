@@ -13,7 +13,7 @@ use App\Http\Problem\HttpProblem;
  */
 final class CategoryConflict
 {
-    private const STATUS = 409;
+    private const int STATUS = 409;
 
     private function __construct() {}
 

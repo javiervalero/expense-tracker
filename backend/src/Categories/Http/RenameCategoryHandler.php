@@ -48,10 +48,7 @@ final readonly class RenameCategoryHandler implements Handler
      */
     public function handle(Request $request): Response
     {
-        $principal = $request->attribute(Principal::ATTRIBUTE);
-        if (!$principal instanceof Principal) {
-            throw new LogicException('PATCH /categories/{id} must be wrapped in RequireSession.');
-        }
+        $principal = Principal::of($request);
         $id = RouteId::uuidOrNotFound($request);
         $input = CategoryInput::rename(JsonBody::decode($request->header('content-type'), $request->body));
 

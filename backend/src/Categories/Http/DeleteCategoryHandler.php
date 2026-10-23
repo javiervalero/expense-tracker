@@ -40,10 +40,7 @@ final readonly class DeleteCategoryHandler implements Handler
      */
     public function handle(Request $request): Response
     {
-        $principal = $request->attribute(Principal::ATTRIBUTE);
-        if (!$principal instanceof Principal) {
-            throw new LogicException('DELETE /categories/{id} must be wrapped in RequireSession.');
-        }
+        $principal = Principal::of($request);
         $id = RouteId::uuidOrNotFound($request);
 
         $current = $this->categories->find($principal, $id) ?? throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);

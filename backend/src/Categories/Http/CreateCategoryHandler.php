@@ -66,10 +66,7 @@ final readonly class CreateCategoryHandler implements Handler
      */
     public function handle(Request $request): Response
     {
-        $principal = $request->attribute(Principal::ATTRIBUTE);
-        if (!$principal instanceof Principal) {
-            throw new LogicException('POST /categories must be wrapped in RequireSession.');
-        }
+        $principal = Principal::of($request);
         $name = CategoryInput::newCategory(JsonBody::decode($request->header('content-type'), $request->body));
 
         if (count((new CategoryResolver($this->categories, $principal))->all()) >= CategoryLimits::MAX_PER_USER) {

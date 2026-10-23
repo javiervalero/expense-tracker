@@ -15,7 +15,7 @@ use JsonException;
  */
 final class CategoryResponse
 {
-    private const LOCATION_PREFIX = '/api/v1/categories/';
+    private const string LOCATION_PREFIX = '/api/v1/categories/';
 
     private function __construct() {}
 
