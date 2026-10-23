@@ -592,6 +592,24 @@ Carried:
 - **Refactor before WP7 (MEDIUM php):** the stored-time helpers (`format`, `parseTime`, `wholeSecondsUtc`, the format constant) exist in `Category`, `CategoryRepository`, `Expense`, `ExpenseRepository` and `UserRepository`. Extract them into one class in a separate `refactor:` commit, with a re-review of only the changed hunks.
 - **WP7 (B18):** `ExpenseBatch::lastKey` is a valid cursor only when the whole batch was examined; a lister that stops mid-batch builds the cursor from the stop item.
 
+### Notes from the WP7 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP7 diff (base `a7b4cb7`). Neither found a CRITICAL or HIGH issue: no cursor, filter or `q` reaches another partition or a non-expense item; every refusal happens before any store call; the cursor is always built from the last examined item; the 1,000-item budget is exact; no message carries `q`, the cursor, ids or values. `Listing/` has 100% line coverage.
+
+- **Resolver ownership (MEDIUM security):** `ExpenseLister::list(Principal, ExpenseFilter, CategoryResolver)` did not check that the resolver belongs to the principal; a lifecycle bug in WP11 would give silently wrong answers (and could leak elsewhere). `CategoryResolver::assertFor(Principal)` now fails loudly first, and the category `has()` check moved from `ExpenseFilter::fromQuery` (which now makes no store call) into `list()`, after the assert.
+- **Canonical cursor (MEDIUM php / LOW security):** the JSON inside the cursor was not required to be canonical (duplicate or reordered members, whitespace). `decode()` now refuses anything that `encode()` would not write byte for byte.
+- **Invisible-only `q` (MEDIUM php):** a `q` that folds to `''` is absent, so it no longer forces full 100-item batches.
+- **Server-built start keys (MEDIUM php, then LOW security round 2):** only a start key from the client's cursor maps to the cursor `400`; a refused key from a later batch, or on a request without a cursor, is a server error.
+- **Reader over-delivery (LOW security):** a batch larger than requested is a corrupt-item `StorageFailure`, so the budget cannot be exceeded by a misbehaving store.
+- **Smaller fixes:** the filter hash is computed in one place. `FoldedText` (extracted from `CategoryName`, byte-identical) stays without a private constructor, matching `PlainText`. The invisible-only `q` guard is defence in depth: `PlainText` already refuses text with nothing visible, so it survives mutation.
+- **Security round 2** (opus/high, fixes only) found nothing beyond the no-cursor case above; it confirmed the final `encode(decoded) === raw` check is strictly stronger than the check it replaced.
+- **Flaky integration run:** one full-suite run (in the main session, right after the agent's own run) had 1 failure in 345 tests; eleven further full runs passed and the failing test was not captured. Likely cause (not proven): two test runs overlapping on the shared local stack. The make target restarts worker-runner when a run ends, and the agent's own runs (one cut off by its own timeout) were restarting it around the time of the failing run. Lesson: never run two integration suites against the same stack at once. The prime suspect, the 1,050-item budget test, now asserts the per-query `Limit` list instead of totals counted in SDK callbacks. Every test run now keeps its full log.
+- **Process note:** all tests were written first and run red against throwing stubs; most then only proved the stubs wrong, so the code was mutation-checked (39 mutants, 33 killed, the rest equivalent; two real gaps, the 512-character cap and non-canonical base64 trailing bits, were closed).
+
+Carried:
+- **WP11:** build the resolver and the lister call from the same session principal (now enforced by `assertFor`). The contract text says `nextCursor` is null only when the range is exhausted, so an empty last page after a non-null cursor is possible. `InvalidQuery` maps to `400`.
+- **Review briefs:** reviewers must not run the host PHP (8.4); the WP7 security review ran a few `php -r` checks of built-in JSON/base64 behaviour, harmless but outside the make-only rule.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
