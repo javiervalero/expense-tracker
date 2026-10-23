@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.8.0
+  version: 0.9.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories (and, in the same phase, expenses). The other endpoints arrive in later phases.
+    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -30,6 +30,8 @@ tags:
     description: Registering, signing in and out, and the current session.
   - name: categories
     description: The signed-in user's expense categories. Another user's category is never visible, and answers like a missing one.
+  - name: expenses
+    description: The signed-in user's expenses. Another user's expense is never visible, and answers like a missing one.
 
 paths:
   /health:
@@ -486,6 +488,99 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /expenses:
+    post:
+      operationId: createExpense
+      tags: [expenses]
+      summary: Create an expense
+      description: |
+        Creates an expense for the signed-in user. `categoryId` is optional: absent or `null` means uncategorized; any
+        other value must be the id of one of the user's own categories, otherwise the answer is `422` at `/categoryId`
+        (an unknown, deleted or someone else's category cannot be told apart). The `201` carries the address of the new
+        expense in `Location`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewExpense'
+      responses:
+        '201':
+          description: The expense was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /expenses/{id}:
+    get:
+      operationId: getExpense
+      tags: [expenses]
+      summary: Read one expense
+      description: |
+        Returns one expense of the signed-in user. An id that is not an expense of the signed-in user (malformed,
+        unknown, deleted or someone else's) gets one and the same `404`. `categoryId` is `null` when the expense is
+        uncategorized or its category has been deleted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: The expense.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -900,6 +995,80 @@ components:
           type: integer
           minimum: 1
           description: The `version` of the category as the client last read it. A different stored version gives `409`.
+    Expense:
+      type: object
+      description: One expense of the signed-in user.
+      additionalProperties: false
+      required: [id, date, amountCents, description, categoryId, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque identifier.
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: The calendar day of the expense, `YYYY-MM-DD`, from 2000-01-01 to 2099-12-31. It has no time and no zone.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: The amount in cents (a whole number).
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The description as entered (trimmed), 1 to 200 characters.
+        categoryId:
+          description: The id of the expense's category (a lower-case UUID), or `null` when it is uncategorized or its category has been deleted.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+        version:
+          type: integer
+          minimum: 1
+          description: 1 when created, one more after every change.
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+    NewExpense:
+      type: object
+      description: The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error.
+      additionalProperties: false
+      required: [date, amountCents, description]
+      properties:
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Future days are allowed.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: A JSON integer. `12.0`, `1e2`, strings and booleans are refused, and so is an integer beyond 64 bits.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1824
+          description: |
+            1 to 200 characters after trimming, counted as characters (not bytes), with no control characters,
+            text-direction controls or invisible-only text. The schema's `maxLength` is only the outer bound the server
+            reads before trimming (it refuses more than 200 x 4 + 1024 bytes, see `NewCategory.name`); it is not the
+            200-character rule.
+        categoryId:
+          description: Absent or `null` for uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
     ValidationProblemDetails:
       description: A problem with the list of invalid fields in `errors`.
       allOf:

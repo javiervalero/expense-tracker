@@ -20,15 +20,15 @@ final class ExpenseBuilder
         return sprintf('%08x-1111-4111-8111-%012x', $n, $n);
     }
 
-    public static function expense(int $n, string $date = '2026-10-20', string $text = 'Lunch', ?string $categoryId = null): Expense
+    public static function expense(int $n, string $date = '2026-10-20', string $text = 'Lunch', ?string $categoryId = null, ?string $id = null, ?int $cents = null, string $createdAt = '2026-10-23T10:00:00+00:00'): Expense
     {
         $day = ExpenseDate::parse($date);
-        $amount = Amount::parse(1000 + $n);
+        $amount = Amount::parse($cents ?? 1000 + $n);
         $description = Description::parse($text);
         Assert::assertInstanceOf(ExpenseDate::class, $day);
         Assert::assertInstanceOf(Amount::class, $amount);
         Assert::assertInstanceOf(Description::class, $description);
 
-        return Expense::new(self::uuid($n), $day, $amount, $description, $categoryId, new DateTimeImmutable('2026-10-23T10:00:00+00:00'));
+        return Expense::new($id ?? self::uuid($n), $day, $amount, $description, $categoryId, new DateTimeImmutable($createdAt));
     }
 }

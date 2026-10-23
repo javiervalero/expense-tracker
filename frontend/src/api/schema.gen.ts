@@ -196,6 +196,51 @@ export interface paths {
         patch: operations["renameCategory"];
         trace?: never;
     };
+    "/expenses": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create an expense
+         * @description Creates an expense for the signed-in user. `categoryId` is optional: absent or `null` means uncategorized; any
+         *     other value must be the id of one of the user's own categories, otherwise the answer is `422` at `/categoryId`
+         *     (an unknown, deleted or someone else's category cannot be told apart). The `201` carries the address of the new
+         *     expense in `Location`.
+         */
+        post: operations["createExpense"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/expenses/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read one expense
+         * @description Returns one expense of the signed-in user. An id that is not an expense of the signed-in user (malformed,
+         *     unknown, deleted or someone else's) gets one and the same `404`. `categoryId` is `null` when the expense is
+         *     uncategorized or its category has been deleted.
+         */
+        get: operations["getExpense"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -266,6 +311,56 @@ export interface components {
             name: string;
             /** @description The `version` of the category as the client last read it. A different stored version gives `409`. */
             version: number;
+        };
+        /** @description One expense of the signed-in user. */
+        Expense: {
+            /**
+             * Format: uuid
+             * @description Opaque identifier.
+             */
+            id: string;
+            /**
+             * Format: date
+             * @description The calendar day of the expense, `YYYY-MM-DD`, from 2000-01-01 to 2099-12-31. It has no time and no zone.
+             */
+            date: string;
+            /** @description The amount in cents (a whole number). */
+            amountCents: number;
+            /** @description The description as entered (trimmed), 1 to 200 characters. */
+            description: string;
+            /** @description The id of the expense's category (a lower-case UUID), or `null` when it is uncategorized or its category has been deleted. */
+            categoryId: string | null;
+            /** @description 1 when created, one more after every change. */
+            version: number;
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC, whole seconds.
+             */
+            createdAt: string;
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC, whole seconds.
+             */
+            updatedAt: string;
+        };
+        /** @description The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error. */
+        NewExpense: {
+            /**
+             * Format: date
+             * @description A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Future days are allowed.
+             */
+            date: string;
+            /** @description A JSON integer. `12.0`, `1e2`, strings and booleans are refused, and so is an integer beyond 64 bits. */
+            amountCents: number;
+            /**
+             * @description 1 to 200 characters after trimming, counted as characters (not bytes), with no control characters,
+             *     text-direction controls or invisible-only text. The schema's `maxLength` is only the outer bound the server
+             *     reads before trimming (it refuses more than 200 x 4 + 1024 bytes, see `NewCategory.name`); it is not the
+             *     200-character rule.
+             */
+            description: string;
+            /** @description Absent or `null` for uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`. */
+            categoryId?: string | null;
         };
         /** @description A problem with the list of invalid fields in `errors`. */
         ValidationProblemDetails: components["schemas"]["ProblemDetails"] & {
@@ -960,6 +1055,81 @@ export interface operations {
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createExpense: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewExpense"];
+            };
+        };
+        responses: {
+            /** @description The expense was created. */
+            201: {
+                headers: {
+                    Location: components["headers"]["Location"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Expense"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowed"];
+            413: components["responses"]["ContentTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getExpense: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The expense. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Expense"];
+                };
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };

@@ -8,6 +8,8 @@ use App\Auth\Session\Principal;
 use App\Categories\Category;
 use App\Categories\CategoryName;
 use App\Categories\CategoryRepository;
+use App\Expenses\Expense;
+use App\Expenses\ExpenseRepository;
 use App\Http\Handler;
 use App\Http\Middleware\ErrorHandlingMiddleware;
 use App\Http\Middleware\StorageUnavailableMiddleware;
@@ -58,6 +60,17 @@ final class ScriptedCategoryStore
 
     public function repository(): CategoryRepository
     {
+        return new CategoryRepository($this->items());
+    }
+
+    /** An {@see ExpenseRepository} over the same scripted client, so one queue serves category and expense reads. */
+    public function expenses(): ExpenseRepository
+    {
+        return new ExpenseRepository($this->items());
+    }
+
+    private function items(): ItemStore
+    {
         $settings = DynamoDbSettings::fromEnvironment(['DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1']);
         $recording = function (CommandInterface $command, RequestInterface $request): PromiseInterface {
             $this->commands[] = $command;
@@ -67,7 +80,7 @@ final class ScriptedCategoryStore
             return $promise;
         };
 
-        return new CategoryRepository(new ItemStore(DynamoDbClientFactory::create($settings, $recording), $settings->tableName));
+        return new ItemStore(DynamoDbClientFactory::create($settings, $recording), $settings->tableName);
     }
 
     public static function owner(): Principal
@@ -133,6 +146,28 @@ final class ScriptedCategoryStore
         return new Result(['Item' => self::stored($category)]);
     }
 
+    /** @return Result<string, mixed> the answer of a `GetItem` that finds the expense */
+    public static function expenseFound(Expense $expense): Result
+    {
+        $item = [
+            'PK' => ['S' => 'USER#' . self::USER],
+            'SK' => ['S' => 'EXP#' . $expense->id],
+            'LSI1SK' => ['S' => 'EXP#' . $expense->date->value() . '#' . $expense->id],
+            'expenseId' => ['S' => $expense->id],
+            'date' => ['S' => $expense->date->value()],
+            'amountCents' => ['N' => (string) $expense->amount->cents()],
+            'description' => ['S' => $expense->description->value()],
+            'version' => ['N' => (string) $expense->version],
+            'createdAt' => ['S' => $expense->createdAt->format('Y-m-d\TH:i:s\Z')],
+            'updatedAt' => ['S' => $expense->updatedAt->format('Y-m-d\TH:i:s\Z')],
+        ];
+        if ($expense->categoryId !== null) {
+            $item['categoryId'] = ['S' => $expense->categoryId];
+        }
+
+        return new Result(['Item' => $item]);
+    }
+
     /** @return Result<string, mixed> the answer of a `GetItem` that finds nothing */
     public static function missing(): Result
     {
@@ -167,6 +202,12 @@ final class ScriptedCategoryStore
         $reasons = array_map(static fn(string $code): array => ['Code' => $code], $codes);
 
         return new DynamoDbException('cancelled', new Command('TransactWriteItems'), ['code' => 'TransactionCanceledException', 'body' => ['CancellationReasons' => $reasons]]);
+    }
+
+    /** @return DynamoDbException the answer of a `PutItem` whose condition failed */
+    public static function conditionFailed(): DynamoDbException
+    {
+        return new DynamoDbException('failed', new Command('PutItem'), ['code' => 'ConditionalCheckFailedException']);
     }
 
     /** Queues a throttled answer for every attempt the SDK makes (it retries throttling before giving up). */
