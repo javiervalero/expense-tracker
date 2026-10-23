@@ -23,7 +23,7 @@ use LogicException;
  * Categories in the user's partition. Items are built and read field by field: `PK`, `SK` and `nameKey` stay inside
  * this class and {@see Category}. A missing or wrongly typed attribute is a {@see StorageFailure} (`CorruptItem`).
  */
-final readonly class CategoryRepository
+final readonly class CategoryRepository implements CategoryLister
 {
     private const string DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
     private const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';

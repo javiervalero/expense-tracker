@@ -33,11 +33,17 @@ final class CategoryName
         return $this->value;
     }
 
-    public function key(): string
+    /** The name as uniqueness sees it: invisible characters removed, space runs collapsed, case-folded. Also the sort key. */
+    public function foldedValue(): string
     {
         $visible = Pcre::replace('/[\x{200B}-\x{200F}\x{061C}]/u', '', $this->value);
         $spaced = Pcre::replace('/\p{Zs}+/u', ' ', $visible);
 
-        return hash('sha256', mb_convert_case($spaced, MB_CASE_FOLD, 'UTF-8'));
+        return mb_convert_case($spaced, MB_CASE_FOLD, 'UTF-8');
+    }
+
+    public function key(): string
+    {
+        return hash('sha256', $this->foldedValue());
     }
 }

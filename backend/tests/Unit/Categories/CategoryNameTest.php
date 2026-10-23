@@ -32,6 +32,23 @@ final class CategoryNameTest extends TestCase
         self::assertSame($key, self::named('  fOOd ')->key());
     }
 
+    public function testFoldedValueIsTheCaseFoldedNameWithSpacesCollapsed(): void
+    {
+        self::assertSame('food', self::named('Food')->foldedValue());
+        self::assertSame('strasse', self::named("Stra\u{00DF}e")->foldedValue());
+        self::assertSame('eating out', self::named("Eating\u{00A0}\u{00A0}OUT")->foldedValue());
+        self::assertSame(hash('sha256', self::named('Food')->foldedValue()), self::named('Food')->key());
+    }
+
+    /** Golden value: a change to the folding that alters any stored name lock key must fail here. */
+    public function testTheKeyOfANameWithAZeroWidthCharacterAndSpaceRunsNeverChanges(): void
+    {
+        $name = self::named("Caf\u{00E9}\u{200B}  Eating\u{00A0}\u{00A0}\u{00A0}OUT");
+
+        self::assertSame("caf\u{00E9} eating out", $name->foldedValue());
+        self::assertSame('748af2ea5459752532c8a4decee80c358bed670d43c3a9b292bdcfd39d19d746', $name->key());
+    }
+
     public function testTheKeyIsTheSha256HexOfTheFoldedName(): void
     {
         self::assertSame(hash('sha256', 'food'), self::named('Food')->key());
