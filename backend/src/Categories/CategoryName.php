@@ -4,7 +4,7 @@ declare(strict_types=1);
 
 namespace App\Categories;
 
-use App\Http\Input\Pcre;
+use App\Http\Input\FoldedText;
 use App\Http\Input\PlainText;
 use App\Http\Input\TextViolation;
 
@@ -36,10 +36,7 @@ final class CategoryName
     /** The name as uniqueness sees it: invisible characters removed, space runs collapsed, case-folded. Also the sort key. */
     public function foldedValue(): string
     {
-        $visible = Pcre::replace('/[\x{200B}-\x{200F}\x{061C}]/u', '', $this->value);
-        $spaced = Pcre::replace('/\p{Zs}+/u', ' ', $visible);
-
-        return mb_convert_case($spaced, MB_CASE_FOLD, 'UTF-8');
+        return FoldedText::of($this->value);
     }
 
     public function key(): string

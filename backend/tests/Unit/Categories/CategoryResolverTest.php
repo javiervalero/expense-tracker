@@ -12,6 +12,7 @@ use App\Categories\CategoryResolver;
 use App\Tests\Support\CountingCategoryLister;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use DateTimeImmutable;
+use LogicException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
@@ -59,6 +60,31 @@ final class CategoryResolverTest extends TestCase
 
         self::assertNull($resolver->resolve(self::OTHER_USERS_ID));
         self::assertFalse($resolver->has(self::OTHER_USERS_ID));
+    }
+
+    public function testAssertForAcceptsTheResolversOwnPrincipal(): void
+    {
+        $lister = self::lister([]);
+        $resolver = new CategoryResolver($lister, self::owner());
+
+        $resolver->assertFor(new Principal(self::USER, str_repeat('b', 64)));
+
+        self::assertSame(0, $lister->calls);
+    }
+
+    public function testAssertForRefusesAnotherUserWithoutAnyRead(): void
+    {
+        $lister = self::lister([]);
+        $resolver = new CategoryResolver($lister, self::owner());
+
+        try {
+            $resolver->assertFor(new Principal(self::OTHER_USERS_ID, str_repeat('a', 64)));
+            self::fail('No exception.');
+        } catch (LogicException $refused) {
+            self::assertStringNotContainsString(self::USER, $refused->getMessage());
+            self::assertStringNotContainsString(self::OTHER_USERS_ID, $refused->getMessage());
+        }
+        self::assertSame(0, $lister->calls);
     }
 
     public function testANullIdGivesNull(): void

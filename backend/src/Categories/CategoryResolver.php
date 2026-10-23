@@ -8,6 +8,7 @@ use App\Auth\Session\Principal;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\Id\Uuid;
 use InvalidArgumentException;
+use LogicException;
 
 /**
  * The one rule for "is this category id one of the owner's?" (B16). Built for one {@see Principal}; it reads nothing
@@ -32,6 +33,19 @@ final class CategoryResolver
         private readonly CategoryLister $categories,
         private readonly Principal $owner,
     ) {}
+
+    /**
+     * Guards against a resolver built for another user: a caller that mixes principals would otherwise answer one
+     * user's category questions with another user's list. The message names no id.
+     *
+     * @throws LogicException when `$principal` is not the owner this resolver was built for
+     */
+    public function assertFor(Principal $principal): void
+    {
+        if ($principal->userId !== $this->owner->userId) {
+            throw new LogicException('The category resolver belongs to another user.');
+        }
+    }
 
     /**
      * The id itself when it is one of the owner's categories, otherwise null: a missing id, one that is not a

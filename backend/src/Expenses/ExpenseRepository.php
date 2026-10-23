@@ -6,6 +6,7 @@ namespace App\Expenses;
 
 use App\Auth\AuthKeys;
 use App\Auth\Session\Principal;
+use App\Expenses\Listing\ExpenseRangeReader;
 use App\Infrastructure\DynamoDb\ConditionFailed;
 use App\Infrastructure\DynamoDb\ItemStore;
 use App\Infrastructure\DynamoDb\StaleVersion;
@@ -21,7 +22,7 @@ use InvalidArgumentException;
  * Expenses in the user's partition. Items are built and read field by field: `PK`, `SK` and `LSI1SK` stay inside this
  * class. A missing or wrongly typed attribute is a {@see StorageFailure} (`CorruptItem`).
  */
-final readonly class ExpenseRepository
+final readonly class ExpenseRepository implements ExpenseRangeReader
 {
     /** The date part of an index key; the key as a whole is checked by rebuilding it from the date and the id. */
     private const string INDEX_KEY_DATE = '/\AEXP#(\d{4}-\d{2}-\d{2})#/D';
