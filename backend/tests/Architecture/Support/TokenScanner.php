@@ -30,10 +30,18 @@ final class TokenScanner
      */
     public static function phpFilesExcept(string $root, string $excluded): array
     {
+        return array_values(array_filter(self::phpFiles($root), static fn(string $path): bool => $path !== $excluded));
+    }
+
+    /**
+     * @return list<string> every .php file under the directory
+     */
+    public static function phpFiles(string $root): array
+    {
         $paths = [];
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
         foreach ($files as $entry) {
-            if ($entry instanceof \SplFileInfo && $entry->getExtension() === 'php' && $entry->getPathname() !== $excluded) {
+            if ($entry instanceof \SplFileInfo && $entry->getExtension() === 'php') {
                 $paths[] = $entry->getPathname();
             }
         }

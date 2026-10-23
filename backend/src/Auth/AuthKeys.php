@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Auth;
 
+use App\Auth\Session\Principal;
 use App\Http\ClientAddress;
 use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\Id\Uuid;
@@ -39,17 +40,35 @@ final class AuthKeys
     private const SHA256_HEX = '/\A[0-9a-f]{64}\z/D';
 
     /**
+     * The partition key of a user's items (`USER#<id>`): the one place the prefix is spelled, which
+     * UserPartitionQueryTest enforces. Features build theirs with {@see self::userPartitionOf()}, from the session principal.
+     *
+     * @throws InvalidArgumentException when the id is not a lower-case canonical UUID
+     */
+    public static function userPartition(string $userId): string
+    {
+        return 'USER#' . Uuid::require($userId, 'user id');
+    }
+
+    /**
+     * The partition key of the signed-in user's items. This is the form every feature uses: the user id comes from the
+     * session, never from the request. UserPartitionCallTest keeps {@see self::userPartition()} to this file.
+     *
+     * @throws InvalidArgumentException when the principal's id is not a lower-case canonical UUID
+     */
+    public static function userPartitionOf(Principal $owner): string
+    {
+        return self::userPartition($owner->userId);
+    }
+
+    /**
      * @return array{PK: string, SK: string}
      *
      * @throws InvalidArgumentException when the id is not a lower-case canonical UUID
      */
     public static function user(string $userId): array
     {
-        if (!Uuid::isValid($userId)) {
-            throw new InvalidArgumentException('A user id is a lower-case UUID.');
-        }
-
-        return [TableLayout::PK => 'USER#' . $userId, TableLayout::SK => 'PROFILE'];
+        return [TableLayout::PK => self::userPartition($userId), TableLayout::SK => 'PROFILE'];
     }
 
     /**

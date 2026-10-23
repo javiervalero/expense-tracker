@@ -34,6 +34,10 @@
          They let the AWS SDK's environment chain find credentials instead of waiting on the instance metadata
          service. Never put real keys here. -->
     <php>
+        <!-- The default 128M is nearly used up by the whole suite under coverage (about 75 MB held when
+             ForbiddenReferenceScannerTest::testHandlesLargeFilesQuickly tokenises 20,000 lines, which needs about 45 MB
+             more), so a few more tests made it fail with an out-of-memory fatal error. -->
+        <ini name="memory_limit" value="256M"/>
         <env name="AWS_ACCESS_KEY_ID" value="localdev" force="true"/>
         <env name="AWS_SECRET_ACCESS_KEY" value="localdevsecret" force="true"/>
         <env name="AWS_EC2_METADATA_DISABLED" value="true" force="true"/>

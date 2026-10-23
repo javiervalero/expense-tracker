@@ -13,6 +13,10 @@ use PHPUnit\Framework\TestCase;
  *  - 403 (origin and cross-site checks) and 500 on every operation;
  *  - 503 (storage overload, A18) on every operation except `/health`, which touches no storage;
  *  - 400, 413, 415 and 422 on every operation that reads a request body (JsonBody and field validation);
+ *  - 400 on every operation except `/health` (B19: a malformed query string is answered with a deferred 400 on any route);
+ *  - 404 on every operation with a path parameter (an unknown, malformed or foreign id, B10);
+ *  - 401 on every operation that declares `security` (the session guard);
+ *  - 409 on every `PATCH` (a stale version, B12);
  *  - and every state-changing operation declares the `X-Requested-With: XMLHttpRequest` header the CSRF check wants.
  */
 final class EveryOperationDocumentsErrorsTest extends TestCase
@@ -39,6 +43,37 @@ final class EveryOperationDocumentsErrorsTest extends TestCase
     public function testEveryOperationWithARequestBodyDocumentsTheBodyErrors(): void
     {
         $missing = $this->missingStatuses(static fn(string $method, string $template, bool $hasBody): array => $hasBody ? self::BODY_OPERATION : []);
+
+        self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
+    }
+
+    public function testEveryOperationExceptHealthDocumentsBadRequest(): void
+    {
+        $missing = $this->missingStatuses(static fn(string $method, string $template, bool $hasBody): array => $template === self::HEALTH ? [] : [400]);
+
+        self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
+    }
+
+    public function testEveryOperationWithAPathParameterDocumentsNotFound(): void
+    {
+        $missing = $this->missingStatuses(static fn(string $method, string $template, bool $hasBody): array => str_contains($template, '{') ? [404] : []);
+
+        self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
+    }
+
+    public function testEverySecuredOperationDocumentsUnauthorized(): void
+    {
+        $document = BundledSpec::document();
+        $missing = $this->missingStatuses(
+            static fn(string $method, string $template, bool $hasBody): array => ($document->security($method, $template) ?? []) !== [] ? [401] : [],
+        );
+
+        self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
+    }
+
+    public function testEveryPatchDocumentsConflict(): void
+    {
+        $missing = $this->missingStatuses(static fn(string $method, string $template, bool $hasBody): array => $method === 'PATCH' ? [409] : []);
 
         self::assertSame([], $missing, 'Undocumented responses: ' . implode(', ', $missing));
     }

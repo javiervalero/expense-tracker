@@ -200,6 +200,23 @@ final class StorageUnavailableMiddlewareTest extends TestCase
         self::assertSame('', $this->logged());
     }
 
+    public function testAProfileItemInAQueryIsLoggedAsASecurityEventWithoutItemDataAndRethrown(): void
+    {
+        $failure = new StorageFailure('Query', StorageFailure::PROFILE_IN_QUERY);
+
+        try {
+            $this->through($failure);
+            self::fail('Expected the failure to be rethrown.');
+        } catch (Throwable $thrown) {
+            self::assertSame($failure, $thrown);
+        }
+        $line = $this->logged();
+        self::assertStringContainsString('"level":"error"', $line);
+        self::assertStringContainsString('security: profile item returned by a query', $line);
+        self::assertStringContainsString('"operation":"Query"', $line);
+        self::assertStringContainsString('"code":"ProfileInQuery"', $line);
+    }
+
     /**
      * @return iterable<string, array{Throwable}>
      */
