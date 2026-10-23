@@ -610,6 +610,23 @@ Carried:
 - **WP11:** build the resolver and the lister call from the same session principal (now enforced by `assertFor`). The contract text says `nextCursor` is null only when the range is exhausted, so an empty last page after a non-null cursor is possible. `InvalidQuery` maps to `400`.
 - **Review briefs:** reviewers must not run the host PHP (8.4); the WP7 security review ran a few `php -r` checks of built-in JSON/base64 behaviour, harmless but outside the make-only rule.
 
+### Notes from the WP8 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP8 diff (base `b23a12e`), then security round 2 (opus/high) on the fixes (approved). No round found a CRITICAL or HIGH issue: every key comes from the session principal; malformed, unknown, deleted and other users' ids get a byte-identical `404`, the malformed ones with zero reads; wrong JSON types and every `version` edge case give `422`, never a `TypeError` `500`; the response maps exactly `{id, name, version, createdAt, updatedAt}`, so `nameKey`, `PK` and `SK` never leave the server; cancellations that are not a name or version outcome stay a generic `500`/`503`.
+
+- **B8 cap, made a real bound (main-session decision, beyond the plan's soft cap):** the create handler counts before creating (`409` limit reached, nothing written), and after a successful create counts again with a fresh, strongly consistent read; above `CategoryLimits::MAX_PER_USER` it deletes the category it just created and answers the same `409`. The count can exceed 100 only while racing requests are in flight, never afterwards (security round 1 confirmed the bound and that the back-out can only remove the request's own new category). Accepted: under a race at the cap several creators may all back out. Remaining gap, documented in the handler: an ambiguous create failure (timeout or 5xx after the commit) skips the recount, so the user can stay above the cap; every further create is then refused. B8's wording is corrected in WP13.
+- **Back-out of a category already deleted (MEDIUM php / LOW security):** `CategoryNotFound` from the compensating delete now still answers `409` instead of a `500`; `StaleVersion` there stays a `500`.
+- **`PrincipalConstructionTest` false positive:** `Category::new(` was read as a dynamic `new (`, so the first draft copied the factory into the handler. The scanner now skips a `new` after `::` or `function` (over `&`, whitespace and comments), `Category::new` is used again, and, closing a gap found by security round 1, `new self`, `new static` and `new parent` are flagged in the file that declares `class Principal`. Round 2 (LOW): `new class (...) extends Principal` is refused only by `final`, now pinned by `PrincipalTest`.
+- **Tests made discriminating (MEDIUM php):** the back-out asserts the version condition and the exact `CATNAME#<stored nameKey>` lock key; the recount test fails if the second count is served from the memoised resolver.
+- **`DELETE /categories/{id}` has no `409`** (plan endpoint table): a category that keeps changing during a delete gives a generic `500`.
+- **Smaller:** `Routes::guarded()` is the one place that wraps a handler in `RequireSession`, plus a `categories()` helper; pointer constants in `CategoryInput`; the contract's `name` has `minLength: 1` and `maxLength: 1224` (the server's byte pre-check, 50 × 4 + 1024: a contract 50 would refuse names the server accepts after trimming); `BadRequest` and `MethodNotAllowed` texts corrected; `400` documented on `/auth/me` and `/auth/logout` (B19, R12).
+- **`memory_limit = 256M` in `phpunit.xml.dist`:** the unit suite under coverage was near the 128M default and the 20,000-line scanner test tipped it over; memory stays flat across the new tests (no leak). Tests only.
+- **Process note:** contract tests, the unguarded route (`ProtectedRoutesMatchContractTest` failed on purpose) and all handler unit tests were red before the code; the fix-round fixtures and the back-out test were red before their fixes; the delete-condition and fresh-read tests were added as pins and passed against the existing code. The first integration run failed in the new test itself (a second registration while carrying the first user's cookie ends that session); the test was fixed, not the code. One integration suite at a time throughout.
+
+Carried:
+- **WP13:** correct B8's "one request round" wording to the recount bound and its ambiguous-write gap.
+- **Phase 4:** the generated client's `maxLength` on `name` is the byte pre-check, not the 50-character rule; the form validates 50 code points after trimming itself.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
