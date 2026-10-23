@@ -548,6 +548,23 @@ Carried:
 - **WP4–WP7:** pass sort-key prefixes only from the `*Keys::PREFIX` constants. A typed SK-prefix enum is deferred; revisit if a query ever takes a prefix from outside a `*Keys` class.
 - **WP8–WP10:** handler tests repeat "a malformed id gives `404` with zero storage reads", now against the real repository fakes.
 
+### Notes from the WP4 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP4 diff (base `704aa2b`), then security round 2 (opus/high) on the fixes. No round found a CRITICAL, HIGH or exploitable issue: no path reaches another user's partition, `PROFILE`, sessions, the email lock or `EXP#`; every lock delete is conditioned on its holder; uniqueness rests on conditional puts inside the transaction (no read-then-write gap); messages carry no keys or item data.
+
+- **Rename with a missing or foreign old lock (MEDIUM php / LOW security):** the old-lock delete failing alone (`[None, None, ConditionalCheckFailed]`) rethrew a raw cancellation, so the category could never be renamed (a permanent `500`). Now rename re-reads the category and, if its version and stored `nameKey` are unchanged, resends without the old-lock delete; a foreign lock is never touched. Bounded by `MAX_RENAME_ATTEMPTS = 3`.
+- **Delete fallback (added during implementation, beyond B14):** if only the lock condition fails (lock missing or held by another category), the category alone is deleted under its version condition, so a category can never become undeletable. Security round 1 confirmed a foreign lock is never touched.
+- **Malformed lock holders (LOW security, rounds 1 and 2):** a lock whose `categoryId` is not a lower-case UUID blocked that name forever. It is now treated as stale and deleted on a condition that can never match a live lock: the exact value for a string holder, `NOT attribute_type(#categoryId, :S)` for a non-string one (numbers do not round-trip exactly with `wrap_numbers = false`), `attribute_not_exists` when absent. No key is ever built from a stored holder that is not a valid UUID.
+- **Explicit loop bounds (LOW, both):** create and rename loop to `MAX_*_ATTEMPTS` and rethrow after the loop, like delete.
+- **Concurrency test (MEDIUM php / LOW security):** the child prints `conflict` for a `TransactionConflict` cancellation, and the test accepts `taken` or `conflict` for every loser. DynamoDB Local serialises transactions, so this test does not prove the production `409`/`503` split; the simulated unit cases (`[TransactionConflict, TransactionConflict]` for create, rename and delete) do. The contention assertion was kept after 10 passing runs in a row.
+- **Smaller fixes:** times are truncated to whole seconds in `Category` itself, so what create and rename return equals a later read; `corrupt()` names the real operation (`ItemStore::QUERY_OPERATION` added, because `SdkOperationsTest` forbids the literal); the recomputing `CategoryKeys::nameLock()` was removed, so every lock is addressed by the stored key through `nameLockOfStoredKey`; one shared `CategoryKeys::NAME_KEY_PATTERN`; typed, per-operation constants; `@throws` lines.
+- **Process note:** behaviours driven by the integration tests showed a red step each. The unit tests with simulated SDK answers were written after the code and checked by mutation instead (each mutation failed the named tests). The malformed-holder fix's red run was contaminated by a half-applied edit for another fix; the test itself checks the right behaviour. For the non-string holders (round 2), only the large-number case was red on DynamoDB Local; the M, L, BOOL and NULL cases passed before the fix and are kept as pins for real DynamoDB.
+
+Carried:
+- **WP8:** `Category::$nameKey` is a public property. The response mapper test asserts the keys are exactly `{id, name, version, createdAt, updatedAt}` (B20).
+- **WP8:** a rename that runs out of attempts can rethrow a raw `ConditionalCheckFailed` cancellation. Any cancellation that is not a name or version outcome must stay a generic `500`/`503`, never a `409` or a name message.
+- **WP8 (B8):** the 100-category cap is checked by the create handler, not the repository.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
