@@ -579,6 +579,19 @@ Carried:
 - **WP9 (security L3):** a non-string `categoryId` in a body must be refused with `422` before `has()` is called (its `string` type would otherwise throw a `TypeError`, a generic `500`). Already covered by the "check `is_string` first" item.
 - **WP7–WP11:** a `StorageFailure` from the resolver ends the request; no caller catches it per item.
 
+### Notes from the WP6 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium, verdict approve) and ecc:security-reviewer (opus/high) on the uncommitted WP6 diff (base `e6ca2c0`). Neither found a CRITICAL, HIGH or MEDIUM code defect: every key comes from the principal, `expenseItem` cannot overwrite `PK`/`SK`, the delete transaction touches only `EXP#<id>` and `RCPT#<id>`, a crafted start key can only move within the caller's own expenses, and messages carry no item data.
+
+- **R1 (gate): passed.** On DynamoDB Local 3.3.1, deleting the start-key item, or re-dating it to a newer or older day, between two `pageByDate` calls skips nothing and repeats nothing. No G2, no cursor redesign.
+- **Start keys, defence in depth for WP7's cursor (LOW, both):** a start key must also lie inside `[rangeStart(from), rangeEnd(to)]`; every start-key refusal is a dedicated `InvalidStartKey` (so WP7 can map exactly that to `400` without hiding programming errors); and `lastKeyOf` runs the returned key through the same checks, range included (security round 2, LOW), so the server can never hand out a cursor it would refuse (a failure is a corrupt item naming `Query`). Round 2 (opus/high, fixes only) found nothing else.
+- **Smaller fixes:** a stored `categoryId` of any non-string type (NULL included) is a corrupt item; the unit tests pin both literal update expressions and the exact name and value key sets; integration covers the replay of an update that sets a category and a page whose limit equals the remaining count (non-null `lastKey`, then an empty batch).
+- **Process note:** behaviours were red against a stub (or a missing class) before the code. The unit tests with simulated SDK answers came after the code and were mutation-checked: 15 mutations, 13 killed by unit tests, 2 only by integration tests (the start-key member count gap was closed with a new unit case).
+
+Carried:
+- **Refactor before WP7 (MEDIUM php):** the stored-time helpers (`format`, `parseTime`, `wholeSecondsUtc`, the format constant) exist in `Category`, `CategoryRepository`, `Expense`, `ExpenseRepository` and `UserRepository`. Extract them into one class in a separate `refactor:` commit, with a re-review of only the changed hunks.
+- **WP7 (B18):** `ExpenseBatch::lastKey` is a valid cursor only when the whole batch was examined; a lister that stops mid-batch builds the cursor from the stop item.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
