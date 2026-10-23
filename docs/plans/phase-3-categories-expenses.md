@@ -627,6 +627,22 @@ Carried:
 - **WP13:** correct B8's "one request round" wording to the recount bound and its ambiguous-write gap.
 - **Phase 4:** the generated client's `maxLength` on `name` is the byte pre-check, not the 50-character rule; the form validates 50 code points after trimming itself.
 
+### Notes from the WP9 reviews (2026-10-23)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP9 diff (base `92a8513`), then security round 2 (opus/high) on the fixes (approved). No round found a CRITICAL or HIGH issue: both routes go through `Routes::guarded()`; every key comes from the session principal; malformed, unknown and other users' expense ids get a byte-identical `404`, the malformed ones with zero reads; a `categoryId` that is not one of the caller's categories gives `422` at `/categoryId` with no write and no echo; non-string members and every B1 amount edge case give `422`, never a `TypeError` `500`; a resolver `StorageFailure` ends the request (`503`, nothing written); the response maps exactly the eight B20 fields and resolves `categoryId` on every read.
+
+- **`assertFor()` not called (security: sound):** both handlers build the `CategoryResolver` inside `handle()` from the same local `$principal` as the repository call, so the two cannot belong to different users. Add the check back if a resolver is ever injected from outside.
+- **An id collision is a generic `500`, with no `409` (security: acceptable):** the id has 122 random bits and a client cannot cause a collision; a retried write of identical content answers `201` with the same `Location`. Both paths are now pinned at handler level (round 1 LOW: the first test scripted a transaction cancellation that `PutItem` never returns and accepted `500` or `503`).
+- **`#[\SensitiveParameter]` on `NewExpenseInput::fromBody` (MEDIUM php):** keeps descriptions out of exception traces (WP12 log hygiene).
+- **Contract:** both `categoryId` schemas now say "lower-case UUID" (round 1 LOW: `format: uuid` alone accepts upper case, which the server refuses with `422`); `ResourceId` has no `pattern` to reuse, so the rule is in the wording only. `NewExpense.description` has `maxLength: 1824`, the byte pre-check (200 × 4 + 1024), as `NewCategory.name` does.
+- **Tests:** the handler's bad-body rows are cut to one per member (the full matrices stay in `NewExpenseInputTest` and the integration amount matrix); the unreadable-body cases are a data provider sized by `JsonBody::MAX_BYTES`; an uncategorized create pins that no `categoryId` is stored; the foreign-category integration test pins that no `Location` is returned.
+- **Process note:** the input and handler unit tests (class not found) and the contract tests (`ProtectedRoutesMatchContractTest` and `RoutesMatchContractTest`, routes missing) were red before the code. The integration test was written first but not run against a stack without the routes; the contract tests were the route-level red. One integration suite at a time throughout.
+
+Carried:
+- **Refactor (a separate `refactor:` commit, re-review of the changed hunks only):** WP8's category handlers use `Principal::of()` instead of their inline `instanceof` checks; `#[\SensitiveParameter]` on the body parameter of `CategoryInput` and `CategoryRenameInput`; typed class constants (`private const string`) in WP8, to match WP9.
+- **After WP10:** extract the "string member or error" check (`CategoryInput::name`, `NewExpenseInput::stringMember`, and WP10's patch input, where `null` is an error and an absent member means unchanged) into `App\Http\Input`, with all callers migrated together.
+- **When a third consumer appears:** rename `tests/Support/ScriptedCategoryStore` (it now serves expenses too).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
