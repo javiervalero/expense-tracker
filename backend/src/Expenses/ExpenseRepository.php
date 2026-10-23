@@ -14,8 +14,7 @@ use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
 use App\Infrastructure\DynamoDb\TransactionOperation;
 use App\Infrastructure\Id\Uuid;
-use DateTimeImmutable;
-use DateTimeZone;
+use App\Infrastructure\Time\StoredTime;
 use InvalidArgumentException;
 
 /**
@@ -24,7 +23,6 @@ use InvalidArgumentException;
  */
 final readonly class ExpenseRepository
 {
-    private const string DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
     /** The date part of an index key; the key as a whole is checked by rebuilding it from the date and the id. */
     private const string INDEX_KEY_DATE = '/\AEXP#(\d{4}-\d{2}-\d{2})#/D';
     private const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
@@ -118,7 +116,7 @@ final readonly class ExpenseRepository
             ':amountCents' => $updated->amount->cents(),
             ':description' => $updated->description->value(),
             ':next' => $updated->version,
-            ':updatedAt' => self::format($updated->updatedAt),
+            ':updatedAt' => StoredTime::format($updated->updatedAt),
             ':expected' => $expectedVersion,
         ];
         $condition = 'attribute_exists(PK) AND #version = :expected';
@@ -287,7 +285,7 @@ final readonly class ExpenseRepository
     private static function sameContent(Expense $stored, Expense $ours): bool
     {
         return $stored->id === $ours->id
-            && self::format($stored->createdAt) === self::format($ours->createdAt)
+            && StoredTime::format($stored->createdAt) === StoredTime::format($ours->createdAt)
             && self::wroteSameFields($stored, $ours);
     }
 
@@ -301,7 +299,7 @@ final readonly class ExpenseRepository
             && $stored->amount->cents() === $ours->amount->cents()
             && $stored->description->value() === $ours->description->value()
             && $stored->categoryId === $ours->categoryId
-            && self::format($stored->updatedAt) === self::format($ours->updatedAt);
+            && StoredTime::format($stored->updatedAt) === StoredTime::format($ours->updatedAt);
     }
 
     /**
@@ -318,19 +316,14 @@ final readonly class ExpenseRepository
             'amountCents' => $expense->amount->cents(),
             'description' => $expense->description->value(),
             'version' => $expense->version,
-            'createdAt' => self::format($expense->createdAt),
-            'updatedAt' => self::format($expense->updatedAt),
+            'createdAt' => StoredTime::format($expense->createdAt),
+            'updatedAt' => StoredTime::format($expense->updatedAt),
         ];
         if ($expense->categoryId !== null) {
             $item['categoryId'] = $expense->categoryId;
         }
 
         return $item;
-    }
-
-    private static function format(DateTimeImmutable $time): string
-    {
-        return $time->setTimezone(new DateTimeZone('UTC'))->format(self::DATE_FORMAT);
     }
 
     /**
@@ -351,8 +344,8 @@ final readonly class ExpenseRepository
         $categoryId = $item['categoryId'] ?? null;
         $categoryIdIsValid = !array_key_exists('categoryId', $item) || (is_string($categoryId) && Uuid::isValid($categoryId));
         $version = $item['version'] ?? null;
-        $createdAt = self::parseTime($item['createdAt'] ?? null);
-        $updatedAt = self::parseTime($item['updatedAt'] ?? null);
+        $createdAt = StoredTime::parse($item['createdAt'] ?? null);
+        $updatedAt = StoredTime::parse($item['updatedAt'] ?? null);
         if (
             !is_string($id) || !Uuid::isValid($id) || $date === null
             || ($item[TableLayout::PK] ?? null) !== AuthKeys::userPartitionOf($owner)
@@ -368,16 +361,6 @@ final readonly class ExpenseRepository
         }
 
         return new Expense($id, $date, $amount, $description, is_string($categoryId) ? $categoryId : null, $version, $createdAt, $updatedAt);
-    }
-
-    private static function parseTime(mixed $stored): ?DateTimeImmutable
-    {
-        if (!is_string($stored)) {
-            return null;
-        }
-        $time = DateTimeImmutable::createFromFormat('!' . self::DATE_FORMAT, $stored, new DateTimeZone('UTC'));
-
-        return $time !== false && $time->format(self::DATE_FORMAT) === $stored ? $time : null;
     }
 
     private static function corrupt(string $operation): StorageFailure

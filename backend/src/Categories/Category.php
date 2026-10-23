@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Categories;
 
 use App\Infrastructure\Id\Uuid;
+use App\Infrastructure\Time\StoredTime;
 use DateTimeImmutable;
-use DateTimeZone;
 use InvalidArgumentException;
 
 /**
@@ -40,19 +40,13 @@ final readonly class Category
 
     public static function new(string $id, CategoryName $name, DateTimeImmutable $now): self
     {
-        $stored = self::wholeSecondsUtc($now);
+        $stored = StoredTime::wholeSecondsUtc($now);
 
         return new self($id, $name, $name->key(), 1, $stored, $stored);
     }
 
     public function renamed(CategoryName $name, DateTimeImmutable $now): self
     {
-        return new self($this->id, $name, $name->key(), $this->version + 1, $this->createdAt, self::wholeSecondsUtc($now));
-    }
-
-    /** Stored times have whole seconds in UTC, so a new or renamed category equals what a read gives back. */
-    private static function wholeSecondsUtc(DateTimeImmutable $time): DateTimeImmutable
-    {
-        return new DateTimeImmutable($time->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s'), new DateTimeZone('UTC'));
+        return new self($this->id, $name, $name->key(), $this->version + 1, $this->createdAt, StoredTime::wholeSecondsUtc($now));
     }
 }

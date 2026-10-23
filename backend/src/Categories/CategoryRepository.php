@@ -14,8 +14,8 @@ use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
 use App\Infrastructure\DynamoDb\TransactionOperation;
 use App\Infrastructure\Id\Uuid;
+use App\Infrastructure\Time\StoredTime;
 use DateTimeImmutable;
-use DateTimeZone;
 use InvalidArgumentException;
 use LogicException;
 
@@ -25,7 +25,6 @@ use LogicException;
  */
 final readonly class CategoryRepository implements CategoryLister
 {
-    private const string DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
     private const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
     /** A create: one try, and one more after a stale or released lock was dealt with (B13). */
     private const int MAX_CREATE_ATTEMPTS = 2;
@@ -234,7 +233,7 @@ final readonly class CategoryRepository implements CategoryLister
             $stored->version !== $renamed->version
             || $stored->name->value() !== $renamed->name->value()
             || $stored->nameKey !== $renamed->nameKey
-            || self::format($stored->updatedAt) !== self::format($renamed->updatedAt)
+            || StoredTime::format($stored->updatedAt) !== StoredTime::format($renamed->updatedAt)
         ) {
             throw new StaleVersion();
         }
@@ -254,7 +253,7 @@ final readonly class CategoryRepository implements CategoryLister
                 CategoryKeys::category($owner, $current->id),
                 'SET #name = :name, #nameKey = :nameKey, #version = :next, #updatedAt = :updatedAt',
                 ['#name' => 'name', '#nameKey' => 'nameKey', '#version' => 'version', '#updatedAt' => 'updatedAt'],
-                [':name' => $renamed->name->value(), ':nameKey' => $renamed->nameKey, ':next' => $renamed->version, ':updatedAt' => self::format($renamed->updatedAt), ':expected' => $expectedVersion],
+                [':name' => $renamed->name->value(), ':nameKey' => $renamed->nameKey, ':next' => $renamed->version, ':updatedAt' => StoredTime::format($renamed->updatedAt), ':expected' => $expectedVersion],
                 'attribute_exists(PK) AND #version = :expected',
             ),
             TransactionOperation::put(CategoryKeys::nameLockOfStoredKey($owner, $renamed->nameKey) + ['categoryId' => $current->id], 'attribute_not_exists(PK)'),
@@ -284,7 +283,7 @@ final readonly class CategoryRepository implements CategoryLister
                 CategoryKeys::category($owner, $renamed->id),
                 'SET #name = :name, #version = :next, #updatedAt = :updatedAt',
                 ['#name' => 'name', '#version' => 'version', '#updatedAt' => 'updatedAt'],
-                [':name' => $renamed->name->value(), ':next' => $renamed->version, ':updatedAt' => self::format($renamed->updatedAt), ':expected' => $expectedVersion],
+                [':name' => $renamed->name->value(), ':next' => $renamed->version, ':updatedAt' => StoredTime::format($renamed->updatedAt), ':expected' => $expectedVersion],
                 'attribute_exists(PK) AND #version = :expected',
             );
         } catch (ConditionFailed) {
@@ -407,14 +406,9 @@ final readonly class CategoryRepository implements CategoryLister
             'name' => $category->name->value(),
             'nameKey' => $category->nameKey,
             'version' => $category->version,
-            'createdAt' => self::format($category->createdAt),
-            'updatedAt' => self::format($category->updatedAt),
+            'createdAt' => StoredTime::format($category->createdAt),
+            'updatedAt' => StoredTime::format($category->updatedAt),
         ];
-    }
-
-    private static function format(DateTimeImmutable $time): string
-    {
-        return $time->setTimezone(new DateTimeZone('UTC'))->format(self::DATE_FORMAT);
     }
 
     /**
@@ -429,8 +423,8 @@ final readonly class CategoryRepository implements CategoryLister
         $name = is_string($item['name'] ?? null) ? CategoryName::parse($item['name']) : null;
         $nameKey = $item['nameKey'] ?? null;
         $version = $item['version'] ?? null;
-        $createdAt = self::parseTime($item['createdAt'] ?? null);
-        $updatedAt = self::parseTime($item['updatedAt'] ?? null);
+        $createdAt = StoredTime::parse($item['createdAt'] ?? null);
+        $updatedAt = StoredTime::parse($item['updatedAt'] ?? null);
         if (
             !is_string($id) || !Uuid::isValid($id)
             || ($item[TableLayout::PK] ?? null) !== AuthKeys::userPartitionOf($owner)
@@ -444,16 +438,6 @@ final readonly class CategoryRepository implements CategoryLister
         }
 
         return new Category($id, $name, $nameKey, $version, $createdAt, $updatedAt);
-    }
-
-    private static function parseTime(mixed $stored): ?DateTimeImmutable
-    {
-        if (!is_string($stored)) {
-            return null;
-        }
-        $time = DateTimeImmutable::createFromFormat('!' . self::DATE_FORMAT, $stored, new DateTimeZone('UTC'));
-
-        return $time !== false && $time->format(self::DATE_FORMAT) === $stored ? $time : null;
     }
 
     private static function conditionFailedAt(TransactionCancelled $cancelled, int $position): bool

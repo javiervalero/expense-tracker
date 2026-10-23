@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace App\Expenses;
 
 use App\Infrastructure\Id\Uuid;
+use App\Infrastructure\Time\StoredTime;
 use DateTimeImmutable;
-use DateTimeZone;
 use InvalidArgumentException;
 
 /**
@@ -44,7 +44,7 @@ final readonly class Expense
      */
     public static function new(string $id, ExpenseDate $date, Amount $amount, Description $description, ?string $categoryId, DateTimeImmutable $now): self
     {
-        $stored = self::wholeSecondsUtc($now);
+        $stored = StoredTime::wholeSecondsUtc($now);
 
         return new self($id, $date, $amount, $description, $categoryId, 1, $stored, $stored);
     }
@@ -54,11 +54,6 @@ final readonly class Expense
      */
     public function updated(ExpenseDate $date, Amount $amount, Description $description, ?string $categoryId, DateTimeImmutable $now): self
     {
-        return new self($this->id, $date, $amount, $description, $categoryId, $this->version + 1, $this->createdAt, self::wholeSecondsUtc($now));
-    }
-
-    private static function wholeSecondsUtc(DateTimeImmutable $time): DateTimeImmutable
-    {
-        return new DateTimeImmutable($time->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s'), new DateTimeZone('UTC'));
+        return new self($this->id, $date, $amount, $description, $categoryId, $this->version + 1, $this->createdAt, StoredTime::wholeSecondsUtc($now));
     }
 }
