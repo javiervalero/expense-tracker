@@ -17,7 +17,9 @@ use PHPUnit\Framework\TestCase;
  * Principal, it also flags dynamic instantiation (`new $class`, `new (...)`) and `Principal::class` in a file that
  * also uses Reflection* or newInstance*. A clone, a clone-with and unserialisation are refused by Principal itself
  * (PrincipalTest). Not caught: a class name built as a string, or passed in from another file, then instantiated
- * elsewhere: tokens cannot follow that, so review catches it.
+ * elsewhere: tokens cannot follow that, so review catches it. A `new` after `::` or `function` is a method name
+ * (`Category::new(`), not an instantiation. In the file that declares Principal, `new self`, `new static` and
+ * `new parent` are flagged too.
  */
 final class PrincipalConstructionTest extends TestCase
 {
@@ -53,6 +55,34 @@ final class PrincipalConstructionTest extends TestCase
         ], $this->scanFile($file));
     }
 
+    public function testAMethodNamedNewIsNotAnInstantiation(): void
+    {
+        self::assertSame([], $this->scanFile(self::FIXTURES . '/clean/MethodNamedNew.php'));
+        self::assertSame([], $this->scanFile(self::FIXTURES . '/clean/AmpersandMethodNamedNew.php'));
+    }
+
+    public function testADynamicNewNextToAStaticMethodCalledNewIsStillFlagged(): void
+    {
+        $file = self::FIXTURES . '/leaky/DynamicNextToStaticNew.php';
+
+        self::assertSame([
+            $file . ':15: dynamic new',
+            $file . ':16: dynamic new',
+            $file . ':17: dynamic new',
+        ], $this->scanFile($file));
+    }
+
+    public function testTheFileThatDeclaresPrincipalMayNotCopyItWithNewSelfStaticOrParent(): void
+    {
+        $file = self::FIXTURES . '/leaky/DeclaresPrincipal.php';
+
+        self::assertSame([
+            $file . ':13: new self in the declaring file',
+            $file . ':13: new static in the declaring file',
+            $file . ':13: new parent in the declaring file',
+        ], $this->scanFile($file));
+    }
+
     public function testNamingPrincipalOrInstantiatingDynamicallyElsewhereIsNotFlagged(): void
     {
         self::assertSame([], $this->scanFile(self::FIXTURES . '/clean/NamesThePrincipalClass.php'));
@@ -85,16 +115,70 @@ final class PrincipalConstructionTest extends TestCase
         $tokens = TokenScanner::tokens($path);
         $mentions = $this->mentionsPrincipal($tokens);
         $usesReflection = $this->usesReflection($tokens);
+        $declares = $this->declaresPrincipal($tokens);
         $hits = [];
 
         foreach ($tokens as $index => $token) {
-            $label = $this->nameLabel($tokens, $index) ?? ($mentions ? $this->dynamicLabel($tokens, $index, $usesReflection) : null);
+            $label = $this->nameLabel($tokens, $index)
+                ?? ($mentions ? $this->dynamicLabel($tokens, $index, $usesReflection) : null)
+                ?? ($declares ? $this->selfCopyLabel($tokens, $index) : null);
             if ($label !== null) {
                 $hits[] = "{$path}:{$token->line}: {$label}";
             }
         }
 
         return $hits;
+    }
+
+    /**
+     * @param list<\PhpToken> $tokens
+     */
+    private function declaresPrincipal(array $tokens): bool
+    {
+        foreach ($tokens as $index => $token) {
+            $next = TokenScanner::neighbour($tokens, $index, 1);
+            if ($token->is(T_CLASS) && $next?->is(T_STRING) === true && strtolower($next->text) === self::CLASS_NAME) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * In the file that declares Principal, `new self`, `new static` and `new parent` would make one without
+     * SessionAuthenticator.
+     *
+     * @param list<\PhpToken> $tokens
+     */
+    private function selfCopyLabel(array $tokens, int $index): ?string
+    {
+        if (!$tokens[$index]->is(T_NEW)) {
+            return null;
+        }
+        $next = TokenScanner::neighbour($tokens, $index, 1);
+        $name = strtolower((string) $next?->text);
+
+        return in_array($name, ['self', 'static', 'parent'], true) ? "new {$name} in the declaring file" : null;
+    }
+
+    /**
+     * A `new` that follows `::` or `function` (with an optional `&`) is a method name, as in `Category::new(` or
+     * `public static function new(`. (`->new` and `?->new` are lexed as plain names, never as T_NEW.)
+     *
+     * @param list<\PhpToken> $tokens
+     */
+    private function isMethodName(array $tokens, int $index): bool
+    {
+        for ($i = $index - 1; isset($tokens[$i]); --$i) {
+            if ($tokens[$i]->is([T_WHITESPACE, T_COMMENT, T_DOC_COMMENT]) || $tokens[$i]->text === '&') {
+                continue;
+            }
+
+            return $tokens[$i]->is([T_DOUBLE_COLON, T_FUNCTION]);
+        }
+
+        return false;
     }
 
     /**
@@ -148,6 +232,9 @@ final class PrincipalConstructionTest extends TestCase
     {
         $token = $tokens[$index];
         if ($token->is(T_NEW)) {
+            if ($this->isMethodName($tokens, $index)) {
+                return null;
+            }
             $next = TokenScanner::neighbour($tokens, $index, 1);
 
             return $next?->is(T_VARIABLE) === true || $next?->text === '(' ? 'dynamic new' : null;

@@ -74,4 +74,10 @@ final class PrincipalTest extends TestCase
 
         serialize(new Principal(self::ID, self::HASH));
     }
+
+    public function testThePrincipalIsFinalSoNoSubclassCanBeInstantiatedPastTheConstructionGuard(): void
+    {
+        // PrincipalConstructionTest does not flag `new class (...) extends Principal {}`; `final` is what refuses it.
+        self::assertTrue((new \ReflectionClass(Principal::class))->isFinal());
+    }
 }
