@@ -32,6 +32,8 @@ final readonly class ItemStore
     private const CONDITION_FAILED = 'ConditionalCheckFailedException';
     private const TRANSACTION_CANCELLED = 'TransactionCanceledException';
     private const CLIENT_ERROR = 'ClientError';
+    /** The operation name a query reports in a StorageFailure; callers that fail an item read through `query()` name it with this, not with a literal (SdkOperationsTest keeps the literal in this file). */
+    public const string QUERY_OPERATION = 'Query';
     /** The sort key of a user's profile item: it shares the partition with the user's data and must never come back from a query. */
     private const PROFILE_SORT_KEY = 'PROFILE';
     private const ATTRIBUTE_TYPES = ['S', 'N', 'B', 'BOOL', 'NULL', 'SS', 'NS', 'BS', 'L', 'M'];
@@ -146,7 +148,7 @@ final readonly class ItemStore
             throw new InvalidArgumentException(sprintf('The limit must be between 1 and %d.', self::MAX_QUERY_LIMIT));
         }
 
-        $result = $this->send('Query', fn(): array => $this->queryRequest($keyCondition, $names, $values, $indexName, $scanForward, $limit, $exclusiveStartKey));
+        $result = $this->send(self::QUERY_OPERATION, fn(): array => $this->queryRequest($keyCondition, $names, $values, $indexName, $scanForward, $limit, $exclusiveStartKey));
         $rawItems = $result['Items'] ?? [];
         $items = [];
         foreach (is_array($rawItems) ? $rawItems : [] as $rawItem) {

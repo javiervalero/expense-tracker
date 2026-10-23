@@ -37,8 +37,30 @@ final class CategoryKeysTest extends TestCase
 
         self::assertSame(
             ['PK' => 'USER#' . self::USER, 'SK' => 'CATNAME#' . $name->key()],
-            CategoryKeys::nameLock(self::owner(), $name),
+            CategoryKeys::nameLockOfStoredKey(self::owner(), $name->key()),
         );
+    }
+
+    #[DataProvider('badStoredKeys')]
+    public function testNameLockOfAStoredKeyRefusesAnythingButSha256Hex(string $storedKey): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        CategoryKeys::nameLockOfStoredKey(self::owner(), $storedKey);
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function badStoredKeys(): iterable
+    {
+        yield 'empty' => [''];
+        yield 'too short' => [str_repeat('a', 63)];
+        yield 'too long' => [str_repeat('a', 65)];
+        yield 'upper case' => [str_repeat('A', 64)];
+        yield 'not hex' => [str_repeat('g', 64)];
+        yield 'trailing newline' => [str_repeat('a', 64) . "\n"];
+        yield 'a sort key prefix inside' => ['CATNAME#' . str_repeat('a', 56)];
     }
 
     public function testNameLockSortKeyIsThePrefixAnd64LowerCaseHexCharacters(): void
@@ -46,7 +68,7 @@ final class CategoryKeysTest extends TestCase
         $name = CategoryName::parse('Eating out');
         self::assertInstanceOf(CategoryName::class, $name);
 
-        self::assertMatchesRegularExpression('/^CATNAME#[0-9a-f]{64}$/', CategoryKeys::nameLock(self::owner(), $name)['SK']);
+        self::assertMatchesRegularExpression('/^CATNAME#[0-9a-f]{64}$/', CategoryKeys::nameLockOfStoredKey(self::owner(), $name->key())['SK']);
     }
 
     public function testNamesThatDifferOnlyInCaseShareTheLockKey(): void
@@ -56,7 +78,7 @@ final class CategoryKeysTest extends TestCase
         self::assertInstanceOf(CategoryName::class, $a);
         self::assertInstanceOf(CategoryName::class, $b);
 
-        self::assertSame(CategoryKeys::nameLock(self::owner(), $a), CategoryKeys::nameLock(self::owner(), $b));
+        self::assertSame(CategoryKeys::nameLockOfStoredKey(self::owner(), $a->key()), CategoryKeys::nameLockOfStoredKey(self::owner(), $b->key()));
     }
 
     public function testTheLockPrefixDoesNotStartWithTheCategoryPrefix(): void
@@ -64,7 +86,7 @@ final class CategoryKeysTest extends TestCase
         self::assertFalse(str_starts_with(CategoryKeys::NAME_LOCK_PREFIX, CategoryKeys::PREFIX));
         $name = CategoryName::parse('Rent');
         self::assertInstanceOf(CategoryName::class, $name);
-        self::assertFalse(str_starts_with(CategoryKeys::nameLock(self::owner(), $name)['SK'], CategoryKeys::PREFIX));
+        self::assertFalse(str_starts_with(CategoryKeys::nameLockOfStoredKey(self::owner(), $name->key())['SK'], CategoryKeys::PREFIX));
     }
 
     /**
@@ -95,7 +117,7 @@ final class CategoryKeysTest extends TestCase
 
         $this->expectException(InvalidArgumentException::class);
 
-        CategoryKeys::nameLock(self::owner($id), $name);
+        CategoryKeys::nameLockOfStoredKey(self::owner($id), $name->key());
     }
 
     #[DataProvider('badIds')]
