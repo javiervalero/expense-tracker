@@ -30,6 +30,10 @@ export default defineConfig(({ mode }) => {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
+    build: {
+      // Never inline assets as data: URLs: the strict CSP has img-src 'self' (plan phase-4, Step 0 R7).
+      assetsInlineLimit: 0,
+    },
     // Compose runs Vite on a read-only file system and points this at a tmpfs; on a host it stays the default.
     cacheDir,
     server: {

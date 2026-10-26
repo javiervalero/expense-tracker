@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -412,6 +412,11 @@ frontend-build: frontend-ready ## frontend/: type check and production build int
 check-bundle-secrets: export BUNDLE_SECRET_VALUE = $(ORIGIN_VERIFY_VALUE)
 check-bundle-secrets: ## The ORIGIN_VERIFY_LOCAL value (.env, else .env.example) is not in frontend/dist (needs frontend-build)
 	@scripts/check-bundle-secrets.sh frontend/dist
+
+# The built index.html has no inline script or style, no on*= attribute, no javascript: or data: URL, and the scripts
+# have no eval( or new Function: the bundle runs under the strict CSP planned for Phase 7 (plan phase-4 C16).
+check-bundle-csp: ## frontend/dist is compatible with a strict CSP: no inline script or style, no eval (needs frontend-build)
+	@scripts/check-bundle-csp.sh frontend/dist
 
 # Full gate: production and dev dependencies, high and above. (Until 2026-10-09 the dev tools pulled in `braces`
 # through @vue/eslint-config-typescript -> fast-glob; ESLint now uses typescript-eslint directly and the tree is clean.)
