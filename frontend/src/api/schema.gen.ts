@@ -583,8 +583,9 @@ export interface components {
             };
         };
         /**
-         * @description Returned when the body is JSON but a field is wrong. `errors` lists each one by JSON Pointer (`/email`, `/password`, or
-         *     `/<name>` for an unexpected field) with a message. The messages never repeat the value.
+         * @description Returned when the body is JSON but a field is wrong. `errors` lists each one with a message, located by JSON Pointer
+         *     to the offending member (for example `/name`), or the empty pointer for an error about the whole body or an
+         *     unexpected member whose name is not safe to echo. The messages never repeat the value.
          */
         ValidationFailed: {
             headers: {
