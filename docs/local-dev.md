@@ -116,6 +116,66 @@ not reliably (WebKit bug 281149). The code has no "insecure cookie" switch on pu
 The logs show `"userId":"<uuid>"` on authenticated request lines, and a refused cross-site check writes a warning
 `csrf check failed`. Passwords and session tokens are never logged; `make test-integration` checks this.
 
+## Categories and expenses from the command line
+
+These commands reuse the signed-in cookie jar `jar.txt` and the `API` and `H` variables from the section above, so
+sign in first. Writes send the same headers as the sign-in commands. Replace each `<category id>` and `<expense id>`
+with the `id` from an earlier response. Amounts are integer cents: 12.50 is `1250`, and a float such as `12.5` is 422.
+
+```bash
+curl -i -c jar.txt -b jar.txt "${H[@]}" -d '{"name":"Food"}' $API/categories
+# 201, Location: /api/v1/categories/<category id>, body {"id":"<category id>","name":"Food","version":1,"createdAt":"...","updatedAt":"..."}
+
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" $API/categories
+# 200, body {"items":[...]}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X PATCH -d '{"name":"Groceries","version":1}' $API/categories/<category id>
+# 200, body {"id":"<category id>","name":"Groceries","version":2,"createdAt":"...","updatedAt":"..."}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X PATCH -d '{"name":"Groceries","version":1}' $API/categories/<category id>
+# 409 (version 1 is stale after the change above), body {"type":"about:blank","title":"Conflict","status":409,"detail":"The category changed since you loaded it. Reload it and try again."}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -d '{"date":"2026-10-26","amountCents":1250,"description":"Lunch","categoryId":"<category id>"}' $API/expenses
+# 201, Location: /api/v1/expenses/<expense id>, body is the created expense (same shape as the GET below)
+
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" $API/expenses/<expense id>
+# 200, body {"id":"<expense id>","date":"2026-10-26","amountCents":1250,"description":"Lunch","categoryId":"<category id>","version":1,"createdAt":"...","updatedAt":"..."}
+```
+
+A PATCH on an expense sends only the members you change, and `"version"` must be the version you last read. If it is
+stale, the API answers 409: reload the expense, then retry. `"categoryId": null` makes the expense Uncategorized.
+
+```bash
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X PATCH -d '{"version":1,"amountCents":1300}' $API/expenses/<expense id>
+# 200, body {"id":"<expense id>","amountCents":1300,"version":2,...}
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X PATCH -d '{"version":1,"categoryId":null}' $API/expenses/<expense id>
+# 409 (version 1 is stale after the change above), body {...,"detail":"The expense changed since you loaded it. Reload it and try again."}
+```
+
+List expenses with a date range and a page size. Follow `nextCursor` by passing it back as `cursor=` with the same
+filters, until it is `null`. A page can be short or empty while `nextCursor` is still set, so keep going. The cursor
+is base64url, so it goes into the URL as it is.
+
+```bash
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" "$API/expenses?from=2026-10-01&to=2026-10-31&limit=2"
+# 200, body {"items":[...],"nextCursor":"<cursor>"}
+
+curl -i -b jar.txt -H "X-Origin-Verify: local-origin-verify-not-a-secret" "$API/expenses?from=2026-10-01&to=2026-10-31&limit=2&cursor=<cursor>"
+# 200, body {"items":[...],"nextCursor":null}
+```
+
+Other filters: `category=<category id>` or `category=none` (Uncategorized), and `q=<text>` (a case-insensitive substring
+of the description). An unknown parameter, or a `limit` outside 1 to 100, is 400.
+
+```bash
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X DELETE $API/expenses/<expense id>
+# 204
+
+curl -i -c jar.txt -b jar.txt "${H[@]}" -X DELETE $API/categories/<category id>
+# 204, the category's expenses become Uncategorized (categoryId null)
+```
+
 ## Receipt pipeline (local)
 
 On AWS a receipt upload goes S3 → event notification → SQS → worker Lambda. Locally the same path is:

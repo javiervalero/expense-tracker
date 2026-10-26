@@ -33,6 +33,7 @@ Then open:
 
 The API also has register, login, me and logout, with a cookie session. For curl examples, see
 [Signing in from the command line](docs/local-dev.md#signing-in-from-the-command-line).
+For categories and expenses, see [Categories and expenses from the command line](docs/local-dev.md#categories-and-expenses-from-the-command-line).
 
 Stop the stack with `make down`. It removes the containers and never removes volumes; see
 [docs/local-dev.md](docs/local-dev.md) before deleting anything.
