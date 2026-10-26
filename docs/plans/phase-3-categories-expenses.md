@@ -678,6 +678,22 @@ Carried:
 - **Phase 4:** a short or empty page with a non-null `nextCursor` means keep going; send `limit` 1–100.
 - **Phase 7 (security LOW-3):** a valid session can force the 1,000-item read budget on every request; give `GET /expenses` a route-level throttle below the stage default, and make sure the budget alarm covers DynamoDB read spend. A per-user limit would need an ADR.
 
+### Notes from the WP12 reviews (2026-10-26)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high, asked to find an isolation gap the suite misses) on the uncommitted WP12 diff (base `d13f5c4`), then security round 2 (opus/high) on the fixes, whose last small follow-ups were checked inline by the main session. No production code changed, and no round found a real leak: every key, the `CATNAME#` lock and the cursor's start key take their partition from the session principal. The +8 `Makefile` lines were reviewed inline.
+
+- **What the suite pins** (`CrossUserIsolationApiTest`, users A and B through the API): B's GET/PATCH/DELETE on A's expense and category ids give a 404 byte-identical (status, every header but `Date`, body) to a random uuid's and a malformed id's, also with `version: 99` and A's `categoryId` in the body (404 before 409/422); A's `categoryId` in B's writes gives a 422 byte-identical to a random uuid's, with no write; B's lists never show A's ids (no filter, `category=none`, A's category with and without `q`, A's date window), each with a control proving the filter matches for A; B replaying A's cursor (plain and filtered) gets only B's data; B can use and release A's category names (create, upper-case variant, rename to and away from) while A's names stay locked; A's resources are byte-identical afterwards; without a session (no cookie, or a garbage one) every secured operation gives 401, also for random and malformed ids.
+- **Coverage meta-test** (`CrossUserCoverageTest`): `[operationId => [method, template]]` of the bundled spec's secured operations must equal the suite's `SECURED_CALLS`, and every row with a path parameter needs a foreign-id row in `ID_ATTEMPTS`; a parameter other than `{id}` fails the suite. Shown red with a mislabelled row and a missing `ID_ATTEMPTS` row. Phase 5's receipt routes fail CI until covered.
+- **Expense flow** (`ExpenseFlowApiTest`): category → expense → read → list → rename → patch → delete category (the expense becomes Uncategorized with its `version` unchanged and matches `category=none`) → delete expense.
+- **Log hygiene (B23):** six run-unique markers (two descriptions, two category names, a `q`, a cursor) go through create, rename, patch, a 409, a 422, a 400 and a cursor sent back both accepted and refused. `make test-integration` fails if any appears in the api-php logs; descriptions and names are also checked in the nginx log (only `q` and cursors are excused there, B23). Each check was shown to fire on a real log hit through a temporary mutation (one that printed rather than exited); `content()` reads markers with `|| exit 1`, so a missing marker fails loudly.
+- **Acceptance:** `make test-integration` green twice in a row on the final code (the agent's run, then the main session's).
+- **Login throttle flake, root cause found:** `LoginThrottleRaceTest` failed once in this WP with `Retry-After` 901 against 900 (`LoginApiTest` did in WP11). It is a server off-by-one, not only a test edge: `ThrottleCounter` answers `expiresAt − now` in whole seconds, and under concurrency a request whose clock read is a second earlier than the request that opened the window gets the window length + 1. Harmless (one second too long), but a real bug.
+
+Carried:
+- **Next, a separate `fix:` commit (test first, php and security review):** cap `Retry-After` at the rule's window in `ThrottleCounter`, with a unit test for the one-second edge.
+- **Phase 5:** add the receipt routes to `SECURED_CALLS` and `ID_ATTEMPTS` (the meta-test enforces it); the S3 clean-up after an expense delete must run only after the transaction succeeds, with an object key built from the principal.
+- **Later refactor (optional):** the register/sign-in helpers are copied across the API test classes; a shared helper in `ApiTestCase` would remove them.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
