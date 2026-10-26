@@ -499,6 +499,29 @@ WP1 ─► Step 0 ─► WP2 ─► WP3 ─► WP4 ─► WP5 ─► WP6 ─┬�
 ### 7.3 Review notes
 As in Phases 1–3, each WP's findings (and anything carried) are added here as "Notes from the WPn reviews" before the next WP starts. That includes the red runs observed, and tests written after the code (mutation-checked).
 
+### Notes from the WP2 reviews (2026-10-26)
+
+- **Red runs:**
+  - The shell test failed on every case before the script existed (exit 127).
+  - After the review, 11 new cases failed before their fixes.
+  - Before the config change, the lint probe files produced no lint problems at all.
+- **Review:** `ecc:code-reviewer` (sonnet/medium) found no critical or high issues. All fixes were applied test-first.
+  - The check now also scans CSS for `url(data:…)`.
+  - It looks for `.js`, `.mjs` and `.css` files anywhere under `dist`, and exits 2 when there is no script at all.
+  - It no longer runs a `grep -q` inside a pipe, which `pipefail` could hide.
+  - `style=`, `on*=` and `<style>` are checked with quoted attribute values emptied, so a `meta content` no longer causes a false positive.
+  - The URL rules (`javascript:`, `data:`, another origin) look only at `src`, `href`, `action`, `formaction`, `poster` and `srcset` values.
+  - A `/` before `on*=` or `style=` is caught, for example `<img/onerror=…>`.
+  - New rule: no third-party `src` or `href` (`http:`, `https:` or `//`).
+- **Lint (C3, C16):**
+  - Errors: `window.*` and `globalThis.*` access to `document`, `localStorage` and `sessionStorage`, so app code uses `document` directly. `document.write` and `writeln`. Assignments to `innerHTML` and `outerHTML`, and `insertAdjacentHTML`. A static `target="_blank"`, through `vue/no-restricted-syntax`: `vue/no-template-target-blank` alone missed internal links, so it stays on only as a backstop for dynamic ones.
+  - `no-implied-eval` needed `window`, `setTimeout` and `setInterval` declared as globals before it fired.
+  - The final probe gave 11 errors and no warnings. The probe files were deleted.
+- **Accepted gaps:**
+  - Indirect `eval` (`(0,eval)(x)`) and a bare `Function(` are not searched for in the bundle: the false-positive risk is high, and the lint rules cover our own source.
+  - A dynamic `:target="'_blank'"` is only partly covered.
+- **Not covered by a test:** `src/config.ts`, which stays at 0% coverage until WP3 and WP4 import it. Overall coverage is 83.3%.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
