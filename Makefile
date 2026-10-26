@@ -186,6 +186,8 @@ PIPE_MARKERS = build/pipe-test
 CLIENT_IP_MARKERS = build/client-ip-test
 # AuthFlowApiTest and LoginThrottleRaceTest write markers.json here (password, wrongPassword, sessionToken,
 # revokedSessionToken, userId, csrfOrigin), merged; the checks below need the whole suite to have run (not --filter).
+# ExpenseFlowApiTest adds contentDescription(2), contentCategoryName(2), contentQuery and contentCursor: user content, never
+# logged by api-php; descriptions and names are also checked in the nginx log, `q` and cursors are not (local nginx logs query strings, B23).
 AUTH_MARKERS = build/auth-test
 
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
@@ -229,6 +231,12 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	printf '%s\n' "$$requests" | grep -F '"path":"/api/v1/auth/me"' | grep -qF -e "\"userId\":\"$$authuser\"" || fail "no request line for /api/v1/auth/me carries \"userId\":\"$$authuser\" (the session user is not logged)"; \
 	printf '%s\n' "$$apilogs" | grep -F 'csrf check failed' | grep -qF -e "\"origin\":\"$$authorigin\"" || fail "no 'csrf check failed' line with \"origin\":\"$$authorigin\" in the api-php logs (the CSRF refusal of the auth flow test was not logged)"; \
 	echo "make test-integration: auth log checks passed"; \
+	content() { v=$$(amarker "$$2") || exit 1; if printf '%s\n' "$$apilogs" | grep -qF -e "$$v"; then fail "$$1 appears in the api-php logs (user content leaked into a log)"; fi; \
+		if [ "$$3" = nginx ] && printf '%s\n' "$$nginxlogs" | grep -qF -e "$$v"; then fail "$$1 appears in the api (nginx) logs (user content leaked into a log)"; fi; }; \
+	content "an expense DESCRIPTION" contentDescription nginx; content "the patched DESCRIPTION" contentDescription2 nginx; \
+	content "a category NAME" contentCategoryName nginx; content "the renamed category NAME" contentCategoryName2 nginx; \
+	content "a search QUERY (q)" contentQuery; content "a pagination CURSOR" contentCursor; \
+	echo "make test-integration: user content log checks passed"; \
 	echo "make test-integration, part 2: worker-runner running (the whole pipe)"; \
 	rm -rf $(PIPE_MARKERS); \
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \

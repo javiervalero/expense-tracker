@@ -7,10 +7,11 @@ namespace App\Tests\Support;
 use PHPUnit\Framework\Assert;
 
 /**
- * The canonical markers of the auth integration tests, in `build/auth-test/markers.json` (one `"key": "value"` per
- * line), which `make test-integration` reads back to grep the api-php and nginx logs. Both auth tests write here, so a
- * write merges with what is already in the file, under an exclusive lock (the Makefile removes the directory at the
- * start of a run). Keep the key names in sync with the Makefile (`AUTH_MARKERS`).
+ * The canonical markers of the auth integration tests (and ExpenseFlowApiTest's user-content markers), in
+ * `build/auth-test/markers.json` (one `"key": "value"` per line), which `make test-integration` reads back to grep the
+ * api-php and nginx logs. The tests write here, so a write merges with what is already in the file, under an
+ * exclusive lock (the Makefile removes the directory at the start of a run). Keep the key names in sync with the
+ * Makefile (`AUTH_MARKERS`).
  *
  * Every value must be safe for the Makefile's `sed` extraction and for JSON without escapes, so only characters of
  * {@see self::SAFE_VALUE} are accepted; anything else fails the test loudly.
