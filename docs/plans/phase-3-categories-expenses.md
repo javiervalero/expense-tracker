@@ -643,6 +643,24 @@ Carried:
 - **After WP10:** extract the "string member or error" check (`CategoryInput::name`, `NewExpenseInput::stringMember`, and WP10's patch input, where `null` is an error and an absent member means unchanged) into `App\Http\Input`, with all callers migrated together.
 - **When a third consumer appears:** rename `tests/Support/ScriptedCategoryStore` (it now serves expenses too).
 
+### Notes from the WP10 reviews (2026-10-26)
+
+From ecc:php-reviewer (sonnet/medium) and ecc:security-reviewer (opus/high) on the uncommitted WP10 diff (base `8370970`), then security round 2 (opus/high) on the fixes (approved, no findings). No round found a CRITICAL or HIGH issue: both routes go through `Routes::guarded()`; every key comes from the session principal; malformed, unknown and other users' expense ids get a byte-identical `404` (PATCH and DELETE), the malformed ones with zero reads; a `categoryId` that is not one of the caller's categories (foreign, unknown, upper-case, non-string) gives `422` at `/categoryId` with no write and no echo; no write can land over a newer version; the response maps exactly the eight B20 fields.
+
+- **WP9 carried refactor: done** in `8370970` (`Principal::of()` in the category handlers, `#[\SensitiveParameter]` on every `array $body` parameter, pinned by `BodyParametersAreSensitiveTest`, typed constants). `CategoryRenameInput` takes no body, so it needs no attribute. Reviewed inline by the main session (a small, behaviour-preserving diff; the owner confirmed inline review is enough for these).
+- **Handler order (security LOW-1, which overrode a php suggestion to pin the old order):** route id (`404`, zero reads), `find()` (`404`), stored `version` ≠ body `version` gives `409` with only a `GetItem`, then the category check (`422`), then the conditional `UpdateItem`, whose condition and B13 re-read stay the backstop for a lost race. A stale request no longer reads the category list, and a stale request with a bad `categoryId` is `409` (reload first), not `422`. The `409` can only describe the caller's own expense, so it is no oracle.
+- **No editable member:** a body with only `version` gets one error at the empty pointer `''` (the whole body); `{}` gives both `/version` and `''`, kept on purpose (both are true). The contract's `ValidationProblem` pointer text now says what `''` means.
+- **DELETE does not read first** (B12 "unconditional"): `ExpenseNotFound` from the transaction is the `404`. A client retry after a lost `204` gets `404`.
+- **Tests made discriminating (php MEDIUM):** the stale cases use a stored version 3 with body versions 2 and 4; the `UpdateItem`'s `:updatedAt` is the clock's time and the response carries the saved item, not the merged one; `{"version":1,"colour":"x"}` gives exactly `['', '/colour']`; another user's DELETE body is byte-identical to an unknown id's.
+- **The date-range check** (§3 WP10 "a date change shows up in a `from`/`to` list") goes through `ExpenseRepository::pageByDate` in the integration test, because `GET /expenses` arrives in WP11.
+- **Process note:** the input and handler unit tests (class not found) and the contract tests (`ProtectedRoutesMatchContractTest`, `RoutesMatchContractTest`, routes missing) were red before the code; `EveryOperationDocumentsErrorsTest` passed at once, because the errors were documented with the operations. In the fix round, the two order tests were red before the handler change; the other new tests pinned behaviour that was already correct. One integration suite at a time throughout.
+
+Carried:
+- **Next, a separate `refactor:` commit:** the WP9 "string member or error" extraction into `App\Http\Input`, now with `ExpensePatchInput` as the third caller.
+- **WP11:** the HTTP form of the WP10 date-change check (a re-dated expense moves between `from`/`to` lists).
+- **Phase 4:** a `404` on delete means "already gone"; a pointer-less (`''`) validation error is shown as a form-level message; on `409`, offer "reload".
+- **Phase 5:** the expense delete removes only the `RCPT#` item and never learns an S3 key; make the receipt object key derivable from the user and expense ids (or add a cleanup) so a deleted expense cannot leave an orphaned object.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
