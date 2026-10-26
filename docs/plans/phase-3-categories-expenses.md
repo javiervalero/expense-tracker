@@ -700,6 +700,19 @@ Carried:
 - **Docs:** `docs/local-dev.md` gained "Categories and expenses from the command line" (drafted by ecc:doc-updater, haiku/low); the main session ran every command against the local stack as a fresh user, and corrected the draft with the real `Location` paths, `409` details and a note that the cursor is URL-safe. README links to it. ADR 0002 and ADR 0011 have "Implemented in Phase 3" notes. B8's wording is corrected (the recount bound and its ambiguous-write gap).
 - **Not done here (carried):** everything under "Carried" in the WP10–WP12 notes for Phases 4, 5 and 7.
 
+### Notes from the whole-PR review (2026-10-26)
+
+Before the PR was marked ready: `/update-docs` (the make-target and environment tables matched their sources; two make-target rows gained the isolation and log checks), `/code-review` on PR #6, `/verification-loop` (build, `make lint`, unit 2569, front end 67, contract 32, integration 444 + 2 with every log check, secrets scans: all green) and `/ecc:cost-report` (Phase 3 about $78 across 11 sessions, against about $119 across 14 for Phase 2; the tracker records the main session only, and 2026-10-21 counts in both phases).
+
+The `/code-review` pass (ecc:code-reviewer, sonnet/medium) looked only for what the per-WP reviews could not see: consistency across work packages. It found no CRITICAL or HIGH issue; the handler conventions held across all nine handlers. Fixed in `f94c6f5` (behaviour unchanged, no existing test edited; ecc:php-reviewer approved it) and `78d6b8e`:
+
+- the `version` check, the category-id-or-null check and the field-error list, copied in the three body inputs, are now `VersionMember`, `CategoryIdMember` and `MemberErrors` in `App\Http\Input`;
+- the anti-enumeration 404 is built in one place, `RouteId::notFound()`;
+- typed constants in the Phase 3 value objects; one `TransactionCancelled::CONDITION_CHECK_FAILED`; `ListCategoriesHandler` depends on `CategoryLister`; `StoredTime` constants; no work-package numbers left in source docblocks;
+- the contract's `ValidationFailed` text now covers every member pointer and the empty pointer.
+
+Left as they are (optional): `ExpenseFilter::canonical()` and `InvalidQuery::$parameter` are public only for tests; the member name and pointer are separate constants in the new `App\Http\Input` classes; the long combined guards in the two expense inputs.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
