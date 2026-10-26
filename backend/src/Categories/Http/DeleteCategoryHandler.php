@@ -43,11 +43,11 @@ final readonly class DeleteCategoryHandler implements Handler
         $principal = Principal::of($request);
         $id = RouteId::uuidOrNotFound($request);
 
-        $current = $this->categories->find($principal, $id) ?? throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+        $current = $this->categories->find($principal, $id) ?? throw RouteId::notFound();
         try {
             $this->categories->delete($principal, $current);
         } catch (CategoryNotFound) {
-            throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+            throw RouteId::notFound();
         }
 
         return Response::empty(204);

@@ -29,15 +29,15 @@ namespace App\Http\Input;
 final class PlainText
 {
     /** NUL and U+0085 are deliberately absent. The rest of the list is every `\p{Z}` code point. */
-    private const TRIM_CHARACTERS = " \t\n\r\x0B\x0C\u{00A0}\u{1680}"
+    private const string TRIM_CHARACTERS = " \t\n\r\x0B\x0C\u{00A0}\u{1680}"
         . "\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}"
         . "\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}";
-    private const CONTROL = '/[\p{Cc}\x{2028}\x{2029}]/u';
-    private const BIDI = '/[\x{202A}-\x{202E}\x{2066}-\x{2069}]/u';
-    private const INVISIBLE = '/(?![\x{200B}-\x{200F}\x{061C}\x{E0020}-\x{E007F}])\p{Cf}|[\x{115F}\x{1160}\x{2800}\x{3164}\x{FFA0}]/u';
-    private const VISIBLE = '/[\p{L}\p{N}\p{S}\p{P}]/u';
-    private const MAX_BYTES_PER_CHARACTER = 4;
-    private const EDGE_PADDING_SLACK_BYTES = 1024;
+    private const string CONTROL = '/[\p{Cc}\x{2028}\x{2029}]/u';
+    private const string BIDI = '/[\x{202A}-\x{202E}\x{2066}-\x{2069}]/u';
+    private const string INVISIBLE = '/(?![\x{200B}-\x{200F}\x{061C}\x{E0020}-\x{E007F}])\p{Cf}|[\x{115F}\x{1160}\x{2800}\x{3164}\x{FFA0}]/u';
+    private const string VISIBLE = '/[\p{L}\p{N}\p{S}\p{P}]/u';
+    private const int MAX_BYTES_PER_CHARACTER = 4;
+    private const int EDGE_PADDING_SLACK_BYTES = 1024;
 
     /**
      * The trimmed text, or the first rule broken. A minimum of one character is always required.

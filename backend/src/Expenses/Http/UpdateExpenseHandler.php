@@ -60,7 +60,7 @@ final readonly class UpdateExpenseHandler implements Handler
         $id = RouteId::uuidOrNotFound($request);
         $input = ExpensePatchInput::fromBody(JsonBody::decode($request->header('content-type'), $request->body));
 
-        $current = $this->expenses->find($principal, $id) ?? throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+        $current = $this->expenses->find($principal, $id) ?? throw RouteId::notFound();
         if ($current->version !== $input->version) {
             throw HttpProblem::of(409, self::STALE_VERSION);
         }
@@ -79,7 +79,7 @@ final readonly class UpdateExpenseHandler implements Handler
         } catch (StaleVersion) {
             throw HttpProblem::of(409, self::STALE_VERSION);
         } catch (ExpenseNotFound) {
-            throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+            throw RouteId::notFound();
         }
 
         return ExpenseResponse::ok($saved, $resolver);

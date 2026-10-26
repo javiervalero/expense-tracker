@@ -25,7 +25,6 @@ use LogicException;
  */
 final readonly class CategoryRepository implements CategoryLister
 {
-    private const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
     /** A create: one try, and one more after a stale or released lock was dealt with (B13). */
     private const int MAX_CREATE_ATTEMPTS = 2;
     /** A rename: one try, one more without the old-lock delete, one more after a stale or released new lock. */
@@ -314,7 +313,7 @@ final readonly class CategoryRepository implements CategoryLister
 
                 return;
             } catch (TransactionCancelled $cancelled) {
-                if (!in_array(self::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
+                if (!in_array(TransactionCancelled::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
                     throw $cancelled;
                 }
             }
@@ -442,7 +441,7 @@ final readonly class CategoryRepository implements CategoryLister
 
     private static function conditionFailedAt(TransactionCancelled $cancelled, int $position): bool
     {
-        return ($cancelled->reasons[$position] ?? null) === self::CONDITION_CHECK_FAILED;
+        return ($cancelled->reasons[$position] ?? null) === TransactionCancelled::CONDITION_CHECK_FAILED;
     }
 
     private static function corrupt(string $operation): StorageFailure

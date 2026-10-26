@@ -12,8 +12,8 @@ namespace App\Expenses;
  */
 final class Amount
 {
-    public const MIN_CENTS = 1;
-    public const MAX_CENTS = 100_000_000;
+    public const int MIN_CENTS = 1;
+    public const int MAX_CENTS = 100_000_000;
 
     private function __construct(private readonly int $cents) {}
 

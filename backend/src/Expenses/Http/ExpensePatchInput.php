@@ -8,9 +8,12 @@ use App\Expenses\Amount;
 use App\Expenses\AmountViolation;
 use App\Expenses\Description;
 use App\Expenses\ExpenseDate;
+use App\Http\Input\CategoryIdMember;
+use App\Http\Input\MemberErrors;
 use App\Http\Input\ObjectMembers;
 use App\Http\Input\StringMember;
 use App\Http\Input\TextViolation;
+use App\Http\Input\VersionMember;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
 
@@ -36,7 +39,6 @@ final readonly class ExpensePatchInput
     private const string AMOUNT = 'amountCents';
     private const string DESCRIPTION = 'description';
     private const string CATEGORY = 'categoryId';
-    private const int MIN_VERSION = 1;
 
     private function __construct(
         public int $version,
@@ -54,40 +56,26 @@ final readonly class ExpensePatchInput
      */
     public static function fromBody(#[\SensitiveParameter] array $body): self
     {
-        $version = self::version($body);
+        $version = VersionMember::required($body);
         $date = self::date($body);
         $amount = self::amount($body);
         $description = self::description($body);
-        $category = self::category($body);
+        $category = CategoryIdMember::optional($body);
         $errors = [
-            ...self::errorsOf($version),
-            ...self::errorsOf($date),
-            ...self::errorsOf($amount),
-            ...self::errorsOf($description),
-            ...self::errorsOf($category),
+            ...MemberErrors::of($version),
+            ...MemberErrors::of($date),
+            ...MemberErrors::of($amount),
+            ...MemberErrors::of($description),
+            ...MemberErrors::of($category),
             ...self::noChangeErrors($body),
             ...ObjectMembers::unknownErrors($body, [self::VERSION, self::DATE, self::AMOUNT, self::DESCRIPTION, self::CATEGORY]),
         ];
-        // $errors is non-empty whenever a member is a FieldError; the early returns below also narrow the types.
-        if ($errors !== []) {
-            throw new ValidationProblem($errors);
-        }
-        if ($version instanceof FieldError || $date instanceof FieldError || $amount instanceof FieldError) {
-            throw new ValidationProblem($errors);
-        }
-        if ($description instanceof FieldError || $category instanceof FieldError) {
+        // The instanceof checks only narrow the types for static analysis; $errors is non-empty whenever one is true.
+        if ($errors !== [] || $version instanceof FieldError || $date instanceof FieldError || $amount instanceof FieldError || $description instanceof FieldError || $category instanceof FieldError) {
             throw new ValidationProblem($errors);
         }
 
         return new self($version, $date, $amount, $description, array_key_exists(self::CATEGORY, $body), $category);
-    }
-
-    /**
-     * @return list<FieldError>
-     */
-    private static function errorsOf(mixed $member): array
-    {
-        return $member instanceof FieldError ? [$member] : [];
     }
 
     /**
@@ -104,22 +92,6 @@ final readonly class ExpensePatchInput
         }
 
         return [new FieldError('', 'Change at least one of date, amountCents, description and categoryId.')];
-    }
-
-    /**
-     * @param array<array-key, mixed> $body
-     */
-    private static function version(#[\SensitiveParameter] array $body): int|FieldError
-    {
-        if (!array_key_exists(self::VERSION, $body)) {
-            return new FieldError('/' . self::VERSION, 'This field is required.');
-        }
-        $value = $body[self::VERSION];
-        if (!is_int($value)) {
-            return new FieldError('/' . self::VERSION, 'Must be an integer.');
-        }
-
-        return $value < self::MIN_VERSION ? new FieldError('/' . self::VERSION, 'Must be at least ' . self::MIN_VERSION . '.') : $value;
     }
 
     /**
@@ -162,15 +134,5 @@ final readonly class ExpensePatchInput
         $description = Description::parse($text);
 
         return $description instanceof TextViolation ? new FieldError('/' . self::DESCRIPTION, ExpenseFieldMessages::description($description)) : $description;
-    }
-
-    /**
-     * @param array<array-key, mixed> $body
-     */
-    private static function category(#[\SensitiveParameter] array $body): string|FieldError|null
-    {
-        $value = $body[self::CATEGORY] ?? null;
-
-        return $value === null || is_string($value) ? $value : new FieldError('/' . self::CATEGORY, 'Must be a category id or null.');
     }
 }

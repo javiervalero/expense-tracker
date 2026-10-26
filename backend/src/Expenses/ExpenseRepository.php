@@ -26,7 +26,6 @@ final readonly class ExpenseRepository implements ExpenseRangeReader
 {
     /** The date part of an index key; the key as a whole is checked by rebuilding it from the date and the id. */
     private const string INDEX_KEY_DATE = '/\AEXP#(\d{4}-\d{2}-\d{2})#/D';
-    private const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
     /** Position of the expense in a delete's transaction (expense first, receipt record second). */
     private const int DELETE_EXPENSE_POSITION = 0;
 
@@ -158,7 +157,7 @@ final readonly class ExpenseRepository implements ExpenseRangeReader
         try {
             $this->items->transactWrite($operations);
         } catch (TransactionCancelled $cancelled) {
-            throw ($cancelled->reasons[self::DELETE_EXPENSE_POSITION] ?? null) === self::CONDITION_CHECK_FAILED
+            throw ($cancelled->reasons[self::DELETE_EXPENSE_POSITION] ?? null) === TransactionCancelled::CONDITION_CHECK_FAILED
                 ? new ExpenseNotFound()
                 : $cancelled;
         }
@@ -173,7 +172,7 @@ final readonly class ExpenseRepository implements ExpenseRangeReader
      * filter; this method returns what the query evaluated, at most `$batchLimit` items.
      *
      * `lastKey` is a valid cursor only if the caller examined the whole batch. A caller that stops in the middle of a
-     * batch must build its cursor from the item it stopped at (B18, WP7), not use `lastKey`.
+     * batch must build its cursor from the item it stopped at (B18), not use `lastKey`.
      *
      * @param array<string, string>|null $startKey `SK` and `LSI1SK` of an expense; anything else is refused
      *

@@ -37,7 +37,7 @@ final class CategoryKeys
     }
 
     /**
-     * The name lock of a category, from the `nameKey` stored on its `CAT#` item (B6, WP3 note): a lock is released or
+     * The name lock of a category, from the `nameKey` stored on its `CAT#` item (B6): a lock is released or
      * checked with the key it was created with, never with a recomputed one, so a change in PHP's case-folding tables
      * cannot orphan it.
      *

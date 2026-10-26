@@ -8,6 +8,8 @@ use App\Expenses\Amount;
 use App\Expenses\AmountViolation;
 use App\Expenses\Description;
 use App\Expenses\ExpenseDate;
+use App\Http\Input\CategoryIdMember;
+use App\Http\Input\MemberErrors;
 use App\Http\Input\ObjectMembers;
 use App\Http\Input\StringMember;
 use App\Http\Input\TextViolation;
@@ -51,23 +53,15 @@ final readonly class NewExpenseInput
         $date = self::date($body);
         $amount = self::amount($body);
         $description = self::description($body);
-        $category = self::category($body);
+        $category = CategoryIdMember::optional($body);
         $unknown = ObjectMembers::unknownErrors($body, [self::DATE, self::AMOUNT, self::DESCRIPTION, self::CATEGORY]);
-        $errors = [...self::errorsOf($date), ...self::errorsOf($amount), ...self::errorsOf($description), ...self::errorsOf($category), ...$unknown];
+        $errors = [...MemberErrors::of($date), ...MemberErrors::of($amount), ...MemberErrors::of($description), ...MemberErrors::of($category), ...$unknown];
         // The instanceof checks only narrow the types for static analysis; $errors is non-empty whenever one is true.
         if ($errors !== [] || $date instanceof FieldError || $amount instanceof FieldError || $description instanceof FieldError || $category instanceof FieldError) {
             throw new ValidationProblem($errors);
         }
 
         return new self($date, $amount, $description, $category);
-    }
-
-    /**
-     * @return list<FieldError>
-     */
-    private static function errorsOf(mixed $member): array
-    {
-        return $member instanceof FieldError ? [$member] : [];
     }
 
     /**
@@ -108,15 +102,5 @@ final readonly class NewExpenseInput
         $description = Description::parse($text);
 
         return $description instanceof TextViolation ? new FieldError('/' . self::DESCRIPTION, ExpenseFieldMessages::description($description)) : $description;
-    }
-
-    /**
-     * @param array<array-key, mixed> $body
-     */
-    private static function category(#[\SensitiveParameter] array $body): string|FieldError|null
-    {
-        $value = $body[self::CATEGORY] ?? null;
-
-        return $value === null || is_string($value) ? $value : new FieldError('/' . self::CATEGORY, 'Must be a category id or null.');
     }
 }

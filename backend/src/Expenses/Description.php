@@ -10,7 +10,7 @@ use App\Http\Input\TextViolation;
 /** An expense description (B5): required, 1 to {@see self::MAX_CHARS} characters after trimming, with the B4 rules. */
 final class Description
 {
-    public const MAX_CHARS = 200;
+    public const int MAX_CHARS = 200;
 
     private function __construct(private readonly string $value) {}
 

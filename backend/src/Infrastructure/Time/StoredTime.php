@@ -13,13 +13,15 @@ use DateTimeZone;
  */
 final class StoredTime
 {
-    public const string FORMAT = 'Y-m-d\TH:i:s\Z';
+    public const string FORMAT = self::WHOLE_SECONDS_FORMAT . '\Z';
+    private const string WHOLE_SECONDS_FORMAT = 'Y-m-d\TH:i:s';
+    private const string UTC = 'UTC';
 
     private function __construct() {}
 
     public static function format(DateTimeImmutable $time): string
     {
-        return $time->setTimezone(new DateTimeZone('UTC'))->format(self::FORMAT);
+        return $time->setTimezone(self::utc())->format(self::FORMAT);
     }
 
     /**
@@ -30,7 +32,7 @@ final class StoredTime
         if (!is_string($stored)) {
             return null;
         }
-        $time = DateTimeImmutable::createFromFormat('!' . self::FORMAT, $stored, new DateTimeZone('UTC'));
+        $time = DateTimeImmutable::createFromFormat('!' . self::FORMAT, $stored, self::utc());
 
         return $time !== false && $time->format(self::FORMAT) === $stored ? $time : null;
     }
@@ -38,6 +40,11 @@ final class StoredTime
     /** Stored times have whole seconds in UTC, so a new or changed entity equals what a read gives back. */
     public static function wholeSecondsUtc(DateTimeImmutable $time): DateTimeImmutable
     {
-        return new DateTimeImmutable($time->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s'), new DateTimeZone('UTC'));
+        return new DateTimeImmutable($time->setTimezone(self::utc())->format(self::WHOLE_SECONDS_FORMAT), self::utc());
+    }
+
+    private static function utc(): DateTimeZone
+    {
+        return new DateTimeZone(self::UTC);
     }
 }

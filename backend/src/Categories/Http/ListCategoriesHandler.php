@@ -5,7 +5,7 @@ declare(strict_types=1);
 namespace App\Categories\Http;
 
 use App\Auth\Session\Principal;
-use App\Categories\CategoryRepository;
+use App\Categories\CategoryLister;
 use App\Categories\CategoryResolver;
 use App\Http\Handler;
 use App\Http\Request;
@@ -22,7 +22,7 @@ use LogicException;
  */
 final readonly class ListCategoriesHandler implements Handler
 {
-    public function __construct(private CategoryRepository $categories) {}
+    public function __construct(private CategoryLister $categories) {}
 
     /**
      * @throws StorageFailure

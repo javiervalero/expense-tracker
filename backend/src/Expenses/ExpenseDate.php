@@ -11,9 +11,9 @@ namespace App\Expenses;
  */
 final class ExpenseDate
 {
-    public const MIN = '2000-01-01';
-    public const MAX = '2099-12-31';
-    private const FORMAT = '/\A(\d{4})-(\d{2})-(\d{2})\z/D';
+    public const string MIN = '2000-01-01';
+    public const string MAX = '2099-12-31';
+    private const string FORMAT = '/\A(\d{4})-(\d{2})-(\d{2})\z/D';
 
     private function __construct(private readonly string $value) {}
 

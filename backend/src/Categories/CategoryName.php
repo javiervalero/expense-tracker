@@ -17,7 +17,7 @@ use App\Http\Input\TextViolation;
  */
 final class CategoryName
 {
-    public const MAX_CHARS = 50;
+    public const int MAX_CHARS = 50;
 
     private function __construct(private readonly string $value) {}
 

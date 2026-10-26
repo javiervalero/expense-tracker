@@ -30,9 +30,18 @@ final class RouteId
             throw new LogicException('The route has no parameter "' . $name . '".');
         }
         if (!Uuid::isValid($value)) {
-            throw HttpProblem::of(404, self::NOT_FOUND_DETAIL);
+            throw self::notFound();
         }
 
         return $value;
+    }
+
+    /**
+     * The one `404` for a resource that is not there: unknown, someone else's, or a malformed id look the same, so
+     * a caller cannot tell them apart (anti-enumeration).
+     */
+    public static function notFound(): HttpProblem
+    {
+        return HttpProblem::of(404, self::NOT_FOUND_DETAIL);
     }
 }

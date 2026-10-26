@@ -42,7 +42,7 @@ final readonly class GetExpenseHandler implements Handler
         $principal = Principal::of($request);
         $id = RouteId::uuidOrNotFound($request);
 
-        $expense = $this->expenses->find($principal, $id) ?? throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+        $expense = $this->expenses->find($principal, $id) ?? throw RouteId::notFound();
 
         return ExpenseResponse::ok($expense, new CategoryResolver($this->categories, $principal));
     }

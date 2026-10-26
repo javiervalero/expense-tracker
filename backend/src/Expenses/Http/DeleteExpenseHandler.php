@@ -41,7 +41,7 @@ final readonly class DeleteExpenseHandler implements Handler
         try {
             $this->expenses->delete($principal, $id);
         } catch (ExpenseNotFound) {
-            throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+            throw RouteId::notFound();
         }
 
         return Response::empty(204);

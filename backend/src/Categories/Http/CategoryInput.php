@@ -5,8 +5,10 @@ declare(strict_types=1);
 namespace App\Categories\Http;
 
 use App\Categories\CategoryName;
+use App\Http\Input\MemberErrors;
 use App\Http\Input\ObjectMembers;
 use App\Http\Input\StringMember;
+use App\Http\Input\VersionMember;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
 
@@ -25,8 +27,6 @@ final class CategoryInput
     private const string NAME = 'name';
     private const string VERSION = 'version';
     private const string NAME_POINTER = '/name';
-    private const string VERSION_POINTER = '/version';
-    private const int MIN_VERSION = 1;
 
     private function __construct() {}
 
@@ -40,7 +40,7 @@ final class CategoryInput
         $name = self::name($body);
         $unknown = ObjectMembers::unknownErrors($body, [self::NAME]);
         if ($name instanceof FieldError || $unknown !== []) {
-            throw new ValidationProblem([...self::problemsOf($name), ...$unknown]);
+            throw new ValidationProblem([...MemberErrors::of($name), ...$unknown]);
         }
 
         return $name;
@@ -54,21 +54,13 @@ final class CategoryInput
     public static function rename(#[\SensitiveParameter] array $body): CategoryRenameInput
     {
         $name = self::name($body);
-        $version = self::version($body);
+        $version = VersionMember::required($body);
         $unknown = ObjectMembers::unknownErrors($body, [self::NAME, self::VERSION]);
         if ($name instanceof FieldError || $version instanceof FieldError || $unknown !== []) {
-            throw new ValidationProblem([...self::problemsOf($name), ...self::problemsOf($version), ...$unknown]);
+            throw new ValidationProblem([...MemberErrors::of($name), ...MemberErrors::of($version), ...$unknown]);
         }
 
         return new CategoryRenameInput($name, $version);
-    }
-
-    /**
-     * @return list<FieldError>
-     */
-    private static function problemsOf(CategoryName|int|FieldError $member): array
-    {
-        return $member instanceof FieldError ? [$member] : [];
     }
 
     /**
@@ -83,21 +75,5 @@ final class CategoryInput
         $name = CategoryName::parse($text);
 
         return $name instanceof CategoryName ? $name : new FieldError(self::NAME_POINTER, CategoryFieldMessages::name($name));
-    }
-
-    /**
-     * @param array<array-key, mixed> $body
-     */
-    private static function version(#[\SensitiveParameter] array $body): int|FieldError
-    {
-        if (!array_key_exists(self::VERSION, $body)) {
-            return new FieldError(self::VERSION_POINTER, 'This field is required.');
-        }
-        $value = $body[self::VERSION];
-        if (!is_int($value)) {
-            return new FieldError(self::VERSION_POINTER, 'Must be an integer.');
-        }
-
-        return $value < self::MIN_VERSION ? new FieldError(self::VERSION_POINTER, 'Must be at least ' . self::MIN_VERSION . '.') : $value;
     }
 }

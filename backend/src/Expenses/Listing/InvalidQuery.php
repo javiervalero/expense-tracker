@@ -7,7 +7,7 @@ namespace App\Expenses\Listing;
 use RuntimeException;
 
 /**
- * A list request the server refuses (B17, B18, B19): it maps to `400` (WP11's handler does the mapping; `422` is only
+ * A list request the server refuses (B17, B18, B19): it maps to `400` (`ListExpensesHandler` does the mapping; `422` is only
  * for body fields). The message is the problem's detail and is safe to show: it names the parameter and never carries
  * its value, the cursor or any item data.
  */

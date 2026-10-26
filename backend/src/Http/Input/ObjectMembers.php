@@ -15,8 +15,8 @@ use App\Http\Problem\FieldError;
 final class ObjectMembers
 {
     /** Unknown keys beyond this many are dropped from the errors, so a huge body cannot make a huge response. */
-    public const MAX_UNKNOWN_KEY_ERRORS = 5;
-    private const SAFE_KEY = '/\A[A-Za-z0-9_.-]{1,64}\z/D';
+    public const int MAX_UNKNOWN_KEY_ERRORS = 5;
+    private const string SAFE_KEY = '/\A[A-Za-z0-9_.-]{1,64}\z/D';
 
     /**
      * @param array<array-key, mixed> $body

@@ -29,8 +29,6 @@ final readonly class UserRepository
      */
     public const DUMMY_USER_ID = '00000000-0000-4000-8000-000000000000';
 
-    private const CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
-
     public function __construct(private ItemStore $items) {}
 
     /**
@@ -49,7 +47,7 @@ final readonly class UserRepository
                 TransactionOperation::put($lockKey + ['userId' => $user->userId], 'attribute_not_exists(PK)'),
             ]);
         } catch (TransactionCancelled $cancelled) {
-            if (!in_array(self::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
+            if (!in_array(TransactionCancelled::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
                 throw $cancelled;
             }
             $this->settleDuplicate($user, $lockKey, $cancelled);

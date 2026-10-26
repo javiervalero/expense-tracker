@@ -52,7 +52,7 @@ final readonly class RenameCategoryHandler implements Handler
         $id = RouteId::uuidOrNotFound($request);
         $input = CategoryInput::rename(JsonBody::decode($request->header('content-type'), $request->body));
 
-        $current = $this->categories->find($principal, $id) ?? throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+        $current = $this->categories->find($principal, $id) ?? throw RouteId::notFound();
         try {
             $renamed = $this->categories->rename($principal, $current, $input->name, $input->version, $this->clock->now());
         } catch (CategoryNameTaken) {
@@ -60,7 +60,7 @@ final readonly class RenameCategoryHandler implements Handler
         } catch (StaleVersion) {
             throw CategoryConflict::staleVersion();
         } catch (CategoryNotFound) {
-            throw HttpProblem::of(404, RouteId::NOT_FOUND_DETAIL);
+            throw RouteId::notFound();
         }
 
         return CategoryResponse::ok($renamed);
