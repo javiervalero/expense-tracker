@@ -17,6 +17,9 @@ final class StorageFailure extends RuntimeException
     /** The error code of a stored item that does not have the shape the code wrote: a bug or tampering, not a storage hiccup. */
     public const string CORRUPT_ITEM = 'CorruptItem';
 
+    /** The error code of a query that returned a user's `PROFILE` item: a key condition that is not restricted to the sort-key prefix. A security event, logged as such. */
+    public const string PROFILE_IN_QUERY = 'ProfileInQuery';
+
     public function __construct(
         public readonly string $operation,
         public readonly ?string $awsErrorCode,

@@ -12,6 +12,9 @@ use RuntimeException;
  */
 final class TransactionCancelled extends RuntimeException
 {
+    /** The cancellation code of an operation whose condition expression did not hold. */
+    public const string CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
+
     /**
      * @param list<string> $reasons
      */

@@ -18,7 +18,20 @@ use App\Auth\Throttle\LoginThrottle;
 use App\Auth\Throttle\RegisterThrottle;
 use App\Auth\Throttle\ThrottleCounter;
 use App\Auth\User\UserRepository;
+use App\Categories\CategoryRepository;
+use App\Categories\Http\CreateCategoryHandler;
+use App\Categories\Http\DeleteCategoryHandler;
+use App\Categories\Http\ListCategoriesHandler;
+use App\Categories\Http\RenameCategoryHandler;
+use App\Expenses\ExpenseRepository;
+use App\Expenses\Http\CreateExpenseHandler;
+use App\Expenses\Http\DeleteExpenseHandler;
+use App\Expenses\Http\GetExpenseHandler;
+use App\Expenses\Http\ListExpensesHandler;
+use App\Expenses\Http\UpdateExpenseHandler;
+use App\Expenses\Listing\ExpenseLister;
 use App\Health\HealthHandler;
+use App\Http\Handler;
 use App\Http\Routing\Route;
 
 /**
@@ -44,6 +57,15 @@ final class Routes
             new Route('POST', '/auth/login', static fn(): LoginHandler => self::login($services)),
             new Route('GET', '/auth/me', static fn(): RequireSession => self::me($services)),
             new Route('POST', '/auth/logout', static fn(): LogoutHandler => self::logout($services)),
+            new Route('GET', '/categories', static fn(): RequireSession => self::listCategories($services)),
+            new Route('POST', '/categories', static fn(): RequireSession => self::createCategory($services)),
+            new Route('PATCH', '/categories/{id}', static fn(): RequireSession => self::renameCategory($services)),
+            new Route('DELETE', '/categories/{id}', static fn(): RequireSession => self::deleteCategory($services)),
+            new Route('GET', '/expenses', static fn(): RequireSession => self::listExpenses($services)),
+            new Route('POST', '/expenses', static fn(): RequireSession => self::createExpense($services)),
+            new Route('GET', '/expenses/{id}', static fn(): RequireSession => self::getExpense($services)),
+            new Route('PATCH', '/expenses/{id}', static fn(): RequireSession => self::updateExpense($services)),
+            new Route('DELETE', '/expenses/{id}', static fn(): RequireSession => self::deleteExpense($services)),
         ];
     }
 
@@ -91,11 +113,67 @@ final class Routes
 
     private static function me(ApiServices $services): RequireSession
     {
-        $sessions = self::sessions($services);
+        return self::guarded(new MeHandler(new UserRepository($services->items), self::sessions($services), $services->logger), $services);
+    }
 
-        return new RequireSession(
-            new MeHandler(new UserRepository($services->items), $sessions, $services->logger),
-            new SessionAuthenticator($sessions, $services->clock, $services->logger),
-        );
+    private static function listCategories(ApiServices $services): RequireSession
+    {
+        return self::guarded(new ListCategoriesHandler(self::categories($services)), $services);
+    }
+
+    private static function createCategory(ApiServices $services): RequireSession
+    {
+        return self::guarded(new CreateCategoryHandler(self::categories($services), $services->ids, $services->clock), $services);
+    }
+
+    private static function renameCategory(ApiServices $services): RequireSession
+    {
+        return self::guarded(new RenameCategoryHandler(self::categories($services), $services->clock), $services);
+    }
+
+    private static function deleteCategory(ApiServices $services): RequireSession
+    {
+        return self::guarded(new DeleteCategoryHandler(self::categories($services)), $services);
+    }
+
+    private static function listExpenses(ApiServices $services): RequireSession
+    {
+        return self::guarded(new ListExpensesHandler(new ExpenseLister(self::expenses($services)), self::categories($services)), $services);
+    }
+
+    private static function createExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new CreateExpenseHandler(self::expenses($services), self::categories($services), $services->ids, $services->clock), $services);
+    }
+
+    private static function getExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new GetExpenseHandler(self::expenses($services), self::categories($services)), $services);
+    }
+
+    private static function updateExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new UpdateExpenseHandler(self::expenses($services), self::categories($services), $services->clock), $services);
+    }
+
+    private static function deleteExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new DeleteExpenseHandler(self::expenses($services)), $services);
+    }
+
+    private static function expenses(ApiServices $services): ExpenseRepository
+    {
+        return new ExpenseRepository($services->items);
+    }
+
+    private static function categories(ApiServices $services): CategoryRepository
+    {
+        return new CategoryRepository($services->items);
+    }
+
+    /** The session guard around a protected handler: always the outermost wrapper (ProtectedRoutesMatchContractTest). */
+    private static function guarded(Handler $handler, ApiServices $services): RequireSession
+    {
+        return new RequireSession($handler, new SessionAuthenticator(self::sessions($services), $services->clock, $services->logger));
     }
 }

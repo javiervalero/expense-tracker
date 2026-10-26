@@ -13,8 +13,7 @@ use App\Infrastructure\DynamoDb\TableLayout;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
 use App\Infrastructure\DynamoDb\TransactionOperation;
 use App\Infrastructure\Id\Uuid;
-use DateTimeImmutable;
-use DateTimeZone;
+use App\Infrastructure\Time\StoredTime;
 use InvalidArgumentException;
 
 /**
@@ -29,9 +28,6 @@ final readonly class UserRepository
      * random ones), so the read finds nothing; {@see self::readDummyUser()} discards whatever it finds anyway.
      */
     public const DUMMY_USER_ID = '00000000-0000-4000-8000-000000000000';
-
-    private const DATE_FORMAT = 'Y-m-d\TH:i:s\Z';
-    private const CONDITION_CHECK_FAILED = 'ConditionalCheckFailed';
 
     public function __construct(private ItemStore $items) {}
 
@@ -51,7 +47,7 @@ final readonly class UserRepository
                 TransactionOperation::put($lockKey + ['userId' => $user->userId], 'attribute_not_exists(PK)'),
             ]);
         } catch (TransactionCancelled $cancelled) {
-            if (!in_array(self::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
+            if (!in_array(TransactionCancelled::CONDITION_CHECK_FAILED, $cancelled->reasons, true)) {
                 throw $cancelled;
             }
             $this->settleDuplicate($user, $lockKey, $cancelled);
@@ -177,7 +173,7 @@ final readonly class UserRepository
             'userId' => $user->userId,
             'email' => $user->email->value(),
             'passwordHash' => $user->passwordHash(),
-            'createdAt' => $user->createdAt->setTimezone(new DateTimeZone('UTC'))->format(self::DATE_FORMAT),
+            'createdAt' => StoredTime::format($user->createdAt),
         ];
     }
 
@@ -196,8 +192,8 @@ final readonly class UserRepository
             throw self::corrupt('GetItem');
         }
         $email = Email::parse($address);
-        $createdAt = DateTimeImmutable::createFromFormat('!' . self::DATE_FORMAT, $created, new DateTimeZone('UTC'));
-        if (!$email instanceof Email || $email->value() !== $address || $createdAt === false || $createdAt->format(self::DATE_FORMAT) !== $created) {
+        $createdAt = StoredTime::parse($created);
+        if (!$email instanceof Email || $email->value() !== $address || $createdAt === null) {
             throw self::corrupt('GetItem');
         }
 

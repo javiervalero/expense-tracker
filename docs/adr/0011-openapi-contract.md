@@ -58,3 +58,22 @@ sides drifting apart. The back-end must stay vanilla PHP: dev-only tools are acc
 - In place: every integration request goes through `ApiTestCase::request()`; route parity is a test; another test
   requires every operation to document its `403` and `500` problem responses. These run with `make test-contract` and
   `make test-integration`, inside the existing CI `integration` job.
+
+## Implemented in Phase 3 (2026-10-26, PR #6)
+
+The contract grew from the Phase 2 auth operations to 0.11.0, with the category and expense operations added in the
+same commit as their routes (a contract-only commit fails `RoutesMatchContractTest`). These are additive changes.
+
+- **`400` on every operation except health:** a malformed query string was already answered with `400` on any route,
+  undocumented until now; `GET /expenses` also answers `400` for an invalid or unknown query parameter, with a detail
+  that names the parameter, never its value. `422` stays for body fields.
+- **New contract checks** (`EveryOperationDocumentsErrorsTest`): `404` on every operation with a path parameter,
+  `401` on every secured operation, `409` on every `PATCH`, `400` on every operation except health, and `503` on
+  every operation except health.
+- **Cross-user coverage** (`CrossUserCoverageTest`): the secured operations of the bundled spec, with their method
+  and path template, must equal the set the isolation suite exercises, so a new secured operation fails CI until it is
+  covered.
+- **Schemas describe the server's outer bounds**, not its exact rules, where the server trims or counts in characters:
+  `maxLength` on names, descriptions and `q` is the server's byte pre-check (characters × 4 + 1024), and the
+  description states the real rule. The `category` filter is `anyOf` a lower-case v4 UUID pattern or exactly `none`
+  (a format-only `oneOf` would be ambiguous, since `none` satisfies `format: uuid`).

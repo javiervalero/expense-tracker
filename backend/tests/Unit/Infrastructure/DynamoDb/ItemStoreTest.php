@@ -592,6 +592,30 @@ final class ItemStoreTest extends TestCase
         $this->store()->query('#p = :p', ['#p' => 'PK'], [':p' => 'a']);
     }
 
+    public function testQueryThatReturnsAProfileItemFailsGenericallyAndReturnsNothing(): void
+    {
+        $this->rawBody = '{"Items":[{"PK":{"S":"USER#u"},"SK":{"S":"CAT#1"}},{"PK":{"S":"USER#u"},"SK":{"S":"PROFILE"},"email":{"S":"' . self::PRIVATE_NOTE . '"}}]}';
+
+        try {
+            $this->store()->query('#p = :p', ['#p' => 'PK'], [':p' => 'USER#u']);
+            self::fail('Expected StorageFailure');
+        } catch (StorageFailure $e) {
+            self::assertSame('Query', $e->operation);
+            self::assertSame(StorageFailure::PROFILE_IN_QUERY, $e->awsErrorCode);
+            self::assertNotSame(StorageFailure::CORRUPT_ITEM, $e->awsErrorCode);
+            self::assertNull($e->getPrevious());
+            self::assertStringNotContainsString(self::PRIVATE_NOTE, $e->getMessage());
+            self::assertStringNotContainsString('PROFILE', $e->getMessage());
+        }
+    }
+
+    public function testQueryWithoutAProfileItemStillReturnsItsItems(): void
+    {
+        $this->rawBody = '{"Items":[{"PK":{"S":"USER#u"},"SK":{"S":"CAT#1"}}]}';
+
+        self::assertSame([['PK' => 'USER#u', 'SK' => 'CAT#1']], $this->store()->query('#p = :p', ['#p' => 'PK'], [':p' => 'USER#u'])->items);
+    }
+
     /**
      * @return array<string, array{string}>
      */

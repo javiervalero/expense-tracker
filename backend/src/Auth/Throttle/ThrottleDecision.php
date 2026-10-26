@@ -5,7 +5,8 @@ declare(strict_types=1);
 namespace App\Auth\Throttle;
 
 /**
- * Allowed, or blocked with the whole seconds until the end of the window (never less than 1). It never says which
+ * Allowed, or blocked with the whole seconds until the end of the window (never less than 1, never more than the
+ * window: the counter caps it). It never says which
  * bucket decided: the response is one generic body (A13).
  */
 final readonly class ThrottleDecision

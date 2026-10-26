@@ -147,3 +147,44 @@ The first keys and repositories (decisions A15, A17, A19 in [the Phase 2 plan](.
   attempt): a lock or session that holds our own new values is a success, anything else a real conflict.
 - **Overload** (DynamoDB throttling, transaction conflicts, a transaction still in progress) becomes `503` with
   `Retry-After: 1`; every other storage failure stays a generic `500`.
+
+## Implemented in Phase 3 (2026-10-26, PR #6)
+
+Categories and expenses (decisions B1–B24 in [the Phase 3 plan](../plans/phase-3-categories-expenses.md)). These are
+clarifications of this ADR, not changes to it. Keys are built in `App\Categories\CategoryKeys` and
+`App\Expenses\ExpenseKeys`; every one takes its partition from the session principal, never from the request.
+
+| Item | `PK` | `SK` | Attributes |
+|---|---|---|---|
+| Category | `USER#<uuid>` | `CAT#<uuid>` | `categoryId`, `name`, `nameKey`, `version`, `createdAt`, `updatedAt` |
+| Category name lock | `USER#<uuid>` | `CATNAME#<sha256 hex of the folded name>` | `categoryId` |
+| Expense | `USER#<uuid>` | `EXP#<uuid>` | `LSI1SK = EXP#<date>#<uuid>`, `expenseId`, `date`, `amountCents` (Number), `description`, `categoryId` (absent when Uncategorized), `version`, `createdAt`, `updatedAt` |
+| Receipt record (reserved) | `USER#<uuid>` | `RCPT#<uuid>` | Phase 5 |
+
+- **Unique category names (B6):** a lock item per user, keyed by the SHA-256 of the case-folded name, is written in
+  the same transaction as the category (`attribute_not_exists(PK)` on both). A rename to another folded name moves
+  the lock in one transaction; a case-only rename keeps it. The lock is always addressed by the `nameKey` stored on
+  the category, never recomputed. Names are not Unicode-normalised (precomposed `é` and `e` + U+0301 are different
+  names), and Arabic prepended marks (U+0600–U+0605, U+06DD) and the Mongolian vowel separator are refused as format
+  characters.
+- **Deleting a category (B14)** removes the `CAT#` item and its lock together. Expenses are not rewritten, as this
+  ADR decided: an expense whose `categoryId` no longer resolves reads as Uncategorized (`categoryId: null`), and so
+  does an expense stored without the attribute.
+- **Updates (B12)** are read-modify-write with `version`: `UpdateItem … SET version = :next` conditional on
+  `attribute_exists(PK) AND version = :expected`. The client sends the `version` it last read; a mismatch is `409`.
+  A `ConditionFailed` is re-read before it is reported (as in Phase 2): our own retried write is a success. An
+  expense's date change sets `date` and `LSI1SK` together, so the item moves in the `LSI1` order with the same id.
+  Deletes are unconditional.
+- **Listing (B18):** `LSI1` descending, strongly consistent, `LSI1SK BETWEEN EXP#<from> AND EXP#<to>~`, batches of at
+  most 100, a budget of 1,000 examined items per request, page size 1–100 (default 50). The cursor is base64url JSON
+  `{"v":1,"sk":…,"lsi":…,"f":<sha256 of the canonical filters>}` of the last examined item, validated before any
+  read; it carries no partition. A well-formed but forged position is accepted and only moves inside the caller's own
+  partition and date range, so no MAC is used.
+- **Order within a day (B21):** by expense id, stable but arbitrary, because ids are random v4.
+- **Category cap (B8):** at most 100 categories per user. The create handler counts before creating and, after a
+  successful create, counts again with a strongly consistent read; above the cap it deletes the category it just
+  made and answers `409`. The count can exceed 100 only while racing creates are in flight. Remaining gap: an
+  ambiguous create failure (a timeout after the commit) skips the recount, so a user can stay above the cap, after
+  which every create is refused.
+- **Isolation** is pinned end to end by `CrossUserIsolationApiTest`, and `CrossUserCoverageTest` fails CI when a
+  secured operation is not covered by it.

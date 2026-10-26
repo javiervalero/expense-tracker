@@ -166,6 +166,48 @@ final class ThrottleCounterTest extends TestCase
         self::assertSame(1, $decision->retryAfterSeconds);
     }
 
+    /**
+     * @return iterable<string, array{int}>
+     */
+    public static function windowEndsPastTheWindow(): iterable
+    {
+        yield 'a clock read one second later' => [1];
+        yield 'the clock skew validated() still accepts' => [300];
+    }
+
+    #[DataProvider('windowEndsPastTheWindow')]
+    public function testRetryAfterNeverExceedsTheWindowWhenTheWindowWasOpenedByARequestWithALaterClockRead(int $later): void
+    {
+        $this->mock->append(self::stored(31, self::NOW + self::WINDOW + $later));
+
+        $hit = $this->counter()->hit(self::rule(), self::IP);
+
+        self::assertFalse($hit->decision->isAllowed);
+        self::assertSame(self::WINDOW, $hit->decision->retryAfterSeconds);
+        // Only the advertised wait is capped: refunds match the stored window end exactly.
+        self::assertSame(self::NOW + self::WINDOW + $later, $hit->windowExpiresAt);
+    }
+
+    public function testRetryAfterIsTheFullWindowWhenTheWindowWasJustOpened(): void
+    {
+        $this->mock->append(self::stored(31, self::NOW + self::WINDOW));
+
+        $decision = $this->counter()->hit(self::rule(), self::IP)->decision;
+
+        self::assertFalse($decision->isAllowed);
+        self::assertSame(self::WINDOW, $decision->retryAfterSeconds);
+    }
+
+    public function testRetryAfterInsideTheWindowIsTheTimeLeft(): void
+    {
+        $this->mock->append(self::stored(31, self::NOW + self::WINDOW - 400));
+
+        $decision = $this->counter()->hit(self::rule(), self::IP)->decision;
+
+        self::assertFalse($decision->isAllowed);
+        self::assertSame(self::WINDOW - 400, $decision->retryAfterSeconds);
+    }
+
     public function testAnExpiredWindowIsResetWithAConditionalPut(): void
     {
         $this->mock->append(self::conditionFailed());

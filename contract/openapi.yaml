@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.7.0
+  version: 0.11.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration, sign-in, the current user and sign-out. The other endpoints arrive in later phases.
+    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -28,6 +28,10 @@ tags:
     description: Liveness of the API.
   - name: auth
     description: Registering, signing in and out, and the current session.
+  - name: categories
+    description: The signed-in user's expense categories. Another user's category is never visible, and answers like a missing one.
+  - name: expenses
+    description: The signed-in user's expenses. Another user's expense is never visible, and answers like a missing one.
 
 paths:
   /health:
@@ -257,6 +261,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/User'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
         '401':
           $ref: '#/components/responses/SessionRequired'
         '403':
@@ -293,8 +299,468 @@ paths:
               $ref: '#/components/headers/CacheControlNoStore'
             X-Content-Type-Options:
               $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /categories:
+    get:
+      operationId: listCategories
+      tags: [categories]
+      summary: List the categories
+      description: |
+        Returns every category of the signed-in user, sorted by name without regard to case (then by id). There is no
+        pagination: a user has at most 100 categories. A new user has none, and the list is empty.
+      security:
+        - sessionCookie: []
+      responses:
+        '200':
+          description: The categories of the signed-in user.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CategoryList'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createCategory
+      tags: [categories]
+      summary: Create a category
+      description: |
+        Creates a category with the given name. A name is unique for the user without regard to case (`Food` and `food`
+        are the same name) and to invisible characters; a name that is already in use gets `409`. A user has at most 100
+        categories: a request that would exceed that gets `409` as well, and the `detail` says which of the two it is.
+        The `201` carries the address of the new category in `Location`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewCategory'
+      responses:
+        '201':
+          description: The category was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/EditConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /categories/{id}:
+    patch:
+      operationId: renameCategory
+      tags: [categories]
+      summary: Rename a category
+      description: |
+        Changes the name of a category. The body carries the `version` the client last read; if the category changed
+        since, the answer is `409` (reload and try again). A name that another category already uses also gets `409`.
+        An id that is not a category of the signed-in user (malformed, unknown, deleted or someone else's) gets one and
+        the same `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CategoryRename'
+      responses:
+        '200':
+          description: The category was renamed. `version` is one more than before.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Category'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/EditConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteCategory
+      tags: [categories]
+      summary: Delete a category
+      description: |
+        Deletes a category. It is unconditional (no version is needed). The expenses that used it are not changed: they
+        show as uncategorized. A second delete of the same id gets `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204':
+          description: The category is deleted.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /expenses:
+    get:
+      operationId: listExpenses
+      tags: [expenses]
+      summary: List the expenses
+      description: |
+        Lists the expenses of the signed-in user, newest date first (within one date the order is stable but arbitrary).
+        Every parameter is optional; a parameter this operation does not know gets `400`, so a typo does not silently
+        list everything. `from` and `to` are inclusive days; `category` is the id of one of the user's categories or
+        `none` (uncategorized, including expenses whose category was deleted); a category id that is not the user's
+        matches nothing. `q` is a case-insensitive text the description must contain; an empty `q` is no `q`.
+
+        Pass the `nextCursor` of a page as `cursor` to get the next one, with the same `from`, `to`, `category` and `q`
+        (a cursor used with other filters gets `400`; `limit` may change). A page can be short or even empty while
+        `nextCursor` is not null, because the server stops after examining a bounded number of expenses: a short or
+        empty page with a non-null `nextCursor` means keep going; `null` means the range is exhausted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: from
+          in: query
+          required: false
+          description: First day to include, `YYYY-MM-DD`. Default 2000-01-01.
+          schema:
+            type: string
+            format: date
+            default: '2000-01-01'
+        - name: to
+          in: query
+          required: false
+          description: Last day to include, `YYYY-MM-DD`. Default 2099-12-31. Must not be before `from`.
+          schema:
+            type: string
+            format: date
+            default: '2099-12-31'
+        - name: category
+          in: query
+          required: false
+          description: The id of one of the user's categories (a lower-case version-4 UUID), or exactly `none` for uncategorized expenses.
+          schema:
+            # anyOf, not oneOf: `none` also satisfies a format-only uuid branch (formats are annotations), so oneOf would
+            # be ambiguous; the pattern makes the uuid branch strict.
+            anyOf:
+              - type: string
+                format: uuid
+                pattern: '^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+              - type: string
+                const: none
+        - name: q
+          in: query
+          required: false
+          description: |
+            Text the description must contain, compared without regard to case; at most 100 characters after trimming;
+            empty means absent. `maxLength` is an outer bound looser than the server's 1424-byte pre-check (100 x 4 + 1024,
+            read before trimming); it is not the 100-character rule.
+          schema:
+            type: string
+            maxLength: 1424
+        - name: limit
+          in: query
+          required: false
+          description: The most expenses in one page, 1 to 100.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 50
+        - name: cursor
+          in: query
+          required: false
+          description: The `nextCursor` of the previous page. Opaque; valid only with the filters it was issued for.
+          schema:
+            type: string
+            maxLength: 512
+      responses:
+        '200':
+          description: One page of expenses.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExpensePage'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    post:
+      operationId: createExpense
+      tags: [expenses]
+      summary: Create an expense
+      description: |
+        Creates an expense for the signed-in user. `categoryId` is optional: absent or `null` means uncategorized; any
+        other value must be the id of one of the user's own categories, otherwise the answer is `422` at `/categoryId`
+        (an unknown, deleted or someone else's category cannot be told apart). The `201` carries the address of the new
+        expense in `Location`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/NewExpense'
+      responses:
+        '201':
+          description: The expense was created.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /expenses/{id}:
+    get:
+      operationId: getExpense
+      tags: [expenses]
+      summary: Read one expense
+      description: |
+        Returns one expense of the signed-in user. An id that is not an expense of the signed-in user (malformed,
+        unknown, deleted or someone else's) gets one and the same `404`. `categoryId` is `null` when the expense is
+        uncategorized or its category has been deleted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: The expense.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+    patch:
+      operationId: updateExpense
+      tags: [expenses]
+      summary: Change an expense
+      description: |
+        Changes some fields of an expense. A member that is present is changed; an absent one stays as it is.
+        `categoryId: null` makes the expense uncategorized; `date`, `amountCents` and `description` cannot be `null`.
+        The body carries the `version` the client last read; if the expense changed since, the answer is `409` (reload
+        and try again). At least one of the four editable members is required. A `categoryId` that is not one of the
+        user's own categories gets `422` at `/categoryId`. An id that is not an expense of the signed-in user
+        (malformed, unknown, deleted or someone else's) gets one and the same `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpensePatch'
+      responses:
+        '200':
+          description: The expense was changed. `version` is one more than before.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/EditConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteExpense
+      tags: [expenses]
+      summary: Delete an expense
+      description: |
+        Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204':
+          description: The expense is deleted.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
         '405':
           $ref: '#/components/responses/MethodNotAllowed'
         '500':
@@ -324,8 +790,22 @@ components:
       schema:
         type: string
         const: XMLHttpRequest
+    ResourceId:
+      name: id
+      in: path
+      required: true
+      description: The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id.
+      schema:
+        type: string
+        format: uuid
 
   headers:
+    Location:
+      description: The address of the created resource, for example `/api/v1/categories/<id>`.
+      required: true
+      schema:
+        type: string
+        example: /api/v1/categories/9d1c7a52-0b3e-4f68-8a21-7e5d4c3b2a10
     CacheControlNoStore:
       description: Always `no-store`; nothing in the API may be cached.
       required: true
@@ -404,7 +884,7 @@ components:
           schema:
             $ref: '#/components/schemas/ProblemDetails'
     MethodNotAllowed:
-      description: Returned for every method other than GET and HEAD on a listed path, OPTIONS included.
+      description: Returned for every method the path does not support (see `Allow`), OPTIONS included.
       headers:
         Allow:
           $ref: '#/components/headers/Allow'
@@ -432,7 +912,33 @@ components:
     BadRequest:
       description: |
         Returned when the request body is not valid JSON (or not valid UTF-8, or nested too deeply, or holds a number out of range),
-        or is not a JSON object. The problem never repeats the input.
+        or is not a JSON object, or when the query string cannot be parsed. The problem never repeats the input.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    InvalidQuery:
+      description: |
+        Returned when the query string cannot be parsed or, on an operation that takes query parameters, when one of them
+        is invalid or unknown. The `detail` names the parameter and never repeats its value.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    ResourceNotFound:
+      description: |
+        Returned when the id is malformed, unknown, deleted, or belongs to another user. One body for every cause
+        ("The resource does not exist."), so it never says which. It is never `403`.
       headers:
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
@@ -466,8 +972,9 @@ components:
             $ref: '#/components/schemas/ProblemDetails'
     ValidationFailed:
       description: |
-        Returned when the body is JSON but a field is wrong. `errors` lists each one by JSON Pointer (`/email`, `/password`, or
-        `/<name>` for an unexpected field) with a message. The messages never repeat the value.
+        Returned when the body is JSON but a field is wrong. `errors` lists each one with a message, located by JSON Pointer
+        to the offending member (for example `/name`), or the empty pointer for an error about the whole body or an
+        unexpected member whose name is not safe to echo. The messages never repeat the value.
       headers:
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
@@ -481,6 +988,20 @@ components:
       description: |
         Returned when the address already has an account. If an earlier attempt of yours ended with a temporary error
         (`503`), it may have gone through: try signing in.
+      headers:
+        Cache-Control:
+          $ref: '#/components/headers/CacheControlNoStore'
+        X-Content-Type-Options:
+          $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/ProblemDetails'
+    EditConflict:
+      description: |
+        Returned when the change conflicts with the current state. The `detail` says which: the name is already in use,
+        the category or expense changed since the client read it (stale `version`: reload and try again), or the user already has
+        the maximum number of categories (100). It never repeats a name, an id or a version.
       headers:
         Cache-Control:
           $ref: '#/components/headers/CacheControlNoStore'
@@ -593,6 +1114,206 @@ components:
           description: |
             At most 128 characters. Registration also wants at least 12, no control characters and valid UTF-8; sign-in
             only enforces the maximum.
+    Category:
+      type: object
+      description: One category of the signed-in user.
+      additionalProperties: false
+      required: [id, name, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque identifier.
+        name:
+          type: string
+          minLength: 1
+          maxLength: 50
+          description: The name as entered (trimmed), 1 to 50 characters.
+        version:
+          type: integer
+          minimum: 1
+          description: 1 when created, one more after every change. A rename must send the version it last read.
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+    CategoryList:
+      type: object
+      description: The categories of the signed-in user (at most 100), sorted by name without regard to case.
+      additionalProperties: false
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Category'
+    NewCategory:
+      type: object
+      description: The body of a create. Exactly one member; anything else is a validation error.
+      additionalProperties: false
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1224
+          description: |
+            1 to 50 characters after trimming, counted by the server as characters (not bytes), with no control
+            characters, text-direction controls or invisible-only text. Unique per user without regard to case. The
+            schema's `maxLength` is only the outer bound the server reads before trimming (the server refuses more than
+            50 x 4 + 1024 bytes, so no accepted value has more characters than that); it is not the 50-character rule,
+            because surrounding whitespace is trimmed first and a padded name of 50 characters is accepted.
+    CategoryRename:
+      type: object
+      description: The body of a rename. Exactly these two members; anything else is a validation error.
+      additionalProperties: false
+      required: [name, version]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 1224
+          description: The new name, under the same rules as `NewCategory.name` (50 characters after trimming; see there for `maxLength`).
+        version:
+          type: integer
+          minimum: 1
+          description: The `version` of the category as the client last read it. A different stored version gives `409`.
+    Expense:
+      type: object
+      description: One expense of the signed-in user.
+      additionalProperties: false
+      required: [id, date, amountCents, description, categoryId, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Opaque identifier.
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: The calendar day of the expense, `YYYY-MM-DD`, from 2000-01-01 to 2099-12-31. It has no time and no zone.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: The amount in cents (a whole number).
+        description:
+          type: string
+          minLength: 1
+          maxLength: 200
+          description: The description as entered (trimmed), 1 to 200 characters.
+        categoryId:
+          description: The id of the expense's category (a lower-case UUID), or `null` when it is uncategorized or its category has been deleted.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+        version:
+          type: integer
+          minimum: 1
+          description: 1 when created, one more after every change.
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+        updatedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+    ExpensePage:
+      type: object
+      description: |
+        One page of expenses, newest first. `nextCursor` is `null` only when the range is exhausted; a short or empty
+        page with a non-null `nextCursor` means keep going.
+      additionalProperties: false
+      required: [items, nextCursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/Expense'
+        nextCursor:
+          description: Pass it as `cursor` to get the next page, or `null` when there is none.
+          oneOf:
+            - type: string
+              maxLength: 512
+            - type: 'null'
+    NewExpense:
+      type: object
+      description: The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error.
+      additionalProperties: false
+      required: [date, amountCents, description]
+      properties:
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Future days are allowed.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: A JSON integer. `12.0`, `1e2`, strings and booleans are refused, and so is an integer beyond 64 bits.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1824
+          description: |
+            1 to 200 characters after trimming, counted as characters (not bytes), with no control characters,
+            text-direction controls or invisible-only text. The schema's `maxLength` is only the outer bound the server
+            reads before trimming (it refuses more than 200 x 4 + 1024 bytes, see `NewCategory.name`); it is not the
+            200-character rule.
+        categoryId:
+          description: Absent or `null` for uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+    ExpensePatch:
+      type: object
+      description: |
+        The body of a change. `version` is required, and so is at least one of `date`, `amountCents`, `description` and
+        `categoryId`; a body with only `version` gets a `422` for the whole body (empty pointer). Anything else is a
+        validation error too. A member that is present is changed, an absent one is not. `date`, `amountCents` and
+        `description` cannot be `null`; `categoryId: null` makes the expense uncategorized.
+      additionalProperties: false
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: The `version` of the expense as the client last read it. A different stored version gives `409`.
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Cannot be `null`.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: A JSON integer. `12.0`, `1e2`, strings, booleans and `null` are refused, and so is an integer beyond 64 bits.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1824
+          description: |
+            1 to 200 characters after trimming, under the same rules as `NewExpense.description` (see there for
+            `maxLength`). Cannot be `null`.
+        categoryId:
+          description: '`null` makes the expense uncategorized; otherwise the id (a lower-case UUID) of one of the user''s own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`.'
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
     ValidationProblemDetails:
       description: A problem with the list of invalid fields in `errors`.
       allOf:
@@ -610,7 +1331,7 @@ components:
                 properties:
                   pointer:
                     type: string
-                    description: JSON Pointer (RFC 6901) to the invalid member of the request body.
+                    description: JSON Pointer (RFC 6901) to the invalid member of the request body. The empty string means the whole body (for example, a patch with nothing to change).
                     example: /password
                   detail:
                     type: string

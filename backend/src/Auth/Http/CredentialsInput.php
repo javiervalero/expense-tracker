@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Auth\Http;
 
+use App\Http\Input\ObjectMembers;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
 use JsonSerializable;
@@ -16,9 +17,8 @@ use WeakMap;
  * {@see \App\Auth\Password\PasswordPolicy}, which also refuse control characters.
  *
  * A missing member, a value that is not a string (null, number, boolean, list or object) and any other key are
- * reported together as a {@see ValidationProblem}. A pointer names the member but a message never repeats a value or a key. A
- * key is echoed in its pointer only when it is short and plain (letters, digits, `_`, `.` and `-`); any other (long, or with control characters) is
- * reported for the whole body, so a pointer is always safe to log and to show. The input comes from
+ * reported together as a {@see ValidationProblem}. A pointer names the member but a message never repeats a value or a
+ * key; the unknown-member rules (at most 5 reported, safe pointers) are those of {@see ObjectMembers}. The input comes from
  * {@see \App\Http\JsonBody::decode()}, which does not tell a JSON array from an object with sequential integer keys;
  * that is harmless here, because only two string members are accepted.
  *
@@ -30,9 +30,6 @@ final class CredentialsInput implements JsonSerializable
 {
     private const EMAIL = 'email';
     private const PASSWORD = 'password';
-    /** Unknown keys beyond this many are dropped from the errors, so a huge body cannot make a huge response. */
-    private const MAX_UNKNOWN_KEY_ERRORS = 5;
-    private const SAFE_KEY = '/\A[A-Za-z0-9_.-]{1,64}\z/D';
 
     /** @var WeakMap<self, string>|null */
     private static ?WeakMap $passwords = null;
@@ -60,12 +57,7 @@ final class CredentialsInput implements JsonSerializable
                 $errors[] = new FieldError('/' . $member, 'Must be a string.');
             }
         }
-        $unknown = 0;
-        foreach (array_keys($body) as $key) {
-            if ($key !== self::EMAIL && $key !== self::PASSWORD && $unknown++ < self::MAX_UNKNOWN_KEY_ERRORS) {
-                $errors[] = new FieldError(self::pointerTo((string) $key), 'This field is not allowed.');
-            }
-        }
+        $errors = [...$errors, ...ObjectMembers::unknownErrors($body, [self::EMAIL, self::PASSWORD])];
         if ($errors !== []) {
             throw new ValidationProblem($errors);
         }
@@ -79,16 +71,6 @@ final class CredentialsInput implements JsonSerializable
     public function password(): string
     {
         return self::passwords()[$this] ?? throw new LogicException('Credentials have no password.');
-    }
-
-    private static function pointerTo(string $key): string
-    {
-        if (preg_match(self::SAFE_KEY, $key) !== 1) {
-            return '';
-        }
-
-        // The safe set holds neither "/" nor "~", so no JSON Pointer escaping is needed.
-        return '/' . $key;
     }
 
     /**

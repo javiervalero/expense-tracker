@@ -43,9 +43,11 @@ final readonly class ThrottleCounter implements ThrottleStore
         $item = $this->increment($keys, $now, $expiresAt) ?? $this->resetOrRetry($keys, $now, $expiresAt);
         $stored = self::validated($item, $keys, 'UpdateItem', $expiresAt);
 
+        // Capped at the window: the request that opened it may have read its clock later than this one (whole-second
+        // reads, skew), so `expiresAt - now` can exceed the window. Enforcement and refunds use the stored value.
         return new ThrottleHit(
             $stored['attempts'] > $rule->limit
-                ? ThrottleDecision::blocked($stored['expiresAt'] - $now)
+                ? ThrottleDecision::blocked(min($rule->windowSeconds, $stored['expiresAt'] - $now))
                 : ThrottleDecision::allowed(),
             $stored['expiresAt'],
         );
