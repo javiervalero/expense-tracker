@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Http;
 
 use App\Categories\Http\CategoryInput;
+use App\Expenses\Http\ExpensePatchInput;
 use App\Expenses\Http\NewExpenseInput;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -26,6 +27,7 @@ final class BodyParametersAreSensitiveTest extends TestCase
     {
         yield 'category input' => [CategoryInput::class];
         yield 'new expense input' => [NewExpenseInput::class];
+        yield 'expense patch input' => [ExpensePatchInput::class];
     }
 
     /**

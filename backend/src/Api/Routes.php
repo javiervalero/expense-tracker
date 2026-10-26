@@ -25,7 +25,9 @@ use App\Categories\Http\ListCategoriesHandler;
 use App\Categories\Http\RenameCategoryHandler;
 use App\Expenses\ExpenseRepository;
 use App\Expenses\Http\CreateExpenseHandler;
+use App\Expenses\Http\DeleteExpenseHandler;
 use App\Expenses\Http\GetExpenseHandler;
+use App\Expenses\Http\UpdateExpenseHandler;
 use App\Health\HealthHandler;
 use App\Http\Handler;
 use App\Http\Routing\Route;
@@ -59,6 +61,8 @@ final class Routes
             new Route('DELETE', '/categories/{id}', static fn(): RequireSession => self::deleteCategory($services)),
             new Route('POST', '/expenses', static fn(): RequireSession => self::createExpense($services)),
             new Route('GET', '/expenses/{id}', static fn(): RequireSession => self::getExpense($services)),
+            new Route('PATCH', '/expenses/{id}', static fn(): RequireSession => self::updateExpense($services)),
+            new Route('DELETE', '/expenses/{id}', static fn(): RequireSession => self::deleteExpense($services)),
         ];
     }
 
@@ -137,6 +141,16 @@ final class Routes
     private static function getExpense(ApiServices $services): RequireSession
     {
         return self::guarded(new GetExpenseHandler(self::expenses($services), self::categories($services)), $services);
+    }
+
+    private static function updateExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new UpdateExpenseHandler(self::expenses($services), self::categories($services), $services->clock), $services);
+    }
+
+    private static function deleteExpense(ApiServices $services): RequireSession
+    {
+        return self::guarded(new DeleteExpenseHandler(self::expenses($services)), $services);
     }
 
     private static function expenses(ApiServices $services): ExpenseRepository

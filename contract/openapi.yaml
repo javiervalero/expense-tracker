@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.9.0
+  version: 0.10.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -581,6 +581,96 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+    patch:
+      operationId: updateExpense
+      tags: [expenses]
+      summary: Change an expense
+      description: |
+        Changes some fields of an expense. A member that is present is changed; an absent one stays as it is.
+        `categoryId: null` makes the expense uncategorized; `date`, `amountCents` and `description` cannot be `null`.
+        The body carries the `version` the client last read; if the expense changed since, the answer is `409` (reload
+        and try again). At least one of the four editable members is required. A `categoryId` that is not one of the
+        user's own categories gets `422` at `/categoryId`. An id that is not an expense of the signed-in user
+        (malformed, unknown, deleted or someone else's) gets one and the same `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExpensePatch'
+      responses:
+        '200':
+          description: The expense was changed. `version` is one more than before.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Expense'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/EditConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteExpense
+      tags: [expenses]
+      summary: Delete an expense
+      description: |
+        Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204':
+          description: The expense is deleted.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -812,7 +902,7 @@ components:
     EditConflict:
       description: |
         Returned when the change conflicts with the current state. The `detail` says which: the name is already in use,
-        the category changed since the client read it (stale `version`: reload and try again), or the user already has
+        the category or expense changed since the client read it (stale `version`: reload and try again), or the user already has
         the maximum number of categories (100). It never repeats a name, an id or a version.
       headers:
         Cache-Control:
@@ -1069,6 +1159,44 @@ components:
             - type: string
               format: uuid
             - type: 'null'
+    ExpensePatch:
+      type: object
+      description: |
+        The body of a change. `version` is required, and so is at least one of `date`, `amountCents`, `description` and
+        `categoryId`; a body with only `version` gets a `422` for the whole body (empty pointer). Anything else is a
+        validation error too. A member that is present is changed, an absent one is not. `date`, `amountCents` and
+        `description` cannot be `null`; `categoryId: null` makes the expense uncategorized.
+      additionalProperties: false
+      required: [version]
+      minProperties: 2
+      properties:
+        version:
+          type: integer
+          minimum: 1
+          description: The `version` of the expense as the client last read it. A different stored version gives `409`.
+        date:
+          type: string
+          format: date
+          pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+          description: A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Cannot be `null`.
+        amountCents:
+          type: integer
+          minimum: 1
+          maximum: 100000000
+          description: A JSON integer. `12.0`, `1e2`, strings, booleans and `null` are refused, and so is an integer beyond 64 bits.
+        description:
+          type: string
+          minLength: 1
+          maxLength: 1824
+          description: |
+            1 to 200 characters after trimming, under the same rules as `NewExpense.description` (see there for
+            `maxLength`). Cannot be `null`.
+        categoryId:
+          description: '`null` makes the expense uncategorized; otherwise the id (a lower-case UUID) of one of the user''s own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`.'
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
     ValidationProblemDetails:
       description: A problem with the list of invalid fields in `errors`.
       allOf:
@@ -1086,7 +1214,7 @@ components:
                 properties:
                   pointer:
                     type: string
-                    description: JSON Pointer (RFC 6901) to the invalid member of the request body.
+                    description: JSON Pointer (RFC 6901) to the invalid member of the request body. The empty string means the whole body (for example, a patch with nothing to change).
                     example: /password
                   detail:
                     type: string

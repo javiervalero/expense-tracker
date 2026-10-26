@@ -149,6 +149,18 @@ final class ScriptedCategoryStore
     /** @return Result<string, mixed> the answer of a `GetItem` that finds the expense */
     public static function expenseFound(Expense $expense): Result
     {
+        return new Result(['Item' => self::storedExpense($expense)]);
+    }
+
+    /** @return Result<string, mixed> the answer of an `UpdateItem` (ALL_NEW) that wrote the expense */
+    public static function expenseUpdated(Expense $expense): Result
+    {
+        return new Result(['Attributes' => self::storedExpense($expense)]);
+    }
+
+    /** @return array<string, array{S?: string, N?: string}> */
+    private static function storedExpense(Expense $expense): array
+    {
         $item = [
             'PK' => ['S' => 'USER#' . self::USER],
             'SK' => ['S' => 'EXP#' . $expense->id],
@@ -165,7 +177,7 @@ final class ScriptedCategoryStore
             $item['categoryId'] = ['S' => $expense->categoryId];
         }
 
-        return new Result(['Item' => $item]);
+        return $item;
     }
 
     /** @return Result<string, mixed> the answer of a `GetItem` that finds nothing */

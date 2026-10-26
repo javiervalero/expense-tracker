@@ -235,10 +235,23 @@ export interface paths {
         get: operations["getExpense"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete an expense
+         * @description Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`.
+         */
+        delete: operations["deleteExpense"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Change an expense
+         * @description Changes some fields of an expense. A member that is present is changed; an absent one stays as it is.
+         *     `categoryId: null` makes the expense uncategorized; `date`, `amountCents` and `description` cannot be `null`.
+         *     The body carries the `version` the client last read; if the expense changed since, the answer is `409` (reload
+         *     and try again). At least one of the four editable members is required. A `categoryId` that is not one of the
+         *     user's own categories gets `422` at `/categoryId`. An id that is not an expense of the signed-in user
+         *     (malformed, unknown, deleted or someone else's) gets one and the same `404`.
+         */
+        patch: operations["updateExpense"];
         trace?: never;
     };
 }
@@ -362,11 +375,35 @@ export interface components {
             /** @description Absent or `null` for uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`. */
             categoryId?: string | null;
         };
+        /**
+         * @description The body of a change. `version` is required, and so is at least one of `date`, `amountCents`, `description` and
+         *     `categoryId`; a body with only `version` gets a `422` for the whole body (empty pointer). Anything else is a
+         *     validation error too. A member that is present is changed, an absent one is not. `date`, `amountCents` and
+         *     `description` cannot be `null`; `categoryId: null` makes the expense uncategorized.
+         */
+        ExpensePatch: {
+            /** @description The `version` of the expense as the client last read it. A different stored version gives `409`. */
+            version: number;
+            /**
+             * Format: date
+             * @description A real calendar day as `YYYY-MM-DD` (ASCII digits), from 2000-01-01 to 2099-12-31. Cannot be `null`.
+             */
+            date?: string;
+            /** @description A JSON integer. `12.0`, `1e2`, strings, booleans and `null` are refused, and so is an integer beyond 64 bits. */
+            amountCents?: number;
+            /**
+             * @description 1 to 200 characters after trimming, under the same rules as `NewExpense.description` (see there for
+             *     `maxLength`). Cannot be `null`.
+             */
+            description?: string;
+            /** @description `null` makes the expense uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`. */
+            categoryId?: string | null;
+        };
         /** @description A problem with the list of invalid fields in `errors`. */
         ValidationProblemDetails: components["schemas"]["ProblemDetails"] & {
             errors: {
                 /**
-                 * @description JSON Pointer (RFC 6901) to the invalid member of the request body.
+                 * @description JSON Pointer (RFC 6901) to the invalid member of the request body. The empty string means the whole body (for example, a patch with nothing to change).
                  * @example /password
                  */
                 pointer: string;
@@ -553,7 +590,7 @@ export interface components {
         };
         /**
          * @description Returned when the change conflicts with the current state. The `detail` says which: the name is already in use,
-         *     the category changed since the client read it (stale `version`: reload and try again), or the user already has
+         *     the category or expense changed since the client read it (stale `version`: reload and try again), or the user already has
          *     the maximum number of categories (100). It never repeats a name, an id or a version.
          */
         EditConflict: {
@@ -1130,6 +1167,90 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ResourceNotFound"];
             405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteExpense: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The expense is deleted. */
+            204: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    updateExpense: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ExpensePatch"];
+            };
+        };
+        responses: {
+            /** @description The expense was changed. `version` is one more than before. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Expense"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
+            409: components["responses"]["EditConflict"];
+            413: components["responses"]["ContentTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
