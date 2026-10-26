@@ -9,6 +9,7 @@ use App\Expenses\AmountViolation;
 use App\Expenses\Description;
 use App\Expenses\ExpenseDate;
 use App\Http\Input\ObjectMembers;
+use App\Http\Input\StringMember;
 use App\Http\Input\TextViolation;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
@@ -32,7 +33,6 @@ final readonly class NewExpenseInput
     private const string DESCRIPTION = 'description';
     private const string CATEGORY = 'categoryId';
     private const string REQUIRED = 'This field is required.';
-    private const string MUST_BE_STRING = 'Must be a string.';
 
     private function __construct(
         public ExpenseDate $date,
@@ -75,7 +75,7 @@ final readonly class NewExpenseInput
      */
     private static function date(#[\SensitiveParameter] array $body): ExpenseDate|FieldError
     {
-        $text = self::stringMember($body, self::DATE);
+        $text = StringMember::required($body, self::DATE);
         if ($text instanceof FieldError) {
             return $text;
         }
@@ -101,7 +101,7 @@ final readonly class NewExpenseInput
      */
     private static function description(#[\SensitiveParameter] array $body): Description|FieldError
     {
-        $text = self::stringMember($body, self::DESCRIPTION);
+        $text = StringMember::required($body, self::DESCRIPTION);
         if ($text instanceof FieldError) {
             return $text;
         }
@@ -118,17 +118,5 @@ final readonly class NewExpenseInput
         $value = $body[self::CATEGORY] ?? null;
 
         return $value === null || is_string($value) ? $value : new FieldError('/' . self::CATEGORY, 'Must be a category id or null.');
-    }
-
-    /**
-     * @param array<array-key, mixed> $body
-     */
-    private static function stringMember(#[\SensitiveParameter] array $body, string $member): string|FieldError
-    {
-        if (!array_key_exists($member, $body)) {
-            return new FieldError('/' . $member, self::REQUIRED);
-        }
-
-        return is_string($body[$member]) ? $body[$member] : new FieldError('/' . $member, self::MUST_BE_STRING);
     }
 }

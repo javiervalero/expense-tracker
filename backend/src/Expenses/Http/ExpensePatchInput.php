@@ -9,6 +9,7 @@ use App\Expenses\AmountViolation;
 use App\Expenses\Description;
 use App\Expenses\ExpenseDate;
 use App\Http\Input\ObjectMembers;
+use App\Http\Input\StringMember;
 use App\Http\Input\TextViolation;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
@@ -36,7 +37,6 @@ final readonly class ExpensePatchInput
     private const string DESCRIPTION = 'description';
     private const string CATEGORY = 'categoryId';
     private const int MIN_VERSION = 1;
-    private const string MUST_BE_STRING = 'Must be a string.';
 
     private function __construct(
         public int $version,
@@ -127,15 +127,12 @@ final readonly class ExpensePatchInput
      */
     private static function date(#[\SensitiveParameter] array $body): ExpenseDate|FieldError|null
     {
-        if (!array_key_exists(self::DATE, $body)) {
-            return null;
-        }
-        $value = $body[self::DATE];
-        if (!is_string($value)) {
-            return new FieldError('/' . self::DATE, self::MUST_BE_STRING);
+        $text = StringMember::optional($body, self::DATE);
+        if ($text === null || $text instanceof FieldError) {
+            return $text;
         }
 
-        return ExpenseDate::parse($value) ?? new FieldError('/' . self::DATE, ExpenseFieldMessages::date());
+        return ExpenseDate::parse($text) ?? new FieldError('/' . self::DATE, ExpenseFieldMessages::date());
     }
 
     /**
@@ -158,14 +155,11 @@ final readonly class ExpensePatchInput
      */
     private static function description(#[\SensitiveParameter] array $body): Description|FieldError|null
     {
-        if (!array_key_exists(self::DESCRIPTION, $body)) {
-            return null;
+        $text = StringMember::optional($body, self::DESCRIPTION);
+        if ($text === null || $text instanceof FieldError) {
+            return $text;
         }
-        $value = $body[self::DESCRIPTION];
-        if (!is_string($value)) {
-            return new FieldError('/' . self::DESCRIPTION, self::MUST_BE_STRING);
-        }
-        $description = Description::parse($value);
+        $description = Description::parse($text);
 
         return $description instanceof TextViolation ? new FieldError('/' . self::DESCRIPTION, ExpenseFieldMessages::description($description)) : $description;
     }

@@ -6,6 +6,7 @@ namespace App\Categories\Http;
 
 use App\Categories\CategoryName;
 use App\Http\Input\ObjectMembers;
+use App\Http\Input\StringMember;
 use App\Http\Problem\FieldError;
 use App\Http\Problem\ValidationProblem;
 
@@ -75,14 +76,11 @@ final class CategoryInput
      */
     private static function name(#[\SensitiveParameter] array $body): CategoryName|FieldError
     {
-        if (!array_key_exists(self::NAME, $body)) {
-            return new FieldError(self::NAME_POINTER, 'This field is required.');
+        $text = StringMember::required($body, self::NAME);
+        if ($text instanceof FieldError) {
+            return $text;
         }
-        $value = $body[self::NAME];
-        if (!is_string($value)) {
-            return new FieldError(self::NAME_POINTER, 'Must be a string.');
-        }
-        $name = CategoryName::parse($value);
+        $name = CategoryName::parse($text);
 
         return $name instanceof CategoryName ? $name : new FieldError(self::NAME_POINTER, CategoryFieldMessages::name($name));
     }
