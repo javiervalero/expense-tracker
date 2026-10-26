@@ -32,11 +32,22 @@ final class FakeExpenseRangeReader implements ExpenseRangeReader
 
     public bool $answerEmptyBatchWithKey = false;
 
+    /** The user id of the last call's owner. */
+    public ?string $lastOwnerId = null;
+
+    /** The day bounds of the last call. */
+    public ?string $lastFrom = null;
+
+    public ?string $lastTo = null;
+
     /** @param list<Expense> $newestFirst */
     public function __construct(private readonly array $newestFirst) {}
 
     public function pageByDate(Principal $owner, ExpenseDate $from, ExpenseDate $to, ?array $startKey, int $batchLimit): ExpenseBatch
     {
+        $this->lastOwnerId = $owner->userId;
+        $this->lastFrom = $from->value();
+        $this->lastTo = $to->value();
         $this->calls[] = ['startKey' => $startKey, 'batchLimit' => $batchLimit];
         if ($this->refuseStartKey || ($this->refuseFromCall !== null && count($this->calls) >= $this->refuseFromCall)) {
             throw new InvalidStartKey();

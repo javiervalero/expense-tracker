@@ -13,12 +13,13 @@ use JsonException;
 /**
  * The opaque cursor of a list (B18): base64url without padding of the JSON `{"v":1,"sk":"EXP#<uuid>","lsi":
  * "EXP#<date>#<uuid>","f":"<filter hash>"}` of the last EXAMINED item. It is a client-made value like any other
- * query parameter, so {@see self::decode()} refuses everything but exactly what {@see self::encode()} writes, before
+ * query parameter, so {@see self::decode()} refuses anything {@see self::encode()} could not have produced, before
  * any store call: at most 512 characters of the strict alphabet, JSON of depth 2 with exactly the four members, `v`
  * the integer 1, three strings, `sk` and `lsi` of the same uuid, a date inside the range and the hash of the very
  * filters of this request. Last, the decoded cursor must encode back to the very input: any other spelling of the same
- * data (padding, stray bits, blanks, reordered or repeated members) is refused. The partition is never in it (it comes from
- * the session), so even a forged cursor only moves inside the caller's own expenses. No MAC is needed for that.
+ * data (padding, stray bits, blanks, reordered or repeated members) is refused. A well-formed forged position is
+ * accepted: it only repositions inside the caller's partition and [from, to] (B18, no MAC). The partition is never in
+ * it (it comes from the session).
  */
 final readonly class ListCursor
 {

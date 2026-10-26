@@ -27,6 +27,7 @@ final class RoutesTest extends TestCase
         'POST /categories' => RequireSession::class,
         'PATCH /categories/{id}' => RequireSession::class,
         'DELETE /categories/{id}' => RequireSession::class,
+        'GET /expenses' => RequireSession::class,
         'POST /expenses' => RequireSession::class,
         'GET /expenses/{id}' => RequireSession::class,
         'PATCH /expenses/{id}' => RequireSession::class,
@@ -72,6 +73,6 @@ final class RoutesTest extends TestCase
             }
         }
 
-        self::assertSame(['GET /auth/me', 'GET /categories', 'POST /categories', 'PATCH /categories/{id}', 'DELETE /categories/{id}', 'POST /expenses', 'GET /expenses/{id}', 'PATCH /expenses/{id}', 'DELETE /expenses/{id}'], $guarded);
+        self::assertSame(['GET /auth/me', 'GET /categories', 'POST /categories', 'PATCH /categories/{id}', 'DELETE /categories/{id}', 'GET /expenses', 'POST /expenses', 'GET /expenses/{id}', 'PATCH /expenses/{id}', 'DELETE /expenses/{id}'], $guarded);
     }
 }

@@ -6,6 +6,7 @@ namespace App\Expenses\Http;
 
 use App\Categories\CategoryResolver;
 use App\Expenses\Expense;
+use App\Expenses\Listing\ExpensePage;
 use App\Http\Response;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\Time\StoredTime;
@@ -51,6 +52,19 @@ final class ExpenseResponse
     public static function ok(Expense $expense, CategoryResolver $categories): Response
     {
         return Response::json(200, self::fields($expense, $categories));
+    }
+
+    /**
+     * `{items, nextCursor}`: every item mapped as {@see self::fields()}.
+     *
+     * @throws JsonException
+     * @throws StorageFailure
+     */
+    public static function page(ExpensePage $page, CategoryResolver $categories): Response
+    {
+        $items = array_map(static fn(Expense $expense): array => self::fields($expense, $categories), $page->items);
+
+        return Response::json(200, ['items' => $items, 'nextCursor' => $page->nextCursor]);
     }
 
     /**

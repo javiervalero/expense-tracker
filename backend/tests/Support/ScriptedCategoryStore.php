@@ -232,11 +232,12 @@ final class ScriptedCategoryStore
 
     /**
      * @param array<string, string> $routeParams
+     * @param array<string, string> $query
      */
-    public static function request(string $method, string $path, string $body = '', ?Principal $principal = null, array $routeParams = [], string $contentType = 'application/json'): Request
+    public static function request(string $method, string $path, string $body = '', ?Principal $principal = null, array $routeParams = [], string $contentType = 'application/json', array $query = []): Request
     {
         $headers = $body === '' ? [] : ['content-type' => $contentType];
-        $request = new Request($method, $path, [], $headers, $body, [Request::REQUEST_ID => 'req-1', Request::ROUTE_PARAMS => $routeParams]);
+        $request = new Request($method, $path, $query, $headers, $body, [Request::REQUEST_ID => 'req-1', Request::ROUTE_PARAMS => $routeParams]);
 
         return $principal === null ? $request : $request->withAttribute(Principal::ATTRIBUTE, $principal);
     }

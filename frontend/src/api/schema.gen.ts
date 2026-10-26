@@ -203,7 +203,20 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List the expenses
+         * @description Lists the expenses of the signed-in user, newest date first (within one date the order is stable but arbitrary).
+         *     Every parameter is optional; a parameter this operation does not know gets `400`, so a typo does not silently
+         *     list everything. `from` and `to` are inclusive days; `category` is the id of one of the user's categories or
+         *     `none` (uncategorized, including expenses whose category was deleted); a category id that is not the user's
+         *     matches nothing. `q` is a case-insensitive text the description must contain; an empty `q` is no `q`.
+         *
+         *     Pass the `nextCursor` of a page as `cursor` to get the next one, with the same `from`, `to`, `category` and `q`
+         *     (a cursor used with other filters gets `400`; `limit` may change). A page can be short or even empty while
+         *     `nextCursor` is not null, because the server stops after examining a bounded number of expenses: a short or
+         *     empty page with a non-null `nextCursor` means keep going; `null` means the range is exhausted.
+         */
+        get: operations["listExpenses"];
         put?: never;
         /**
          * Create an expense
@@ -355,6 +368,15 @@ export interface components {
              * @description ISO 8601 UTC, whole seconds.
              */
             updatedAt: string;
+        };
+        /**
+         * @description One page of expenses, newest first. `nextCursor` is `null` only when the range is exhausted; a short or empty
+         *     page with a non-null `nextCursor` means keep going.
+         */
+        ExpensePage: {
+            items: components["schemas"]["Expense"][];
+            /** @description Pass it as `cursor` to get the next page, or `null` when there is none. */
+            nextCursor: string | null;
         };
         /** @description The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error. */
         NewExpense: {
@@ -1092,6 +1114,51 @@ export interface operations {
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listExpenses: {
+        parameters: {
+            query?: {
+                /** @description First day to include, `YYYY-MM-DD`. Default 2000-01-01. */
+                from?: string;
+                /** @description Last day to include, `YYYY-MM-DD`. Default 2099-12-31. Must not be before `from`. */
+                to?: string;
+                /** @description The id of one of the user's categories (a lower-case version-4 UUID), or exactly `none` for uncategorized expenses. */
+                category?: string | "none";
+                /**
+                 * @description Text the description must contain, compared without regard to case; at most 100 characters after trimming;
+                 *     empty means absent. `maxLength` is an outer bound looser than the server's 1424-byte pre-check (100 x 4 + 1024,
+                 *     read before trimming); it is not the 100-character rule.
+                 */
+                q?: string;
+                /** @description The most expenses in one page, 1 to 100. */
+                limit?: number;
+                /** @description The `nextCursor` of the previous page. Opaque; valid only with the filters it was issued for. */
+                cursor?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description One page of expenses. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ExpensePage"];
+                };
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };
