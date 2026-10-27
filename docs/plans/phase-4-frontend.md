@@ -622,6 +622,44 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - Exclude query strings from the CloudFront access logs: the expiry redirect sends the page's query, which can hold `q`, to the server as part of `/login?redirect=…` (security L3, accepted).
 - **Result:** 542 front-end tests; `src/router`, `src/stores` and `src/lib` at 100%. Overall coverage is 99.7%; only the unrouted `HomeView.vue` is uncovered.
 
+### Notes from the WP6 reviews (2026-10-27)
+
+- **G5:** the owner approved deleting `HomeView.vue` (2026-10-27). Nothing referenced it.
+- **Red runs:**
+  - First pass: 7 spec files and 9 tests failed before any code. The new components and `lib/appError` were missing, and so were the App shell landmarks, the title and the h1 focus.
+  - Review fixes: 12 tests failed before their fixes. The round-2 follow-up failed 2 more.
+  - Mutation proofs:
+    - The email rendered with `v-html` turns the escaping test red.
+    - A `console.error` added to the error handler turns the no-console test red.
+    - Removing the `unreachable` skip in `focus.ts` turns 3 tests red.
+    - Removing `router.onError` turns the guard-error test red.
+- **Reviews:** `ecc:vue-reviewer` (sonnet/medium) found no critical or high issue, 3 medium and 6 low. The plan routes WP6 through no security review (decision 16).
+  - **Medium:**
+    - The `unreachable` focus test passed without the skip; it was rewritten as a unit test with a fake router.
+    - `ConfirmDeleteButton` named no question for screen readers; the asking state is now a `role="group"` labelled by a `question` prop, and Escape cancels.
+    - Router errors bypassed `app.config.errorHandler` and reached `console.error`; `installErrorHandler(app, router)` now also wires `router.onError` to the banner.
+  - **Low, all fixed:**
+    - focus returns after Confirm and after banner Dismiss;
+    - `FormField` uses `inheritAttrs: false`, so attrs land on the input, and passes `attrs` in the slot props;
+    - Sign out uses `aria-disabled`, not `disabled`, so it keeps focus;
+    - no focus move on the first page load, so the skip link stays the first Tab stop;
+    - the clipped email has a `title`.
+  - **Round 2** (fix hunks only) closed all nine and raised three new lows:
+    - `restoreFocus` now acts only when focus fell to `body`, so it never steals focus from a parent;
+    - Escape uses `.stop`;
+    - **Accepted:** the Sign-out early-return guard is not proven by a test, because the store already shares overlapping logout calls. It stays as defence in depth, and `aria-disabled` is tested.
+- **Decisions and deviations:**
+  - **Focus management** (`router/focus.ts`) sets the title on every navigation, but moves focus to the `h1` only when the path changes and it is not the first load. A query-only change, such as applying filters in WP10, keeps focus where it is. While the status is `unreachable`, it leaves both the title and focus to `ServiceUnavailableView`. It is wired inside `createAppRouter`, so it is tested.
+  - **The skip link** uses `href="#main"` plus `@click.prevent` and `main.focus()`, so `#main` never enters the history.
+  - **The error banner** keeps its state per app, through `app.provide(appErrorKey, ref)`, so tests share nothing.
+  - **Shared component APIs for WP7–WP10:**
+    - `FormField`: a default input, or a scoped slot `{id, describedby, invalid, attrs}`; it links `aria-describedby` only to the messages it shows.
+    - `FormAlert`: `focus()`; it renders nothing when the message is empty.
+    - `ConfirmDeleteButton`: `label`, `confirmLabel`, `question`, `disabled`.
+- **Watch:** one run during the fixes failed a `ServiceUnavailableView` retry test, in a file WP6 did not touch. Five later full runs passed.
+- **Carried to WP7:** after a successful Retry, `ServiceUnavailableView` restores the title it saved on mount, which can be stale. This dates from WP5.
+- **Result:** 608 front-end tests; coverage is 100% for statements, branches, functions and lines.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
