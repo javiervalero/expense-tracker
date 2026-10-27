@@ -657,6 +657,12 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
     - `FormAlert`: `focus()`; it renders nothing when the message is empty.
     - `ConfirmDeleteButton`: `label`, `confirmLabel`, `question`, `disabled`.
 - **Watch:** one run during the fixes failed a `ServiceUnavailableView` retry test, in a file WP6 did not touch. Five later full runs passed.
+- **Known flaky, parked (owner decision, 2026-10-27):** `ConfirmDeleteButton.spec.ts` failed in about 1 of 4 full `make frontend-test` runs during WP6–WP7, each time passing on a rerun.
+  - **Failing tests seen:** "after Confirm, focus goes back to Delete" (twice), "after Confirm, leaves focus where the parent put it" (`activeElement` was `body`), and the Escape tests.
+  - **Not reproducible on a quiet machine:** 2 failures in about 50 file-level runs at 50 repeats per test; 0 failures in 9 sequential full runs.
+  - **Ruled out:** test-order leaks (shuffle seeds 1–12), the `nextTick`/`restoreFocus` microtask order, jsdom focus timing, and a backwards clock defeating Vue's handler-timestamp guard.
+  - **Main suspect, unproven:** a VTU `trigger('click')` or Escape that sometimes never reaches its handler under heavy load. The `ServiceUnavailableView` retry flake above probably shares the cause; it also asserts `activeElement` straight after a `trigger('click')`.
+  - **Next time it fails** (locally or in CI): keep the full verbose output and stack, then fix from that evidence. No retries, sleeps or loosened assertions.
 - **Carried to WP7:** after a successful Retry, `ServiceUnavailableView` restores the title it saved on mount, which can be stale. This dates from WP5.
 - **Result:** 608 front-end tests; coverage is 100% for statements, branches, functions and lines.
 
