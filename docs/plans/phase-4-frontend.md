@@ -587,6 +587,41 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Carried to WP11 docs:** the browser floor is now set by the API client (`AbortSignal.any`): Chrome 116, Firefox 124, Safari 17.4. That is higher than the `Intl` floor in Step 0 R4.
 - **Result:** 339 front-end tests; `src/api` and `src/config.ts` at 100%. `types.ts` holds only types, checked by `vue-tsc` through `types.spec.ts`.
 
+### Notes from the WP5 reviews (2026-10-27)
+
+- **Red runs:**
+  - Seven spec files failed on import, and the App and views specs failed on the missing routes.
+  - After the reviews, 37 tests failed before their fixes. Among them, the App-level Retry test showed the private view mounting once.
+  - The round-2 follow-up failed 4 tests before its fix.
+- **Reviews:**
+  - `ecc:vue-reviewer` (sonnet/medium) found **one HIGH**, the Retry render gap. `ecc:security-reviewer` (opus/high) found no critical or high issue and confirmed there is no open redirect: `//`, `/\`, backslashes anywhere, `%5C`, `%2F`, tab, newline, bidi, a full-width solidus, `..` and `/EXPENSES` are all refused or resolve to `not-found`.
+  - One combined fix list was sent. Security round 2 (opus/high) closed every finding. Its new L4 (a blank page) was fixed and checked inline.
+- **Decisions and deviations:**
+  - **"Can't reach the server"** is a state rendered by `App.vue` over the current address, not a route, so the URL is kept and Retry re-checks the same destination. The view sets a fixed title, focuses its `h1`, announces a repeat failure in a `role="status"` line, and uses `aria-disabled` while busy.
+  - **App never draws a page the guard would redirect** (`redirectFor(route, status) === true`). A watcher issues that redirect when the session changes in place, for example right after sign-in in WP7. It skips `unknown`, `unreachable` and the first unresolved route, so it does not race the guard.
+  - **Sign-out:**
+    - Overlapping calls share one request (`leaving ??=`).
+    - The expiry handler is paused for the call and restored in `finally` on every failure path.
+    - On success it calls `navigateTo('/login')` before marking the user signed out.
+    - A 401 on logout counts as already signed out.
+    - `http.ts` gained `getUnauthorizedHandler()` for the restore.
+  - **Back-forward cache:** `installBfcacheGuard(window)` reloads a page restored with `pageshow.persisted`, so the previous user's screen does not come back on Back after sign-out (security M1). A short flash before the reload cannot be prevented in the browser; Phase 7 adds `Cache-Control: no-store`.
+  - **One shared `isInternalPath`** (`src/lib/navigation.ts`) for `navigateTo` (it throws on anything else) and `safeRedirect`, with one shared case table. The catch-all route is renamed `not-found`.
+  - **A rejected `me()`** maps to `unreachable`, so the memoised promise cannot stay rejected.
+  - **The guard's login redirect** is `/login?redirect=/expenses?from=…`. vue-router leaves `/`, `?` and `=` unencoded inside a query value, which is legal there; `&`, `#` and `+` are encoded, and tests cover both.
+  - **`main.ts`** only wires the router: `installSessionExpiry` and `installBfcacheGuard`, each tested directly. `main.ts` itself is excluded from coverage.
+  - **`HomeView.vue`** is no longer routed; it is deleted in WP6 (G5).
+- **Carried to WP6:** disable the Sign-out button while pending.
+- **Carried to WP7:**
+  - `LoginView` uses `router.replace(safeRedirect(route.query.redirect, router))`, which the App watcher backs up.
+  - "Your session ended" shows only when `route.query.reason === 'expired'` exactly, as fixed text.
+  - The `redirect` value is never displayed.
+  - Views render the `unauthorized` kind as that fixed message too.
+- **Carried to Phase 7:**
+  - `Cache-Control: no-store` on `index.html` and on API responses (back-forward cache).
+  - Exclude query strings from the CloudFront access logs: the expiry redirect sends the page's query, which can hold `q`, to the server as part of `/login?redirect=…` (security L3, accepted).
+- **Result:** 542 front-end tests; `src/router`, `src/stores` and `src/lib` at 100%. Overall coverage is 99.7%; only the unrouted `HomeView.vue` is uncovered.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
