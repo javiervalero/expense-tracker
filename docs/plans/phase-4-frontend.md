@@ -522,6 +522,36 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - A dynamic `:target="'_blank'"` is only partly covered.
 - **Not covered by a test:** `src/config.ts`, which stays at 0% coverage until WP3 and WP4 import it. Overall coverage is 83.3%.
 
+### Notes from the WP3 reviews (2026-10-26)
+
+- **Red runs:**
+  - The three specs failed on import before any helper existed.
+  - After the review, 10 tests failed against the old result-returning display helpers.
+  - The time-zone mutation proof: with `timeZone: 'UTC'` removed, `formatDate` gave "25 Oct 2026" under `Pacific/Pago_Pago` and `America/Los_Angeles`. `Pacific/Kiritimati` (UTC+14) cannot catch that mutation, so the negative-offset zones are the ones that matter.
+- **Deviation from C10, approved by the reviewer:**
+  - Lengths are counted after trimming with the **server's own list**: `PlainText::TRIM_CHARACTERS`, `backend/src/Http/Input/PlainText.php:36-38`.
+  - The plan said `String.prototype.trim()`. That trims the same set plus U+FEFF, which the server refuses as invisible anyway. So `trim()` could only make the client looser, and the explicit list makes the client match the server exactly.
+  - NUL, U+0085 and U+FEFF are not trimmed.
+- **Review:** `ecc:typescript-reviewer` (sonnet/medium) approved, with no critical or high findings. Applied:
+  - **Time-zone test:**
+    - The formatters are module-level constants.
+    - The `formatDate` test sets `TZ`, then calls `vi.resetModules()` and re-imports, so it can fail. Before, a cached formatter created under UTC hid the mutation.
+  - **Display helpers:** `formatCents`, `formatDate` and `centsToInput` return strings. They fall back to `UNKNOWN_VALUE` ('—'), or `''` for an input field, because they only format server data the contract already validated. `parseAmount`, the `check*` helpers and `isIsoDate` keep result types with reasons.
+  - **Typing:**
+    - `tsconfig.app.json` and `tsconfig.vitest.json` add `ES2023.Intl`. `vitest` had `lib: []`.
+    - `decimalString` is typed `` `${number}` `` with one narrow cast; `as unknown as number` is gone.
+    - It changes types only: the browser floor from Step 0 R4 is unchanged.
+  - **Other fixes and cases:**
+    - No cast on the regex match.
+    - The constant is renamed `MAX_WHOLE_DIGITS`.
+    - An explicit month range check.
+    - New amount cases: `00.50`, many leading zeros, the 9-digit `too-large` boundary, and `1,5`.
+    - A test name that claimed a float check was renamed.
+- **Accepted:**
+  - The sign-in password check refuses an empty password: it can never authenticate, and refusing it saves a throttled attempt.
+  - `trimmedLength` is kept for the WP8 and WP9 counters.
+- **Result:** 165 front-end tests; `src/lib` at 100% on every metric.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
