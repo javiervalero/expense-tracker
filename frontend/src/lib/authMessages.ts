@@ -15,8 +15,8 @@ export interface AuthErrorView {
   accountExists: boolean
 }
 
-const GENERIC = 'Something went wrong on our side. Try again.'
-const NETWORK = "Can't reach the server. Check your connection and try again."
+export const GENERIC = 'Something went wrong on our side. Try again.'
+export const NETWORK = "Can't reach the server. Check your connection and try again."
 const MAY_EXIST = 'If you tried before, your account may exist: try signing in.'
 
 /**

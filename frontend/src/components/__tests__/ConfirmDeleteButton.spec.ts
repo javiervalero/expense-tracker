@@ -93,24 +93,39 @@ describe('ConfirmDeleteButton', () => {
     expect(buttonLabels(wrapper)).toEqual(['Confirm delete category', 'Cancel'])
   })
 
-  it('disabled: the buttons cannot be used', async () => {
+  it('disabled: Delete is aria-disabled, not native disabled, and a click does not ask', async () => {
     const wrapper = render({ disabled: true })
 
-    expect(wrapper.get('button').attributes('disabled')).toBeDefined()
+    expect(wrapper.get('button').attributes('aria-disabled')).toBe('true')
+    expect(wrapper.get('button').attributes('disabled')).toBeUndefined()
     await wrapper.get('button').trigger('click')
     expect(buttonLabels(wrapper)).toEqual(['Delete'])
   })
 
-  it('disabled while asking (a request is pending): Confirm and Cancel are disabled', async () => {
+  it('disabled while asking (a request is pending): Confirm and Cancel are aria-disabled and inert', async () => {
     const wrapper = render()
     await wrapper.get('button').trigger('click')
 
     await wrapper.setProps({ disabled: true })
 
-    expect(wrapper.findAll('button').map((b) => b.attributes('disabled') !== undefined)).toEqual([
-      true,
-      true,
+    expect(wrapper.findAll('button').map((b) => b.attributes('aria-disabled'))).toEqual([
+      'true',
+      'true',
     ])
+    await nth(wrapper, 0).trigger('click')
+    await nth(wrapper, 1).trigger('click')
+    expect(wrapper.emitted('confirm')).toBeUndefined()
+    expect(buttonLabels(wrapper)).toEqual(['Confirm delete', 'Cancel'])
+  })
+
+  it('keeps focus on Delete when it becomes disabled right after Confirm', async () => {
+    const wrapper = render()
+    await wrapper.get('button').trigger('click')
+    await nth(wrapper, 0).trigger('click')
+    await wrapper.setProps({ disabled: true })
+    await nextTick()
+
+    expect(document.activeElement).toBe(wrapper.get('button').element)
   })
 
   it('asks a question: the choices are a group named by the question prop', async () => {
@@ -196,5 +211,33 @@ describe('ConfirmDeleteButton', () => {
 
     document.body.removeEventListener('keydown', outer)
     expect(outer).not.toHaveBeenCalled()
+  })
+
+  describe('accessible names and description', () => {
+    it('adds no aria-label or aria-describedby when none is given', async () => {
+      const wrapper = render()
+
+      expect(wrapper.get('button').attributes('aria-label')).toBeUndefined()
+      expect(wrapper.get('button').attributes('aria-describedby')).toBeUndefined()
+    })
+
+    it('names Delete and Confirm after the subject, starting with the visible text', async () => {
+      const wrapper = render({ subject: 'Food' })
+      expect(wrapper.get('button').attributes('aria-label')).toBe('Delete Food')
+
+      await wrapper.get('button').trigger('click')
+
+      expect(nth(wrapper, 0).attributes('aria-label')).toBe('Confirm delete Food')
+      expect(nth(wrapper, 1).attributes('aria-label')).toBeUndefined()
+    })
+
+    it('points Delete and Confirm at the description element', async () => {
+      const wrapper = render({ describedby: 'hint-id' })
+      expect(wrapper.get('button').attributes('aria-describedby')).toBe('hint-id')
+
+      await wrapper.get('button').trigger('click')
+
+      expect(nth(wrapper, 0).attributes('aria-describedby')).toBe('hint-id')
+    })
   })
 })

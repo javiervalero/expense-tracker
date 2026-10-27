@@ -12,6 +12,9 @@ import { useSessionStore } from '../stores/session'
 const api = vi.hoisted(() => ({ me: vi.fn() }))
 vi.mock('../api/auth', () => api)
 vi.mock('../lib/navigation', () => ({ navigateTo: vi.fn() }))
+vi.mock('@/api/categories', () =>
+  import('@/api/__tests__/emptyCategoriesApi').then((m) => m.emptyCategoriesApi()),
+)
 
 const signedIn: ApiResult<User> = { ok: true, status: 200, data: { id: 'u', email: 'a@b.c' } }
 

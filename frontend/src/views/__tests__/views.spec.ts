@@ -8,6 +8,9 @@ import { createAppRouter } from '@/router'
 
 const api = vi.hoisted(() => ({ me: vi.fn() }))
 vi.mock('@/api/auth', () => api)
+vi.mock('@/api/categories', () =>
+  import('@/api/__tests__/emptyCategoriesApi').then((m) => m.emptyCategoriesApi()),
+)
 vi.mock('@/lib/navigation', () => ({ navigateTo: vi.fn() }))
 vi.mock('@/api/health', () => ({ fetchHealth: () => new Promise(() => {}) }))
 
