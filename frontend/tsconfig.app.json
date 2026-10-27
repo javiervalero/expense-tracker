@@ -3,6 +3,10 @@
   "include": ["env.d.ts", "src/**/*", "src/**/*.vue"],
   "exclude": ["src/**/*.spec.ts", "src/**/__tests__/*"],
   "compilerOptions": {
+    // `lib` replaces the base list, so it is repeated here. ES2023.Intl types NumberFormat.format(string), the
+    // exact-decimal form the money helpers rely on (plan phase-4 Step 0 R4).
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "ES2023.Intl"],
+
     // Extra safety for array and object lookups, but may have false positives.
     "noUncheckedIndexedAccess": true,
 

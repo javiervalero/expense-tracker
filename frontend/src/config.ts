@@ -29,3 +29,6 @@ export const PASSWORD_MAX = 128
 
 // Plan phase-4 C2: a request with no answer after 10 seconds is aborted (covers the Argon2id hash and a cold start).
 export const REQUEST_TIMEOUT_MS = 10_000
+
+// Shown where a stored amount or date cannot be displayed (never expected: the server validates both).
+export const UNKNOWN_VALUE = '—'

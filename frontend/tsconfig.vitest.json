@@ -8,8 +8,8 @@
 
   "compilerOptions": {
     // Vitest runs in a different environment than the application code.
-    // Adjust lib and types accordingly.
-    "lib": [],
+    // Adjust types accordingly. `lib` repeats the app list (see tsconfig.app.json) for NumberFormat.format(string).
+    "lib": ["ES2022", "DOM", "DOM.Iterable", "ES2023.Intl"],
     "types": ["node", "jsdom"],
 
     // `vue-tsc --build` produces a .tsbuildinfo file for incremental type-checking.
