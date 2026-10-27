@@ -1,7 +1,7 @@
+import { API_BASE } from '../config'
+import { failureReason } from './abort'
 import type { paths } from './schema.gen'
 
-/** Base path of the versioned API. The generated paths do not include it (see contract/README.md). */
-const API_BASE = '/api/v1'
 const REQUEST_TIMEOUT_MS = 5000
 
 type HealthBody = paths['/health']['get']['responses'][200]['content']['application/json']
@@ -16,22 +16,6 @@ export type HealthResult =
 
 function isHealthBody(value: unknown): value is HealthBody {
   return typeof value === 'object' && value !== null && 'status' in value && value.status === 'ok'
-}
-
-function isNamedError(error: unknown, name: string): boolean {
-  // Duck-typed: a DOMException is not always an `Error` instance (for example under jsdom).
-  return typeof error === 'object' && error !== null && 'name' in error && error.name === name
-}
-
-/** Why a request or a body read failed: the caller gave up, the timeout fired, or anything else (the network). */
-function failureReason(
-  error: unknown,
-  callerSignal: AbortSignal | undefined,
-): 'aborted' | 'timeout' | 'network' {
-  if (callerSignal?.aborted || isNamedError(error, 'AbortError')) {
-    return 'aborted'
-  }
-  return isNamedError(error, 'TimeoutError') ? 'timeout' : 'network'
 }
 
 /**

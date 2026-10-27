@@ -27,6 +27,9 @@ export const Q_MAX = 100
 export const PASSWORD_MIN = 12
 export const PASSWORD_MAX = 128
 
+// Base path of the versioned API. The generated paths do not include it (contract/README.md).
+export const API_BASE = '/api/v1'
+
 // Plan phase-4 C2: a request with no answer after 10 seconds is aborted (covers the Argon2id hash and a cold start).
 export const REQUEST_TIMEOUT_MS = 10_000
 
