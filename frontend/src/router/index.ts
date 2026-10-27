@@ -6,6 +6,7 @@ import ExpensesView from '@/views/ExpensesView.vue'
 import LoginView from '@/views/LoginView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
 import RegisterView from '@/views/RegisterView.vue'
+import { installFocusManagement } from './focus'
 import { installGuards } from './guards'
 
 // A lower-case version 4 uuid, the only id the API issues. A malformed id is a 404 in the browser with no request.
@@ -62,5 +63,6 @@ const routes: RouteRecordRaw[] = [
 export function createAppRouter(history: RouterHistory) {
   const router = createRouter({ history, routes, sensitive: true })
   installGuards(router)
+  installFocusManagement(router)
   return router
 }

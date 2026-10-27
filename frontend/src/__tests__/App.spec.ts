@@ -67,6 +67,52 @@ describe('App', () => {
   })
 })
 
+describe('App: shell', () => {
+  it('has a skip link as the first focusable thing, pointing at the main landmark', async () => {
+    const wrapper = await mountAt('/expenses', signedIn)
+
+    const skip = wrapper.get('a')
+    expect(skip.text()).toBe('Skip to main content')
+    expect(skip.attributes('href')).toBe('#main')
+    expect(wrapper.get('main').attributes('id')).toBe('main')
+  })
+
+  it('the skip link moves focus to main without changing the address', async () => {
+    const { wrapper, router } = await mountApp('/expenses', signedIn)
+    document.body.append(wrapper.element)
+
+    await wrapper.get('a').trigger('click')
+
+    expect(document.activeElement).toBe(wrapper.get('main').element)
+    expect(router.currentRoute.value.fullPath).toBe('/expenses')
+    expect(window.location.hash).toBe('')
+    wrapper.element.remove()
+  })
+
+  it('draws the page inside main, the header above it and the API status in the footer', async () => {
+    const wrapper = await mountAt('/expenses', signedIn)
+
+    expect(wrapper.get('main h1').text()).toBe('Expenses')
+    expect(wrapper.get('header').text()).toContain('a@b.c')
+    expect(wrapper.get('footer [role="status"]').text()).toBe('API: ok')
+    expect(wrapper.find('main [role="status"]').exists()).toBe(false)
+  })
+
+  it('shows no banner by default', async () => {
+    const wrapper = await mountAt('/expenses', signedIn)
+
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  })
+
+  it('keeps the header and the footer around the "Can\'t reach the server" page', async () => {
+    const wrapper = await mountAt('/expenses', { ok: false, error: { kind: 'network' } })
+
+    expect(wrapper.get('main h1').text()).toBe("Can't reach the server")
+    expect(wrapper.find('header nav').exists()).toBe(false)
+    expect(wrapper.find('footer').exists()).toBe(true)
+  })
+})
+
 describe('App: the session changes without a navigation', () => {
   const signedOut: ApiResult<User> = { ok: false, error: { kind: 'unauthorized', status: 401 } }
 
