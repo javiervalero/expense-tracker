@@ -2,6 +2,7 @@
 import { onBeforeUnmount, onMounted, ref, useTemplateRef } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
+import { pageTitle } from '@/router/focus'
 import { redirectFor } from '@/router/guards'
 import { useSessionStore } from '@/stores/session'
 
@@ -13,15 +14,15 @@ const router = useRouter()
 const heading = useTemplateRef<HTMLHeadingElement>('heading')
 const retrying = ref(false)
 const stillDown = ref(false)
-let previousTitle = ''
 
 onMounted(() => {
-  previousTitle = document.title
   document.title = TITLE
   heading.value?.focus()
 })
+// Not the title saved on mount: the page may have changed since (a retry that finds the user signed in keeps the same
+// route and triggers no navigation, so nothing else would correct the title). The route's own title is always right.
 onBeforeUnmount(() => {
-  document.title = previousTitle
+  document.title = pageTitle(route.meta)
 })
 
 // Asks the server again. The route was kept while the server was down, so once the session is known the same rules as

@@ -1,6 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import { createMemoryHistory } from 'vue-router'
+import { defineComponent, h, nextTick, ref } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ApiResult } from '@/api/http'
@@ -52,13 +53,28 @@ describe('ServiceUnavailableView', () => {
     expect(document.activeElement).toBe(wrapper.get('h1').element)
   })
 
-  it('sets the document title, and puts the old one back when it goes away', async () => {
-    const { wrapper } = await mountAt('/expenses')
+  it('sets the document title when it appears', async () => {
+    await mountAt('/expenses')
 
     expect(document.title).toBe("Can't reach the server · Expense tracker")
+  })
 
-    wrapper.unmount()
-    expect(document.title).toBe('Before')
+  it('when it goes away the title is the one of the route shown, not the one saved on mount', async () => {
+    api.me.mockResolvedValueOnce(network)
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/expenses')
+    const shown = ref(true)
+    // Hidden from inside a parent: unmounting a whole app resets the router's current route.
+    mount(defineComponent({ render: () => (shown.value ? h(ServiceUnavailableView) : h('p')) }), {
+      global: { plugins: [router] },
+    })
+    await router.push('/categories')
+    expect(document.title).toBe("Can't reach the server · Expense tracker")
+
+    shown.value = false
+    await nextTick()
+
+    expect(document.title).toBe('Categories · Expense tracker')
   })
 
   it('has an empty status line until a retry fails', async () => {

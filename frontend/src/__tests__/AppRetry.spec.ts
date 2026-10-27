@@ -89,6 +89,17 @@ describe('App: Retry', () => {
     expect(router.currentRoute.value.fullPath).toBe('/categories')
   })
 
+  it('after a successful Retry the tab title is the one of the page shown, not a stale one', async () => {
+    const { wrapper } = await startUnreachable('/categories?x=1')
+    expect(document.title).toBe("Can't reach the server · Expense tracker")
+    api.me.mockResolvedValueOnce(signedIn)
+
+    await wrapper.get('button').trigger('click')
+    await flushPromises()
+
+    expect(document.title).toBe('Categories · Expense tracker')
+  })
+
   it('while unreachable, a navigation keeps its URL and the service view stays', async () => {
     const { router, wrapper } = await startUnreachable('/expenses')
 
