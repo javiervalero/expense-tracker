@@ -44,6 +44,11 @@ export function setUnauthorizedHandler(handler: (() => void) | null): void {
   unauthorizedFired = false
 }
 
+/** The current handler (null when none). The session store uses it to put the handler back after a failed sign-out. */
+export function getUnauthorizedHandler(): (() => void) | null {
+  return unauthorizedHandler
+}
+
 function notifyUnauthorized(): void {
   if (unauthorizedFired || unauthorizedHandler === null) {
     return

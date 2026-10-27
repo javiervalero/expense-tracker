@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 import { REQUEST_TIMEOUT_MS } from '../../config'
-import { request, resourcePath, setUnauthorizedHandler } from '../http'
+import { getUnauthorizedHandler, request, resourcePath, setUnauthorizedHandler } from '../http'
 import type { ApiResult } from '../http'
 
 type FetchCall = [string, RequestInit]
@@ -618,5 +618,17 @@ describe('request: media type of an error body', () => {
       ok: false,
       error: { kind: 'conflict', status: 409, detail },
     })
+  })
+})
+
+describe('getUnauthorizedHandler', () => {
+  it('returns the handler that was set, and null after it is removed', () => {
+    const handler = vi.fn()
+
+    setUnauthorizedHandler(handler)
+    expect(getUnauthorizedHandler()).toBe(handler)
+
+    setUnauthorizedHandler(null)
+    expect(getUnauthorizedHandler()).toBeNull()
   })
 })
