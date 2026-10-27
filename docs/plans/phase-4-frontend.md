@@ -660,6 +660,60 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Carried to WP7:** after a successful Retry, `ServiceUnavailableView` restores the title it saved on mount, which can be stale. This dates from WP5.
 - **Result:** 608 front-end tests; coverage is 100% for statements, branches, functions and lines.
 
+### Notes from the WP7 reviews (2026-10-27)
+
+- **Red runs:**
+  - First pass: 8 spec files and 55 tests failed before any code. Three failed on missing modules (`authMessages`, `useFormErrors`, `PasswordField`), and every Login and Register view test failed on the placeholder views.
+  - Review fixes: 17 tests failed before their fixes.
+  - Mutation proofs:
+    - Passing the raw `redirect` value instead of `safeRedirect` turns 11 tests red after the fixes, against 8 before.
+    - `reason !== undefined` instead of `=== 'expired'` turns 7 tests red.
+    - Removing the `pending` guard turns the double-submit test red.
+    - Using the server's `detail` for `unauthorized` turns 2 tests red.
+    - Restoring the mount-time title in `ServiceUnavailableView` turns 2 tests red.
+- **Reviews:**
+  - `ecc:vue-reviewer` (sonnet/medium) found no critical or high issue, 6 medium and 7 low.
+  - `ecc:security-reviewer` (opus/high) found no critical or high issue and 4 low. It confirmed:
+    - no open redirect;
+    - no echo of `route.query`;
+    - no account enumeration on sign-in. The 401 is one fixed text, and the 429 and 503 texts are the same for every account. Server side, the throttle key is the email text alone (`LoginThrottle.php`).
+    - the password travels only in the POST body.
+  - One combined fix list was sent; both round-2 passes closed every finding. Security round 2 ran at opus/high.
+  - **Medium (vue):**
+    - The redirect was read after the await, which worked only by microtask ordering; it is now computed at submit, before the await.
+    - The happy-path redirect tests were vacuous behind the App watcher; they now use `renderBare()`, a real router without App, and assert `router.replace` calls.
+    - The password toggle gave a double signal; it now has the constant label "Show password" with `aria-pressed` and `aria-controls`.
+    - Pending was silent; the button now reads "Signing in…" or "Creating account…".
+    - `pending` stuck after a failed navigation; it is reset in a `finally`.
+    - The submit flow was duplicated; it is now `composables/useAuthForm.ts`.
+  - **Low (security):**
+    - A shown password stayed visible as `type="text"` after a failure; it is hidden again on every submit, with spellcheck, autocapitalize and autocorrect off.
+    - No comment explained why there is no unmount guard; one was added. Do **not** add a guard: the view is always unmounted when the replace runs, so a guard would drop the redirect.
+    - The wait text rounded down; it now uses `Math.ceil` and switches to hours from 3540 s.
+    - The password-leak and 5xx tests were weak; they now inspect the real `fetch` call and pin the exact 500 and 503 texts.
+  - **Accepted:**
+    - `useFormErrors` finds fields by `getElementById` with an id prefix;
+    - `hasErrors` is exported but unused;
+    - the password is re-hidden even on a client-side refusal;
+    - `useAuthForm` has no spec of its own and is covered through both views.
+- **Decisions and deviations:**
+  - **Extra files beyond the plan:** `lib/authMessages.ts` (error kind → fixed text, wait text, code-point password checks), `components/PasswordField.vue` and `composables/useAuthForm.ts`.
+  - **The redirect target is captured at submit.** A user who leaves `/login` mid-request still lands on that checked private path after success.
+  - **Register** always replaces to `/expenses` and ignores `redirect`.
+  - **Messages:**
+    - Every message is fixed client text; the only server text shown is a 422 field detail, as the contract allows.
+    - A 409 on register reads "An account with this email already exists.", followed by a separate "Sign in instead" link outside the alert.
+    - A 409 on login is generic, since the contract defines none.
+    - A register 503 or timeout adds "If you tried before, your account may exist: try signing in."
+  - **Password handling:**
+    - The password is not cleared after a failure (WCAG 3.3.7); it lives only in the input value.
+    - The inputs have no `name` attribute, so a native submit could never put credentials in a URL; tests lock this in.
+  - **The submit button** uses `aria-disabled` plus a guard in the handler, not `disabled`, as WP6 did.
+  - **`ServiceUnavailableView`** sets `pageTitle(route.meta)` on unmount; `pageTitle` is now exported from `router/focus.ts`. This fixes the stale title carried from WP5.
+- **Accepted (security note, pre-existing C5 / WP5 L3):** after an expiry, `/login?redirect=…` carries the previous page's query, for example a search `q`. On a shared computer, the next user to sign in lands on that path with the previous filter text in the address bar, but only sees their own data.
+- **Watch:** `ConfirmDeleteButton.spec.ts` (WP6) failed once each in three full runs, in different tests, and passed on rerun. It is fixed in its own commit after WP7.
+- **Result:** 731 front-end tests; coverage is 100% for statements, branches, functions and lines.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
