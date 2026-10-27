@@ -552,6 +552,41 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - `trimmedLength` is kept for the WP8 and WP9 counters.
 - **Result:** 165 front-end tests; `src/lib` at 100% on every metric.
 
+### Notes from the WP4 reviews (2026-10-26)
+
+- **Red runs:**
+  - The specs failed on import before the code existed.
+  - After the reviews, 57 new or changed tests failed before their fixes, and then 18 more for `resourcePath`.
+  - The timeout mutation (`REQUEST_TIMEOUT_MS + 1`) fails the timeout test.
+- **Reviews:** `ecc:typescript-reviewer` (sonnet/medium) and `ecc:security-reviewer` (opus/high) ran in parallel. Neither found a critical or high issue. One combined fix list went to `tdd-guide`. Security round 2 (opus/high) closed every finding, and its one new low finding was fixed and checked inline.
+- **Changes from the plan:**
+  - **Auth mode instead of a `secured` flag** (security M2). Every call states a **required** `auth: 'session' | 'probe' | 'credentials' | 'public'`, so a forgotten mode is a type error. Only `session` runs the session-expired handler. Only `credentials` maps a 401 to `invalid-credentials`.
+  - **Path allow-list** (security M1, client-side path traversal into CSRF).
+    - `request()` accepts only paths matching `^(/[A-Za-z0-9._~-]+)+$` with no `.` or `..` segment; anything else gives `{kind: 'invalid-request'}` without a request.
+    - Ids go through `resourcePath('/categories' | '/expenses', id)`, which returns the whole path or `null`, so a bad id is never interpolated (round 2: `` `${null}` `` would have given `/expenses/null`).
+    - Query strings go only through the `query: URLSearchParams` option.
+  - **New error kind `invalid-request`** for a refused path. `client-bug` stays the server's 413 and 415, so every status-carrying kind has a numeric status.
+- **Hardening:**
+  - `redirect: 'error'`.
+  - The abort-signal setup sits inside the `try`, so a browser without `AbortSignal.any` gets `network`, not a throw.
+  - The media type is compared exactly (lower-cased, cut at `;`).
+  - `fieldErrors` has a null prototype.
+  - At most 20 `errors[]` entries are kept, and each server `detail` is cut at 500 code points without splitting a surrogate pair.
+  - The latch re-arms if the handler throws.
+  - `Retry-After` accepts only whole seconds from 1 to 86400.
+- **Refactor:** `failureReason` moved to `src/api/abort.ts`, and `API_BASE` to `src/config.ts`, both shared with `health.ts`. `health.ts` behaves exactly as before; its 17 tests are unchanged.
+- **Conventions for later WPs:**
+  - A 204 endpoint is called as `request<void>`.
+  - A `server` error with a 2xx status means the success body was unreadable.
+  - Several errors on one field keep the first.
+- **Carried to WP5:**
+  - Call `setUnauthorizedHandler` exactly once, in `main.ts`, never from a guard.
+  - During sign-out, set it to `null`, and restore it if logout fails, so a parallel 401 does not show "session ended".
+  - `POST /auth/logout` uses `auth: 'session'`.
+  - Views render `unauthorized` as a fixed "Your session ended, sign in again" message with a link, in case the handler's page load is ever cancelled (for example by a WP9 "unsaved changes" prompt).
+- **Carried to WP11 docs:** the browser floor is now set by the API client (`AbortSignal.any`): Chrome 116, Firefox 124, Safari 17.4. That is higher than the `Intl` floor in Step 0 R4.
+- **Result:** 339 front-end tests; `src/api` and `src/config.ts` at 100%. `types.ts` holds only types, checked by `vue-tsc` through `types.spec.ts`.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
