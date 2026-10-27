@@ -720,6 +720,56 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Watch:** `ConfirmDeleteButton.spec.ts` (WP6) failed once each in three full runs, in different tests, and passed on rerun. It is fixed in its own commit after WP7.
 - **Result:** 731 front-end tests; coverage is 100% for statements, branches, functions and lines.
 
+### Notes from the WP8 reviews (2026-10-27)
+
+- **Red runs:**
+  - First pass: 4 new spec files failed before any code. Three failed on missing modules (`api/categories`, `lib/categoryMessages`, `stores/categories`), and the view spec failed on the placeholder view. 31 tests failed in total.
+  - Review round 1 fixes: 15 tests failed before their fixes. Round 2: 6 tests failed before their fixes.
+  - Mutation proofs:
+    - Rendering the name with `v-html` turns the hostile-name test red (1).
+    - Dropping `version` from the PATCH body turns 4 red.
+    - Counting with `s.length` instead of code points turns 11 red, including "50 emoji accepted, 51 refused".
+    - Ignoring a 404 in the store's `remove` turns 2 red.
+    - Removing the clear-then-set in the notice turns the re-announce test red.
+- **Reviews:**
+  - `ecc:vue-reviewer` (sonnet/medium) ran in three rounds.
+  - No security review. The plan routes WP8 through the vue reviewer's checklist plus the C16 lint rules (decision 16).
+  - **Round 1:** no critical or high issue; 6 medium and 5 low.
+    - **Medium, all fixed:**
+      - A superseded list refresh was reported as success, so "Loading categories…" could hang. Refresh now follows the newest attempt, and the add form is unusable until the list loads.
+      - Delete could be confirmed twice, and rename and delete did not block each other. A `busy` guard fixes this.
+      - Reload dropped focus. It now focuses the name field and says "Reloaded the latest name."
+      - Reload on a row deleted elsewhere vanished silently. It is now announced, with focus on the h1.
+      - Escape or Cancel during a save caused late focus jumps and stale errors. Escape and Cancel are now inert while saving, opening the form clears old errors, and the delete error has its own message.
+      - Identical "Rename", "Delete" and "New name" names across rows. They now include the category name, which keeps the label in the name.
+    - **Low, all fixed:**
+      - A repeated notice is announced again.
+      - The Uncategorized warning is tied to Delete and Confirm via `aria-describedby` (`DELETE_HINT_ID`).
+      - The unsaved-changes text is tied to Reload.
+      - The input is read-only while saving.
+      - Retry shows "Retry…" and has a guard.
+      - The `@/api/categories` test mock is one shared helper (`api/__tests__/emptyCategoriesApi.ts`).
+    - **Not taken:** refresh the whole list on a rename 404 instead of removing the row. The current behaviour matches C12.
+  - **Round 2** (fix hunks only): all fixed, with one new medium.
+    - Focus was lost after a FAILED delete, because native `disabled` was applied before focus could return.
+    - Fixed by making `ConfirmDeleteButton` use `aria-disabled` plus guards (Delete, Confirm, Cancel; Escape goes through cancel). This is the app-wide convention since WP6.
+    - Two lows, both fixed: Enter before the list loads shows "Wait for the list to load."; the row's Cancel is `aria-disabled` while saving.
+  - **Round 3** (fix hunks only): all fixed, nothing blocking.
+    - **Accepted:** the "Wait for the list to load." message stays until the next submit.
+    - **Accepted:** no separate test for Escape while disabled. It uses the same guard as the tested Cancel path.
+- **Decisions and deviations:**
+  - **Store reset:** the session store resets no other store, because sign-out does a full page load. The categories store therefore watches `session.user?.id` (`flush: 'sync'`) and resets itself on sign-out or a user change. An epoch drops in-flight answers for the old user.
+  - **`CategoryRow` takes an `announce` function prop**, not an emit. The row unmounts when the store removes it, and Vue drops emits from unmounted components.
+  - **Rename 404** removes the row and says "This category no longer exists."
+  - **Rename 409** shows the `detail` plus "Reload". Reload stays in edit mode with the latest name, and the next save sends the new `version`. This follows C12; open question 9 is answered by C12/C19, with no contract change.
+  - Renaming to the same trimmed name sends nothing.
+  - **After a create**, the item is appended, then the list is refreshed for the server's order. If that refresh fails, the item stays at the end.
+  - **Shared component change:** `ConfirmDeleteButton` gained optional `subject` (accessible names "Delete <name>" and "Confirm delete <name>") and `describedby` props. It now uses `aria-disabled` instead of native `disabled`.
+  - **Test isolation:** `App.spec.ts`, `focus.spec.ts` and `views.spec.ts` mount `/categories`, so they mock the categories API through the shared helper.
+- **Flaky test:** the parked `ConfirmDeleteButton.spec.ts` flake did not appear in any WP8 run (6 saved full runs).
+  - One reviewer run in round 1 exited 2 without the failing test being captured. It was not reproduced.
+- **Result:** 824 front-end tests; coverage is 100% for statements, branches, functions and lines.
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |
