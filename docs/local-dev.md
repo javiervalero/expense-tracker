@@ -285,7 +285,8 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 |---|---|
 | `make check-image-pins` | Every image used to build or run the stack is pinned by digest |
 | `make lint-workflows` | zizmor over the GitHub workflows and actions: hash-pinned `uses:`, pinned images, security audits |
-| `make secrets-scan` | gitleaks over the full git history. Needs a full clone, not a shallow one |
+| `make secrets-scan` | gitleaks over the full git history, then `secrets-scan-worktree`. Needs a full clone, not a shallow one. Run it before every commit |
+| `make secrets-scan-worktree` | gitleaks over uncommitted work: the staged version of each file (what the next commit holds) and the version on disk, including untracked files that are not ignored |
 | `make check-php-ini` | The Lambda PHP ini (`backend/php/conf.d`) is loaded by the pinned `bref/php-85` image with the hardened values |
 
 **Terraform (Phase 0 has no AWS resources; these need no credentials)**

@@ -1,5 +1,6 @@
 # gitleaks configuration (`make secrets-scan`, also the `guards` CI job). It scans the FULL git history, so a value
-# removed from the tree is still reported. Findings are printed redacted.
+# removed from the tree is still reported, and uncommitted work (`make secrets-scan-worktree`: staged and on-disk
+# files, with the same repo-relative paths, so the path allowlists below apply to both). Findings are printed redacted.
 #
 # Keep the default rules; allowlist only known-fake values, each by path AND rule AND value (condition = "AND"),
 # never with a blanket regex. A real secret must never be added here: rotate it instead.
