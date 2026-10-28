@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Implemented 2026-10-28** (WP1–WP11). Pending: gate G3 (owner browser walkthrough) and G6 (PR #7 merge). Approved 2026-10-26 (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
+| Status | **Implemented 2026-10-28** (WP1–WP11). G3 (owner browser walkthrough) done 2026-10-28, with fixes in the notes below. Pending: G6 (PR #7 merge). Approved 2026-10-26 (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
 | Phase | 4 (PLAN §12, essential track), size M |
 | Branch | `feat/phase-4-frontend`, from `main` at 19552c0 (Phase 3 merged in PR #6) |
 | Inputs | BRIEF; PLAN §5, §8, §9, §10, §12, §13; ADR 0002 (pagination), 0004 (incl. "Implemented in Phase 2"), 0005, 0008, 0011, 0012 §4.1; `contract/openapi.yaml` 0.11.0; [Phase 2 plan](phase-2-authentication.md) §7.2 and the WP12 notes; [Phase 3 plan](phase-3-categories-expenses.md) §7.2, and the notes from WP2, WP8, WP10, WP11 and WP13; the Phase 0 front end (`frontend/**`), `Makefile`, `docker-compose.yml`, `.github/workflows/ci.yml` |
@@ -915,6 +915,27 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Dependencies:** vitest and @vitest/coverage-v8 4.1.11 → 4.1.12 (`2b53bcb`), for Dependabot #1 and #2. The alerts close when PR #7 merges into main.
 - **Process slip by the implementer:** once, a bare `python3 -` on the host. It blocked on stdin, ran no code, and was killed. The main session checked that no process was left.
 - **Result:** 1124 front-end tests in 52 files; coverage is 100% for statements, branches, functions and lines. Verified twice by the main session, plus 3 sequential runs by tdd-guide.
+
+### Gate G3 browser walkthrough notes (2026-10-28)
+
+- The owner ran the walkthrough checklist in `docs/local-dev.md` ("Using the app in a browser") in Chrome and Firefox. All items passed except the findings below.
+- **Finding 1 (bug, fixed):** on `/expenses` the polite live region (`.status` in `ExpensesView.vue`) was the last child of the section, below the table and "Load more". With 60 expenses, "Expense deleted", "Already deleted" and "N more loaded" were off-screen while focus moved to the results heading, so a delete made in a second tab looked silent.
+  - The region now sits right after the results heading. It is still always rendered, with no `role="status"`.
+  - A spec pins the DOM order with `compareDocumentPosition`.
+  - The jsdom tests could not catch this, because they do not check what is on screen.
+- **Finding 2 (owner request, done):** a "Clear filters" button next to Apply in `ExpenseFilters.vue` (`type="button"`, emits `clear`), wired to the existing `clearFilters()`.
+  - With filters in the URL, it leaves them through the URL (search, summary, focus on the results heading).
+  - With only typed, unapplied values, it empties the fields and clears field errors, with no search.
+  - With nothing set, it does nothing.
+- **Finding 3 (as intended):** sign-out in one tab sends the other tabs to sign-in straight away (WP11 BroadcastChannel). The G3 checklist line earlier in this plan ("the next action in the other tab goes to sign-in") predates WP11, and `docs/local-dev.md` now says "straight away". That earlier plan line stays unchanged; this note supersedes it.
+- **Review:** `ecc:vue-reviewer` (sonnet/medium), round 1: no CRITICAL or HIGH.
+  - **MEDIUM:** Clear after a refused Apply left the field errors on screen. Fixed with `errors.clear()` and a test. The main session re-reviewed the fix inline.
+- **Accepted LOWs:**
+  - If the router push in `clearFilters` fails, the typed values stay. The applied filters did not change either.
+  - Two "Clear filters" buttons can be visible at once (the form and the empty state). They behave the same, which is acceptable.
+  - Clear with nothing set gives no feedback, by design.
+- **Agent slip:** `tdd-guide` ran `python3 --version` on the host once. It printed a version and changed nothing.
+- **Result:** 1130 front-end tests, 100% coverage. `frontend-lint`, `frontend-build` and `check-bundle-csp` pass.
 
 ## 8. Risks and decision points
 

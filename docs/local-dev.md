@@ -131,7 +131,7 @@ The owner runs this walkthrough in Chrome and Firefox. The results go into the p
 - [ ] Filter by date range, by category (including Uncategorized) and by text; "Load more".
 - [ ] Edit the same expense in two tabs: the second save gets a 409 with "Reload".
 - [ ] Delete in two tabs: the second shows "already deleted".
-- [ ] Sign out in one tab: the next action in the other tab goes to sign-in.
+- [ ] Sign out in one tab: the other tabs go to sign-in straight away, without waiting for an action.
 - [ ] Keyboard only.
 - [ ] Zoom at 200%.
 - [ ] Screen reader (NVDA or VoiceOver) on `/expenses`:
