@@ -66,12 +66,14 @@ export default defineConfig(({ mode }) => {
     test: {
       environment: 'jsdom',
       include: ['src/**/*.spec.ts', 'vite/**/*.spec.ts'],
+      // Makes Date.now() monotonic: a stepped-back host clock otherwise makes Vue skip event handlers (monotonicClock.ts).
+      setupFiles: ['./vite/vitest.setup.ts'],
       coverage: {
         provider: 'v8',
         include: ['src/**/*.{ts,vue}', 'vite/**/*.ts'],
         // schema.gen.ts is generated (checked by `make contract`); main.ts is only the bootstrap that
         // mounts the app and has no logic of its own; the spec files are the tests.
-        exclude: ['src/api/schema.gen.ts', 'src/main.ts', '**/*.spec.ts'],
+        exclude: ['src/api/schema.gen.ts', 'src/main.ts', 'vite/vitest.setup.ts', '**/*.spec.ts'],
         reporter: ['text', 'json-summary'],
         thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },
       },
