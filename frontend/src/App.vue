@@ -30,6 +30,8 @@ function skipToMain(): void {
 
 // A message that survived a navigation (such as "Expense saved") is dropped at the next one.
 watch(() => route.path, clearFlash)
+// ...and so is one that outlives the user it was meant for (a sign-out, or another account signing in).
+watch(() => session.user?.id, clearFlash, { flush: 'sync' })
 
 // The guard redirects on navigation. This covers the other case: the session changes while the user stays on the page
 // (a sign-in just succeeded on /login, or a sign-out is under way). Hiding the page below is not enough, since nothing

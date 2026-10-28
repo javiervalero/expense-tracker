@@ -190,6 +190,20 @@ describe('App: flash message', () => {
     expect(wrapper.get('.flash').text()).toBe('Expense saved')
   })
 
+  it('clears the message when a different user signs in, without a navigation', async () => {
+    const { wrapper, router } = await mountApp('/expenses', signedIn)
+    await setFlash('Expense saved')
+    await flushPromises()
+    expect(wrapper.get('.flash').text()).toBe('Expense saved')
+
+    useSessionStore().user = { id: 'other', email: 'x@y.z' }
+    await flushPromises()
+
+    expect(router.currentRoute.value.fullPath).toBe('/expenses')
+    expect(flashMessage.value).toBe('')
+    expect(wrapper.get('.flash').text()).toBe('')
+  })
+
   it('clears the message on the next navigation', async () => {
     const { wrapper, router } = await mountApp('/expenses', signedIn)
     await setFlash('Expense saved')

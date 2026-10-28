@@ -1,6 +1,7 @@
+import { reload } from '@/lib/navigation'
+
 interface BfcacheTarget {
   addEventListener(type: 'pageshow', listener: (event: PageTransitionEvent) => void): void
-  location: Pick<Location, 'reload'>
 }
 
 /**
@@ -10,7 +11,7 @@ interface BfcacheTarget {
 export function installBfcacheGuard(target: BfcacheTarget): void {
   target.addEventListener('pageshow', (event) => {
     if (event.persisted) {
-      target.location.reload()
+      reload()
     }
   })
 }

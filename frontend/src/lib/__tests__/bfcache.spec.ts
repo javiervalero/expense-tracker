@@ -1,28 +1,32 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { installBfcacheGuard } from '../bfcache'
+import { reload } from '../navigation'
+
+vi.mock('../navigation', () => ({ reload: vi.fn() }))
 
 type Listener = (event: { persisted: boolean }) => void
 
 function fakeWindow() {
   const listeners = new Map<string, Listener>()
-  const reload = vi.fn()
   const target = {
     addEventListener: vi.fn((type: string, listener: Listener) => {
       listeners.set(type, listener)
     }),
-    location: { reload },
   }
   return {
     target,
-    reload,
     fire: (event: { persisted: boolean }) => listeners.get('pageshow')?.(event),
   }
 }
 
+beforeEach(() => {
+  vi.mocked(reload).mockReset()
+})
+
 describe('installBfcacheGuard', () => {
-  it('reloads when the page comes back from the back-forward cache', () => {
-    const { target, reload, fire } = fakeWindow()
+  it('reloads, through lib/navigation, when the page comes back from the back-forward cache', () => {
+    const { target, fire } = fakeWindow()
     installBfcacheGuard(target)
 
     fire({ persisted: true })
@@ -31,7 +35,7 @@ describe('installBfcacheGuard', () => {
   })
 
   it('does not reload on an ordinary page show', () => {
-    const { target, reload, fire } = fakeWindow()
+    const { target, fire } = fakeWindow()
     installBfcacheGuard(target)
 
     fire({ persisted: false })

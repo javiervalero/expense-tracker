@@ -460,6 +460,23 @@ describe('useExpenseList: remove', () => {
     expect(list.deleting.value.has(B.id)).toBe(false)
   })
 
+  it('drops the answer of a delete that was started before a new search: no row error, null outcome', async () => {
+    const list = await loaded()
+    const slow = deferred<unknown>()
+    api.deleteExpense.mockReturnValueOnce(slow.promise)
+    const stale = list.remove(B.id)
+    api.listExpenses.mockResolvedValueOnce(pageOf([A, B, C]))
+    await list.search(NO_FILTERS)
+
+    slow.resolve(failed({ kind: 'timeout' }))
+    const outcome = await stale
+
+    expect(outcome).toBeNull()
+    expect(list.rowErrors.value.size).toBe(0)
+    expect(list.items.value).toEqual([A, B, C])
+    expect(list.deleting.value.has(B.id)).toBe(false)
+  })
+
   it('marks the row busy while the call is in flight and ignores a second delete', async () => {
     const list = await loaded()
     const slow = deferred<{ ok: true; status: number; data: undefined }>()

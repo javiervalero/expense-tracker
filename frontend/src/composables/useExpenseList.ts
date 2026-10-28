@@ -171,15 +171,23 @@ export function useExpenseList() {
     deleting.value = next
   }
 
-  /** Deletes one row. 204 and 404 both remove it (plan C13); any other failure keeps it and sets `rowErrors.get(id)`. */
+  /**
+   * Deletes one row. 204 and 404 both remove it (plan C13); any other failure keeps it and sets `rowErrors.get(id)`.
+   * Returns null when ignored, or when a new search (or `stop`) came in before the answer: that list is gone, so
+   * nothing is written to the new one and the page has nothing to announce.
+   */
   async function remove(id: string): Promise<RemoveOutcome> {
     if (deleting.value.has(id)) {
       return null
     }
+    const mine = generation
     markDeleting(id, true)
     rowErrors.value = new Map([...rowErrors.value].filter(([key]) => key !== id))
     try {
       const result = await deleteExpense(id)
+      if (mine !== generation) {
+        return null
+      }
       if (result.ok || result.error.kind === 'not-found') {
         deletedIds.add(id)
         items.value = items.value.filter((expense) => expense.id !== id)
