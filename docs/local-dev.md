@@ -116,6 +116,49 @@ not reliably (WebKit bug 281149). The code has no "insecure cookie" switch on pu
 The logs show `"userId":"<uuid>"` on authenticated request lines, and a refused cross-site check writes a warning
 `csrf check failed`. Passwords and session tokens are never logged; `make test-integration` checks this.
 
+## Using the app in a browser
+
+Start the stack with `make up` (see "Prerequisites and first run"), then open http://localhost:5173 in **Chrome or
+Firefox only**. Safari is not supported locally because of WebKit bug 281149.
+
+The owner runs this walkthrough in Chrome and Firefox. The results go into the pull request body (gate G3).
+
+- [ ] Register, sign out, sign in.
+- [ ] A wrong password gives a generic message, and the 11th failure shows "try again in about N minutes".
+- [ ] Opening `/expenses` signed out goes to sign-in, and comes back to `/expenses` after signing in.
+- [ ] Create, rename and delete categories, including the empty state and a duplicate name.
+- [ ] Create, edit and delete expenses.
+- [ ] Filter by date range, by category (including Uncategorized) and by text; "Load more".
+- [ ] Edit the same expense in two tabs: the second save gets a 409 with "Reload".
+- [ ] Delete in two tabs: the second shows "already deleted".
+- [ ] Sign out in one tab: the next action in the other tab goes to sign-in.
+- [ ] Keyboard only.
+- [ ] Zoom at 200%.
+- [ ] Screen reader (NVDA or VoiceOver) on `/expenses`:
+  - Apply announces the result summary;
+  - Load more announces "N more loaded";
+  - delete announces "Expense deleted" or "Already deleted".
+
+### Making "Load more" appear
+
+The list loads 50 expenses at a time, so 60 expenses show "Load more". Sign in on the command line first (see
+"Signing in from the command line"), so that `jar.txt` and the `API` and `H` variables exist. The loop creates the
+expenses for the signed-in user, so sign in to the browser as that user to see them. Each line of output should be
+`201`. Each run adds 60 more expenses; see [Resetting state](#resetting-state) to start again from empty.
+
+```bash
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -w '%{http_code}\n' -c jar.txt -b jar.txt "${H[@]}" \
+    -d "{\"date\":\"2026-10-$(printf '%02d' $(( (i % 28) + 1 )))\",\"amountCents\":$(( i * 100 + 50 )),\"description\":\"Test expense $i\"}" \
+    $API/expenses
+done
+```
+
+### After use
+
+Stop the stack with `make down`. Do not add `-v` unless you mean to wipe local data. See
+[Resetting state](#resetting-state).
+
 ## Categories and expenses from the command line
 
 These commands reuse the signed-in cookie jar `jar.txt` and the `API` and `H` variables from the section above, so

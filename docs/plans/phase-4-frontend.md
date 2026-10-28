@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Approved 2026-10-26** (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
+| Status | **Implemented 2026-10-28** (WP1–WP11). Pending: gate G3 (owner browser walkthrough) and G6 (PR #7 merge). Approved 2026-10-26 (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
 | Phase | 4 (PLAN §12, essential track), size M |
 | Branch | `feat/phase-4-frontend`, from `main` at 19552c0 (Phase 3 merged in PR #6) |
 | Inputs | BRIEF; PLAN §5, §8, §9, §10, §12, §13; ADR 0002 (pagination), 0004 (incl. "Implemented in Phase 2"), 0005, 0008, 0011, 0012 §4.1; `contract/openapi.yaml` 0.11.0; [Phase 2 plan](phase-2-authentication.md) §7.2 and the WP12 notes; [Phase 3 plan](phase-3-categories-expenses.md) §7.2, and the notes from WP2, WP8, WP10, WP11 and WP13; the Phase 0 front end (`frontend/**`), `Makefile`, `docker-compose.yml`, `.github/workflows/ci.yml` |
@@ -879,6 +879,42 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - It ran two full test runs at once, then replaced the result with a clean sequential run.
   - It ran two make targets in one tool call.
 - **Result:** 1087 front-end tests across 51 files; coverage is 100% for statements, branches, functions and lines. Verified twice by the main session, plus 3 sequential runs by tdd-guide.
+
+### Notes from the WP11 reviews (2026-10-28)
+
+- **Whole-front-end security review, round 1** (`ecc:security-reviewer`, opus/high; not blocking; 1 MEDIUM, 2 LOW, all fixed test-first by a fresh `ecc:tdd-guide`):
+  - **Passed with no finding:**
+    - user text into a sink (HTML, attributes, URL, route, `document.title`, live regions);
+    - unsafe requests without the header (every POST, PATCH and DELETE goes through `request()`);
+    - redirect sinks;
+    - the cross-cutting checks: the 401 handler fires once, the error handler, the dev proxy and `ORIGIN_VERIFY_LOCAL` stay out of the bundle, the built bundle meets the CSP, and there is no `target="_blank"` and no `console`.
+  - **Q6 (are the §1 properties pinned?):** all are pinned by a test or a lint rule, except "nothing survives a sign-out", which was in-tab only (M1).
+  - **MEDIUM M1:** data stayed in a tab after a sign-out in another tab, an account switch there, or a server-side expiry. `ensureLoaded` and the categories `load()` are cached, so no request reached the server and the 401 handler never ran.
+    - **Fix:** a new `src/lib/sessionChannel.ts`, `BroadcastChannel('expense-tracker-session')`, installed from `main.ts`.
+      - Logout (on success only) posts `signed-out`; login and register post `signed-in` with the id.
+      - Other tabs go to `/login` on `signed-out`, and reload on a `signed-in` with a different id.
+      - Messages are parsed strictly: two exact shapes, the uuid id checked. It stores nothing (C3), and it does nothing without BroadcastChannel.
+    - **Backup for server-side expiry:** `CategoriesView` and the new-expense form call `categories.refresh()` on mount, so every page that shows user data makes a session-checked request.
+  - **LOW L1:** no lint rule stopped a request or navigation outside `api/http.ts` and `lib/navigation.ts`. ESLint now restricts `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `location`, `indexedDB`, `caches`, `navigator.sendBeacon`, `open` and `document.location`. Overrides allow `fetch` only in `http.ts` and `health.ts`, `location` only in `navigation.ts`, and stubs in spec files.
+  - **LOW L2:** `no-debugger` and `no-alert` are now errors.
+  - **Lint RED proof:** a temporary violating file gave 15 lint errors, and was then deleted.
+- **Round 2** (opus/high, fix hunks only): M1, L1 and L2 closed; not blocking. 3 new LOW, all fixed:
+  - **N1:** a `signed-out` message no longer navigates a tab with no user (a login or register page), so a half-typed form is not lost.
+  - **N2:** after a server-side expiry, cached category names were drawn for one round trip. CategoriesView, the new-expense form and the ExpensesView filter now show category names only after this mount's own request has answered. A failed refresh in the form says "Categories could not be loaded. Reload the page to try again."
+  - **N3:** the network and navigation lint rules now cover `window`, `globalThis` and `self`, plus `document.defaultView`, `top`, `parent` and `frames`. A temporary violating file gave 8 errors.
+  - **Accepted:**
+    - in the few milliseconds after a sign-in as another user in tab 2, a create sent from tab 1 could land in the new account (the same person caused the switch);
+    - the public 404 page shows the tab's own email until the next action;
+    - user text in `aria-label` and `title` cannot be wrapped in `<bdi>`.
+- **Round 3:** the main session reviewed the N1-N3 hunks inline, since they were small. ExpensesView treats a failed first list request as "answered", which is harmless: a 401 reloads to `/login`.
+- **Docs:**
+  - `docs/local-dev.md`: "Using the app in a browser", with the walkthrough checklist, the screen-reader item and the 60-expense loop;
+  - README: the browser line and all five phase plans;
+  - ADR 0008 "Implemented in Phase 4";
+  - PLAN §12: row 4 "Done (PR #7 merge pending)", and the L5 row without `q`.
+- **Dependencies:** vitest and @vitest/coverage-v8 4.1.11 → 4.1.12 (`2b53bcb`), for Dependabot #1 and #2. The alerts close when PR #7 merges into main.
+- **Process slip by the implementer:** once, a bare `python3 -` on the host. It blocked on stdin, ran no code, and was killed. The main session checked that no process was left.
+- **Result:** 1124 front-end tests in 52 files; coverage is 100% for statements, branches, functions and lines. Verified twice by the main session, plus 3 sequential runs by tdd-guide.
 
 ## 8. Risks and decision points
 

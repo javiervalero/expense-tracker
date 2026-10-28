@@ -26,6 +26,8 @@ make php-install        # once: back-end dependencies, in a PHP container
 make up                 # creates .env, starts the stack and waits until it is healthy
 ```
 
+To use the app in a browser, open http://localhost:5173 in Chrome or Firefox (not Safari); see [Using the app in a browser](docs/local-dev.md#using-the-app-in-a-browser).
+
 Then open:
 
 - the app: http://localhost:5173 (Vite, which proxies `/api` to the API)
@@ -61,4 +63,4 @@ The full local guide, with the service table, the make targets, how to run one t
 - [PLAN.md](docs/PLAN.md): the approved plan: summary, decisions, architecture, phases and status
 - [docs/adr/](docs/adr/): architecture decision records (start with the [index](docs/adr/README.md))
 - [docs/local-dev.md](docs/local-dev.md): local development: services and ports, the make targets, tests, troubleshooting
-- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md))
+- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md), Phase 2: [phase-2-authentication.md](docs/plans/phase-2-authentication.md), Phase 3: [phase-3-categories-expenses.md](docs/plans/phase-3-categories-expenses.md), Phase 4: [phase-4-frontend.md](docs/plans/phase-4-frontend.md))
