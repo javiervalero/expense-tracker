@@ -967,6 +967,16 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - L16 ExpenseFormView (420 lines) could move logic to a composable; `run()` in useExpenseList is ~55 lines.
   - Tests: no spec for `stop()` during a delete, or for a stale delete that succeeded.
 - PR body: mention the dev-only phpunit 13.4.5 bump (GHSA-9vw2-f4vp-x7gf, commit `24655f7`).
+- `/update-docs`: the make-target, environment, service and endpoint docs matched their sources, except two rows in
+  `docs/local-dev.md` (the `make lint` row now lists its targets; `make check-bundle-csp` gained a row).
+- `/verification-loop` on `46f2112`: build, `make lint`, back-end unit 2595 (99.3% lines), contract 32, local-aws 347,
+  front end 1132 (100%), conformance 47, integration 444 + 2 with every log check, secrets scans: all green. CI run
+  40744634600 green on all 7 jobs. Agent slip: the haiku runner let `make test` finish in the background after its
+  command time limit (the only run; it passed and nothing was left running).
+- `/ecc:cost-report`: Phase 4 about $87 across 9 sessions (2026-10-26 to 2026-10-28), against about $78 across 11 for
+  Phase 3. The tracker records the main session only (Opus); subagent spend is not in it. The phase was larger (11 work
+  packages, about 16,700 lines). No routing row moves: no downgraded tier caused rework (the off-screen message was
+  missed by jsdom tests, not by a reviewer tier).
 
 ## 8. Risks and decision points
 
