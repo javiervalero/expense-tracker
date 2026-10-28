@@ -415,6 +415,7 @@ session ran the checks marked **ran** in the pinned `node:24.21.0-alpine` image 
   - PLAN §12 row 4 → Done, and the L5 row without `q`;
   - this plan's status → Done.
 - **Gate G3:** the owner runs the checklist on `make up` (the main session cannot drive a browser). Results go in the PR body.
+- **Screen reader (NVDA or VoiceOver) on /expenses:** Apply announces the result summary, Load more announces "N more loaded", and delete announces "Expense deleted" / "Already deleted". jsdom tests cannot prove live-region behaviour (WP10 notes).
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 3).
 - **Docker:** stack (`make up`; `make down` without `-v` afterwards only if the owner wants).
 - **Commit:** `docs: phase 4 browser walkthrough, readme and adr 0008 notes`.
@@ -482,6 +483,7 @@ WP1 ─► Step 0 ─► WP2 ─► WP3 ─► WP4 ─► WP5 ─► WP6 ─┬�
 | `maxLength` on `name` is the byte pre-check, not the rule | Phase 3 WP8 notes | C10 (no `maxlength` attribute at the rule) |
 | 404 on delete = "already gone"; `''` pointer → form level | Phase 3 WP10 notes | C4, C13; WP4, WP8–WP10 |
 | The cursor is URL-safe | Phase 3 WP13 | Sent through `URLSearchParams`; never put in the page URL (C11) |
+| Dependabot alerts #1 and #2 (`@vitest/mocker` 4.1.11, GHSA-xp26-3454-mjgp and GHSA-qxg6-89mg-rqv8, moderate, dev-only, low real exposure) | Owner approval 2026-10-28 | Bump `vitest` and `@vitest/coverage-v8` to 4.1.12 right after the WP10 commit, in its own `chore(deps)` commit |
 
 ### 7.2 Not in Phase 4 (with the reason)
 - **Phase 5:** receipt upload, progress and preview in `ExpenseFormView`; `connect-src` / `img-src` for the S3 hosts added to the target CSP.
@@ -805,6 +807,78 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
   - **Evidence:** 5 consecutive runs by tdd-guide plus 2 by the main session, all green, with 916 tests and 100% coverage.
   - CI has stayed green throughout. That fits a host-clock cause, since GitHub's Linux runners are not WSL2. The fix stays in the setup anyway, because it is harmless where the clock never steps back.
 - **Result:** 916 front-end tests; coverage is 100% for statements, branches, functions and lines.
+
+### Notes from the WP10 reviews (2026-10-28)
+
+- **Red runs:**
+  - First RED: `expenseQuery.spec` and `useExpenseList.spec` failed on unresolved imports. `ExpensesView.spec` ran against the placeholder: 41 failed, 1 passed (the flash test, which holds trivially).
+  - GREEN: 1031 tests, 100% coverage.
+  - Fix round 1 RED: 29 failed of 128 in the 4 touched specs.
+  - Fix round 2 RED: `useCategoryLabels.spec` failed on an unresolved import, and 8 more tests failed.
+- **Decisions taken during WP10 (not settled by the plan):**
+  - **Searching:**
+    - Apply pushes the filters to the URL, and a watcher on a canonical filter key runs the search.
+    - Unchanged filters re-search directly.
+    - Unrelated or repeated query params do not retrigger a search.
+    - A URL with `from` > `to` sends no request and shows the message under To. The composable also refuses it.
+  - **An over-long `q`:** in the URL it is dropped as an invalid value; typed into the form it is refused with a message.
+  - **400 restart:** allowed once per click or run, not once per search. After a restart the live region says "The list was reloaded from the start."
+  - **`nextCursor`:** a `nextCursor` of `''` is treated as null.
+  - **Unknown category:** a valid URL category id that is not in the user's list is kept as an "Unknown category" option, shown only once the categories have loaded.
+  - **Row ids:** a row whose id is not a lower-case v4 uuid gets no Edit link and no Delete button. An invalid date shows "—" with no `datetime`.
+  - **Live region:** it uses `aria-live="polite"` without `role="status"` (the same collision WP9 avoided). It is always rendered, and is never `display:none` while empty.
+  - **Focus after Apply, Clear filters and Retry:** focus goes to `h2#results-heading`, and a fixed summary is announced: "N expense(s) shown", "No expenses match these filters" or "No expenses yet".
+  - **Focus after Load more:** focus is rescued only when the button left the DOM: to the first new row's `th`, or else to the heading.
+  - **Category column:** it moved to `composables/useCategoryLabels.ts`:
+    - one lookup per batch of new unknown ids;
+    - an `inflight` set, so lookups never overlap;
+    - "Category unavailable" when the lookup failed, which is not the same as "Uncategorized";
+    - failed ids are retried when the list grows, or once when the store loads successfully elsewhere.
+    - `loaded` only becomes true on a successful fetch and false on sign-out, so the retry cannot loop.
+  - **Page merge:** a repeated id replaces the existing row in place, ids deleted in this generation are skipped, and duplicates inside one page are removed. The auto-follow, "Keep searching" and the "N more loaded" count use the rows actually added. The `MAX_AUTO_FOLLOW = 3` cap is unchanged.
+  - **Error text:** the list and delete paths show fixed client text only. `describeListError` maps 409 and 422 to the generic message, because these endpoints define neither status.
+  - **Deviations:** there is no separate `ExpenseTable.spec.ts` (the view spec covers the table). Two shared test helpers were added: `api/__tests__/emptyExpensesApi.ts` and `expenseFixtures.ts`.
+- **Review round 1** (`ecc:vue-reviewer`, blocking):
+  - **HIGH:** the live region was `display:none` while empty, so screen readers could miss announcements.
+  - **MEDIUM:** focus was lost after an empty last page, a 400 restart and Retry.
+  - **MEDIUM:** Apply and Clear filters announced no outcome.
+  - **MEDIUM:** a failed category lookup showed "Uncategorized" permanently.
+  - **MEDIUM:** a row deleted while Load more was in flight could come back.
+  - **6 LOW.** Fixed: `reset()` now clears row errors, "Unknown category" no longer flashes while loading, and "No expenses on this page." was added.
+- **Security review** (`ecc:security-reviewer`, opus/high, not blocking):
+  - Q1–Q7 passed: URL to API allow-list, cursor opacity, rendering, ids to links and requests, fixed error text, resource limits, CSP.
+  - **3 LOW, all fixed:**
+    - `rowErrors` read inherited properties for ids like `constructor` (now a `ReadonlyMap`);
+    - server `detail` could show on the list and delete paths (now `describeListError`);
+    - a duplicate id across pages gave duplicate `v-for` keys (now merge with dedupe).
+- **Accepted:**
+  - keeping old rows visible with `aria-busy` during loading (a bigger change; focus is covered by the rescue);
+  - a Safari quirk where a click does not focus the button;
+  - invalid URL values are dropped silently, per spec.
+- **Extra tests added, all green with no code change:**
+  - back and forward;
+  - Clear filters focus;
+  - `/expenses?__proto__=x&constructor=a&constructor=b&from=2026-10-01` sends exactly `from=2026-10-01&limit=50`;
+  - `q=a+b` is read as "a b" and `q=a%2Bb` as "a+b".
+- **Round 2:**
+  - **Security** (opus/high): no findings.
+  - **Vue:** approved, with 2 MEDIUM and 5 LOW, all fixed.
+    - **MEDIUM:** `rescueFocus` stole focus whenever focus was on body. It now requires the button to have left the DOM.
+    - **MEDIUM:** a category lookup could run twice at once. Fixed with the `inflight` set and the extraction to `useCategoryLabels`.
+    - **LOW:** a stale `wantSummary` after a cancelled push.
+    - **LOW:** no retry for "Category unavailable" on a single page.
+    - **LOW:** duplicates inside one page.
+    - **LOW:** follow decisions now based on the rows added.
+    - **LOW:** a broader live-region guard test.
+- **Round 3** (Vue, fix hunks): approved, no findings above LOW.
+  - **Accepted LOW:** during a restart, if focus was on body, it moves to the heading.
+  - **Accepted LOW:** the `loaded` watcher callback returns a promise. That is harmless.
+  - **Accepted UX gap:** when the categories fail to load, the filter select shows blank for a URL category id. The filter still applies.
+- **Process slips by the implementer (no harm done):**
+  - In round 1 it ran `python3` on the host three times with empty input or `--version`, against the "nothing on the host" rule.
+  - It ran two full test runs at once, then replaced the result with a clean sequential run.
+  - It ran two make targets in one tool call.
+- **Result:** 1087 front-end tests across 51 files; coverage is 100% for statements, branches, functions and lines. Verified twice by the main session, plus 3 sequential runs by tdd-guide.
 
 ## 8. Risks and decision points
 
