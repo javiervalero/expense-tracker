@@ -116,14 +116,17 @@ describe('sign-in and register over the real client', () => {
   })
 
   it('a 201 from register signs in and lands on /expenses', async () => {
-    stubApi((url) =>
-      url.endsWith('/auth/me')
-        ? problem(401)
-        : new Response(JSON.stringify({ id: 'u1', email: 'a@example.com' }), {
-            status: 201,
-            headers: { 'Content-Type': 'application/json' },
-          }),
-    )
+    const json = (body: object, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    stubApi((url) => {
+      if (url.endsWith('/auth/me')) return problem(401)
+      if (url.includes('/expenses')) return json({ items: [], nextCursor: null })
+      if (url.includes('/categories')) return json({ items: [] })
+      return json({ id: 'u1', email: 'a@example.com' }, 201)
+    })
     const wrapper = await open('/register')
     await wrapper.get('#register-email').setValue('a@example.com')
     await wrapper.get('#register-password').setValue('a long enough password')

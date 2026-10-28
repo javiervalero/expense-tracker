@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ApiError } from '@/api/problem'
-import { describeExpenseError } from '../expenseMessages'
+import { describeExpenseError, describeListError } from '../expenseMessages'
 
 describe('describeExpenseError', () => {
   it('maps server field names to form fields: amountCents is the amount field', () => {
@@ -89,5 +89,29 @@ describe('describeExpenseError', () => {
     [{ kind: 'server', status: 500 }, 'Something went wrong on our side. Try again.'],
   ])('maps %j to fixed text', (error, text) => {
     expect(describeExpenseError(error, true).form).toBe(text)
+  })
+})
+
+describe('describeListError', () => {
+  const SECRET = 'Hand-written server detail'
+
+  it('turns a 409 or 422 into the generic text, never the server detail', () => {
+    const validation: ApiError = {
+      kind: 'validation',
+      status: 422,
+      fieldErrors: { q: SECRET },
+      formErrors: [SECRET],
+    }
+    const conflict: ApiError = { kind: 'conflict', status: 409, detail: SECRET }
+
+    expect(describeListError(validation, false)).toBe(
+      'Something went wrong on our side. Try again.',
+    )
+    expect(describeListError(conflict, true)).toBe('Something went wrong on our side. Try again.')
+  })
+
+  it('keeps the fixed texts of the other kinds', () => {
+    expect(describeListError({ kind: 'network' }, false)).toContain("Can't reach the server")
+    expect(describeListError({ kind: 'timeout' }, true)).toContain('It may have been saved')
   })
 })

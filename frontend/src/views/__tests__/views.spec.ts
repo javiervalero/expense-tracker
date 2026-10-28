@@ -11,7 +11,12 @@ vi.mock('@/api/auth', () => api)
 vi.mock('@/api/categories', () =>
   import('@/api/__tests__/emptyCategoriesApi').then((m) => m.emptyCategoriesApi()),
 )
-vi.mock('@/api/expenses', () => ({ getExpense: vi.fn(() => new Promise(() => {})) }))
+vi.mock('@/api/expenses', () => ({
+  getExpense: vi.fn(() => new Promise(() => {})),
+  listExpenses: vi
+    .fn()
+    .mockResolvedValue({ ok: true, status: 200, data: { items: [], nextCursor: null } }),
+}))
 vi.mock('@/lib/navigation', () => ({ navigateTo: vi.fn() }))
 vi.mock('@/api/health', () => ({ fetchHealth: () => new Promise(() => {}) }))
 

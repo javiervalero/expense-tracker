@@ -8,7 +8,7 @@ import { clearFlash } from '@/lib/flash'
 import { createAppRouter } from '@/router'
 
 const auth = vi.hoisted(() => ({ me: vi.fn() }))
-const expenses = vi.hoisted(() => ({ createExpense: vi.fn() }))
+const expenses = vi.hoisted(() => ({ createExpense: vi.fn(), listExpenses: vi.fn() }))
 vi.mock('@/api/auth', () => auth)
 vi.mock('@/api/expenses', () => expenses)
 vi.mock('@/api/categories', () =>
@@ -20,6 +20,12 @@ vi.mock('@/api/health', () => ({ fetchHealth: () => new Promise(() => {}) }))
 beforeEach(() => {
   auth.me.mockReset()
   expenses.createExpense.mockReset()
+  expenses.listExpenses.mockReset()
+  expenses.listExpenses.mockResolvedValue({
+    ok: true,
+    status: 200,
+    data: { items: [], nextCursor: null },
+  })
   clearFlash()
 })
 

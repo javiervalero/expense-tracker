@@ -74,3 +74,14 @@ export function describeExpenseError(error: ApiError, write: boolean): ExpenseEr
       return plain(GENERIC)
   }
 }
+
+/**
+ * The text for a failed call on the expense list page: fixed client text only. The 409 and 422 `detail` texts that
+ * `describeExpenseError` passes through belong to the form; the list sends no body, so it shows the generic text.
+ */
+export function describeListError(error: ApiError, write: boolean): string {
+  if (error.kind === 'conflict' || error.kind === 'validation') {
+    return GENERIC
+  }
+  return describeExpenseError(error, write).form
+}

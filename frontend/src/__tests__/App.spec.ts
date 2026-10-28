@@ -16,6 +16,9 @@ vi.mock('../lib/navigation', () => ({ navigateTo: vi.fn() }))
 vi.mock('@/api/categories', () =>
   import('@/api/__tests__/emptyCategoriesApi').then((m) => m.emptyCategoriesApi()),
 )
+vi.mock('@/api/expenses', () =>
+  import('@/api/__tests__/emptyExpensesApi').then((m) => m.emptyExpensesApi()),
+)
 
 const signedIn: ApiResult<User> = { ok: true, status: 200, data: { id: 'u', email: 'a@b.c' } }
 

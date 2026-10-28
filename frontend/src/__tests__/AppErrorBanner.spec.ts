@@ -13,6 +13,12 @@ const health = vi.hoisted(() => ({ fetchHealth: vi.fn() }))
 vi.mock('../api/auth', () => api)
 vi.mock('../api/health', () => health)
 vi.mock('../lib/navigation', () => ({ navigateTo: vi.fn() }))
+vi.mock('../api/categories', () =>
+  import('@/api/__tests__/emptyCategoriesApi').then((m) => m.emptyCategoriesApi()),
+)
+vi.mock('../api/expenses', () =>
+  import('@/api/__tests__/emptyExpensesApi').then((m) => m.emptyExpensesApi()),
+)
 
 const CONSOLE_METHODS = ['log', 'info', 'warn', 'error', 'debug', 'trace'] as const
 const consoleSpies = CONSOLE_METHODS.map((name) =>
