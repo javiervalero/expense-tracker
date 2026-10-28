@@ -11,7 +11,7 @@ export interface CategoryErrorView {
   conflict: boolean
 }
 
-const MAY_BE_SAVED = 'It may have been saved; check the list before trying again.'
+export const MAY_BE_SAVED = 'It may have been saved; check the list before trying again.'
 const CONFLICT_FALLBACK = 'The category was changed or the name is taken. Reload and try again.'
 
 /** The client-side message for a name that fails the check (plan phase-4 C10). */

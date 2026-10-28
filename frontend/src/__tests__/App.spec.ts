@@ -7,6 +7,7 @@ import type { ApiResult } from '../api/http'
 import type { User } from '../api/types'
 import App from '../App.vue'
 import { createAppRouter } from '../router'
+import { flashMessage, setFlash } from '../lib/flash'
 import { useSessionStore } from '../stores/session'
 
 const api = vi.hoisted(() => ({ me: vi.fn() }))
@@ -170,5 +171,30 @@ describe('App: the session changes without a navigation', () => {
     await flushPromises()
 
     expect(replace).not.toHaveBeenCalled()
+  })
+})
+
+describe('App: flash message', () => {
+  it('shows a flash message in a polite live region that is always in the page', async () => {
+    const { wrapper } = await mountApp('/expenses', signedIn)
+    const region = wrapper.get('.flash')
+    expect(region.attributes('aria-live')).toBe('polite')
+    expect(region.text()).toBe('')
+
+    await setFlash('Expense saved')
+    await flushPromises()
+
+    expect(wrapper.get('.flash').text()).toBe('Expense saved')
+  })
+
+  it('clears the message on the next navigation', async () => {
+    const { wrapper, router } = await mountApp('/expenses', signedIn)
+    await setFlash('Expense saved')
+
+    await router.push('/categories')
+    await flushPromises()
+
+    expect(wrapper.get('.flash').text()).toBe('')
+    expect(flashMessage.value).toBe('')
   })
 })

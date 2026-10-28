@@ -5,6 +5,7 @@ import { RouterView, useRoute, useRouter } from 'vue-router'
 import ApiStatus from '@/components/ApiStatus.vue'
 import AppHeader from '@/components/AppHeader.vue'
 import { appErrorKey } from '@/lib/appError'
+import { clearFlash, flashMessage } from '@/lib/flash'
 import { redirectFor } from '@/router/guards'
 import { useSessionStore } from '@/stores/session'
 import ServiceUnavailableView from '@/views/ServiceUnavailableView.vue'
@@ -26,6 +27,9 @@ function dismiss(): void {
 function skipToMain(): void {
   main.value?.focus()
 }
+
+// A message that survived a navigation (such as "Expense saved") is dropped at the next one.
+watch(() => route.path, clearFlash)
 
 // The guard redirects on navigation. This covers the other case: the session changes while the user stays on the page
 // (a sign-in just succeeded on /login, or a sign-out is under way). Hiding the page below is not enough, since nothing
@@ -53,6 +57,7 @@ watch([() => route.fullPath, () => session.status], () => {
     Something went wrong. Reload the page and try again.
     <button type="button" @click="dismiss">Dismiss</button>
   </p>
+  <div class="flash" aria-live="polite">{{ flashMessage }}</div>
   <main id="main" ref="main" tabindex="-1">
     <ServiceUnavailableView v-if="session.status === 'unreachable'" />
     <!-- Nothing is drawn for a route the guard would redirect: e.g. right after Retry finds the user signed out, a

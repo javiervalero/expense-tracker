@@ -165,3 +165,12 @@ table {
   width: 100%;
   border-collapse: collapse;
 }
+
+.flash {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 0 var(--space-3);
+}
+.flash:empty {
+  display: none;
+}
