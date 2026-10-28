@@ -657,11 +657,16 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
     - `FormAlert`: `focus()`; it renders nothing when the message is empty.
     - `ConfirmDeleteButton`: `label`, `confirmLabel`, `question`, `disabled`.
 - **Watch:** one run during the fixes failed a `ServiceUnavailableView` retry test, in a file WP6 did not touch. Five later full runs passed.
-- **Known flaky, parked (owner decision, 2026-10-27):** `ConfirmDeleteButton.spec.ts` failed in about 1 of 4 full `make frontend-test` runs during WP6–WP7, each time passing on a rerun.
+- **Known flaky, resolved (very likely) 2026-10-28; parked by the owner 2026-10-27:** `ConfirmDeleteButton.spec.ts` failed in about 1 of 4 full `make frontend-test` runs during WP6–WP7, each time passing on a rerun.
+  - **Cause, found in WP9 (see the WP9 notes):**
+    - On this WSL2 host the wall clock steps back by about 600 ms, in every process at once, and Vue then silently skips the handler of a `trigger`ed event.
+    - The monotonic `Date.now` test setup (`frontend/vite/monotonicClock.ts`) fixes it.
+    - The failures seen here (a click or Escape with no effect, focus left on `body`) match it, and the test did not recur in 7 full runs after the fix.
+    - It is not proven for this file specifically. If it ever fails again, reopen it with the full output.
   - **Failing tests seen:** "after Confirm, focus goes back to Delete" (twice), "after Confirm, leaves focus where the parent put it" (`activeElement` was `body`), and the Escape tests.
   - **Not reproducible on a quiet machine:** 2 failures in about 50 file-level runs at 50 repeats per test; 0 failures in 9 sequential full runs.
-  - **Ruled out:** test-order leaks (shuffle seeds 1–12), the `nextTick`/`restoreFocus` microtask order, jsdom focus timing, and a backwards clock defeating Vue's handler-timestamp guard.
-  - **Main suspect, unproven:** a VTU `trigger('click')` or Escape that sometimes never reaches its handler under heavy load. The `ServiceUnavailableView` retry flake above probably shares the cause; it also asserts `activeElement` straight after a `trigger('click')`.
+  - **Ruled out:** test-order leaks (shuffle seeds 1–12), the `nextTick`/`restoreFocus` microtask order, jsdom focus timing. A backwards clock defeating Vue's handler-timestamp guard was also listed here as ruled out. That was **wrong**: the steps only showed up when `Date.now()` was polled in 9 parallel workers for 25 s, and a quiet-machine check missed them.
+  - **Earlier suspect:** a VTU `trigger('click')` or Escape that sometimes never reaches its handler under heavy load. That was the right symptom, and the clock is its cause. The `ServiceUnavailableView` retry flake above (the "Watch" item) very likely had the same cause.
   - **Next time it fails** (locally or in CI): keep the full verbose output and stack, then fix from that evidence. No retries, sleeps or loosened assertions.
 - **Carried to WP7:** after a successful Retry, `ServiceUnavailableView` restores the title it saved on mount, which can be stale. This dates from WP5.
 - **Result:** 608 front-end tests; coverage is 100% for statements, branches, functions and lines.
@@ -769,6 +774,37 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Flaky test:** the parked `ConfirmDeleteButton.spec.ts` flake did not appear in any WP8 run (6 saved full runs).
   - One reviewer run in round 1 exited 2 without the failing test being captured. It was not reproduced.
 - **Result:** 824 front-end tests; coverage is 100% for statements, branches, functions and lines.
+
+### Notes from the WP9 reviews (2026-10-28)
+
+- **Red runs:**
+  - tdd-guide wrote the pure modules before the first RED run. It moved them aside to get a real RED: 7 files failed on unresolved imports, and 811 tests passed.
+  - The view was written after RED.
+  - GREEN: 902 tests, 100% coverage.
+- **Decisions taken during WP9 (not settled by the plan):**
+  - "Expense saved", "Expense deleted" and "Already deleted" use a module-level ref in `src/lib/flash.ts`, rendered in a persistent `aria-live="polite"` region in `App.vue`. It has no `role="status"`, so it does not collide with the existing `[role="status"]` queries. The message is set after `router.push` resolves and cleared on the next path change. Pinia was not used (C14).
+  - Unknown `categoryId` on load runs one `categories.refresh()`. If it is still missing, the form shows Uncategorized and treats the original as `categoryId: null`, so no spurious patch is sent.
+  - 422 at `/categoryId` resets the select to Uncategorized, runs `refresh()`, shows the field message, and moves focus to the select.
+  - Reload after a 409 shows "Reloaded the latest version." and moves focus to the h1. A failed Reload keeps the Reload button.
+  - A 404 on load or save shows "This expense no longer exists." plus a "Back to expenses" link. Any other load failure shows Retry.
+  - The currency label is built from `APP_CURRENCY`.
+- **Review round 1** (`ecc:vue-reviewer`): no critical or high issue; 2 medium and 3 low. All fixed test-first.
+  - **Medium, fixed:** a late save or delete success navigated the user back to /expenses after they had left. A `generation` counter now bumps on route change, on leaving and on unmount. A stale success only sets the flash.
+  - **Medium, fixed:** the view was not safe to reuse when the route param changed. /expenses/A → /expenses/B kept A's data, and Save would PATCH A. The id is now computed from the route, and `watch(routeId, {immediate})` calls `resetForm()` and then loads. Load, reload and the category lookup drop stale answers.
+    - `:key` on `RouterView` was rejected on purpose. WP10 keeps the filters in the /expenses query and must not remount on query changes.
+  - **Low, fixed:** a failed Reload hid the Reload button.
+  - **Low, fixed:** an App-level integration test (`ExpenseFlash.integration.spec.ts`) covers the flash and clear ordering.
+  - **Low, fixed:** the currency was hard-coded in the label.
+- **Round 2** (fix hunks only): all five confirmed fixed, nothing blocking.
+  - **Accepted:** `showFailure` has no generation check after `await categories.refresh()`. If the user navigates A → B during that refresh, focus can move onto B's fresh form. This is cosmetic only.
+  - **Accepted:** a stale success is announced on whatever page the user is now on. Leaving /expenses/new and returning to a fresh /expenses/new while a create is in flight allows a duplicate create, because there is no idempotency key (known, C12).
+- **Flaky test suite, root cause found (2026-10-28):**
+  - After the fixes, full `make frontend-test` runs failed about half the time: around 5 tests per run, a different set each time. Files WP9 never touched failed too (LoginView, RegisterView, CategoriesView, AuthPages.http, AppRetry). The baseline d2fef19 failed as well, in about 1 run in 6.
+  - **Cause:** on this WSL2 host the wall clock steps back by about 600 ms, in every process at once. Vue's event invoker skips a handler when `e._vts <= invoker.attached` (runtime-dom `createInvoker`). Vue Test Utils `trigger()` sets `_vts = Date.now() + 1`. So a click or submit triggered after a backward step is silently dropped.
+  - **Fix (test-only):** `frontend/vite/monotonicClock.ts` (`makeMonotonic`, with a spec), applied in `frontend/vite/vitest.setup.ts` through `test.setupFiles` in `vite.config.ts`. The setup file is excluded from coverage as glue. No assertions were weakened, and no waits or retries were added.
+  - **Evidence:** 5 consecutive runs by tdd-guide plus 2 by the main session, all green, with 916 tests and 100% coverage.
+  - CI has stayed green throughout. That fits a host-clock cause, since GitHub's Linux runners are not WSL2. The fix stays in the setup anyway, because it is harmless where the clock never steps back.
+- **Result:** 916 front-end tests; coverage is 100% for statements, branches, functions and lines.
 
 ## 8. Risks and decision points
 
