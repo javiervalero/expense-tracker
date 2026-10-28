@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -322,9 +322,11 @@ lint-workflows: ## zizmor (pinned image) over workflows and actions: hash-pinned
 # repository owned by someone else), with the repository mounted read-only, a read-only root file system (HOME is a
 # tmpfs), no network, no capabilities and no-new-privileges. A shallow clone would silently skip the older commits, so
 # it is an error.
+# Directory of this Makefile, captured here so a later `include` cannot repoint the script path.
+SECRETS_SCAN_DIR := $(dir $(abspath $(firstword $(MAKEFILE_LIST))))
 override GITLEAKS_IMAGE := ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
 
-secrets-scan: ## gitleaks over the full git history (pinned image; needs a full clone, not a shallow one)
+secrets-scan: ## gitleaks over the full git history AND uncommitted work (pinned image; needs a full clone, not a shallow one)
 	@if [ "$$(git rev-parse --is-shallow-repository)" != false ]; then \
 		echo "make secrets-scan: this is a shallow clone (or not a git repository); the scan would skip history. Fetch it all: git fetch --unshallow" >&2; exit 1; \
 	fi
@@ -333,6 +335,15 @@ secrets-scan: ## gitleaks over the full git history (pinned image; needs a full 
 		echo "make secrets-scan: a .gitleaksignore file is not allowed ($$(echo $$ignored .gitleaksignore)); allow a known-fake value in .gitleaks.toml instead (by path AND rule AND value), or rotate a real secret" >&2; exit 1; \
 	fi
 	docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --read-only --tmpfs /tmp -u $(shell id -u):$(shell id -g) -v "$(CURDIR)":/repo:ro -e HOME=/tmp -w /repo $(GITLEAKS_IMAGE) git --redact --no-banner --ignore-gitleaks-allow --exit-code 1 .
+	@$(SECRETS_SCAN_WORKTREE)
+
+# `gitleaks git` sees committed history only. This scans what is not committed yet: staged and unstaged edits plus
+# untracked files that are not ignored (copied with their repo-relative paths into a throwaway directory, so the path
+# allowlists of .gitleaks.toml match as in the history scan). Same hardening and flags; `make secrets-scan` runs both.
+SECRETS_SCAN_WORKTREE = GITLEAKS_IMAGE=$(call shell_quote,$(GITLEAKS_IMAGE)) $(call shell_quote,$(SECRETS_SCAN_DIR)scripts/secrets-scan-worktree.sh)
+
+secrets-scan-worktree: ## gitleaks over uncommitted work: staged, unstaged and untracked files (pinned image)
+	@$(SECRETS_SCAN_WORKTREE)
 
 # The S3 event fixtures exist twice (backend/ and docker/local-aws/ are separate Composer projects). They must stay
 # byte-identical, or the parser and the relay would be tested against different "real" events.
@@ -412,6 +423,11 @@ frontend-build: frontend-ready ## frontend/: type check and production build int
 check-bundle-secrets: export BUNDLE_SECRET_VALUE = $(ORIGIN_VERIFY_VALUE)
 check-bundle-secrets: ## The ORIGIN_VERIFY_LOCAL value (.env, else .env.example) is not in frontend/dist (needs frontend-build)
 	@scripts/check-bundle-secrets.sh frontend/dist
+
+# The built index.html has no inline script or style, no on*= attribute, no javascript: or data: URL, and the scripts
+# have no eval( or new Function: the bundle runs under the strict CSP planned for Phase 7 (plan phase-4 C16).
+check-bundle-csp: ## frontend/dist is compatible with a strict CSP: no inline script or style, no eval (needs frontend-build)
+	@scripts/check-bundle-csp.sh frontend/dist
 
 # Full gate: production and dev dependencies, high and above. (Until 2026-10-09 the dev tools pulled in `braces`
 # through @vue/eslint-config-typescript -> fast-glob; ESLint now uses typescript-eslint directly and the tree is clean.)

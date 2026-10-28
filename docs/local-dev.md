@@ -116,6 +116,49 @@ not reliably (WebKit bug 281149). The code has no "insecure cookie" switch on pu
 The logs show `"userId":"<uuid>"` on authenticated request lines, and a refused cross-site check writes a warning
 `csrf check failed`. Passwords and session tokens are never logged; `make test-integration` checks this.
 
+## Using the app in a browser
+
+Start the stack with `make up` (see "Prerequisites and first run"), then open http://localhost:5173 in **Chrome or
+Firefox only**. Safari is not supported locally because of WebKit bug 281149.
+
+The owner runs this walkthrough in Chrome and Firefox. The results go into the pull request body (gate G3).
+
+- [ ] Register, sign out, sign in.
+- [ ] A wrong password gives a generic message, and the 11th failure shows "try again in about N minutes".
+- [ ] Opening `/expenses` signed out goes to sign-in, and comes back to `/expenses` after signing in.
+- [ ] Create, rename and delete categories, including the empty state and a duplicate name.
+- [ ] Create, edit and delete expenses.
+- [ ] Filter by date range, by category (including Uncategorized) and by text; "Load more".
+- [ ] Edit the same expense in two tabs: the second save gets a 409 with "Reload".
+- [ ] Delete in two tabs: the second shows "already deleted".
+- [ ] Sign out in one tab: the other tabs go to sign-in straight away, without waiting for an action.
+- [ ] Keyboard only.
+- [ ] Zoom at 200%.
+- [ ] Screen reader (NVDA or VoiceOver) on `/expenses`:
+  - Apply announces the result summary;
+  - Load more announces "N more loaded";
+  - delete announces "Expense deleted" or "Already deleted".
+
+### Making "Load more" appear
+
+The list loads 50 expenses at a time, so 60 expenses show "Load more". Sign in on the command line first (see
+"Signing in from the command line"), so that `jar.txt` and the `API` and `H` variables exist. The loop creates the
+expenses for the signed-in user, so sign in to the browser as that user to see them. Each line of output should be
+`201`. Each run adds 60 more expenses; see [Resetting state](#resetting-state) to start again from empty.
+
+```bash
+for i in $(seq 1 60); do
+  curl -s -o /dev/null -w '%{http_code}\n' -c jar.txt -b jar.txt "${H[@]}" \
+    -d "{\"date\":\"2026-10-$(printf '%02d' $(( (i % 28) + 1 )))\",\"amountCents\":$(( i * 100 + 50 )),\"description\":\"Test expense $i\"}" \
+    $API/expenses
+done
+```
+
+### After use
+
+Stop the stack with `make down`. Do not add `-v` unless you mean to wipe local data. See
+[Resetting state](#resetting-state).
+
 ## Categories and expenses from the command line
 
 These commands reuse the signed-in cookie jar `jar.txt` and the `API` and `H` variables from the section above, so
@@ -267,7 +310,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 
 | Target | What it does |
 |---|---|
-| `make lint` | All static checks and audits: runs every target in the list below, in order |
+| `make lint` | All static checks and audits, in order: `lint-php`, `lint-local-aws`, `frontend-lint`, `contract`, `tf-check`, `check-platform`, `check-php-ini`, `check-image-pins`, `lint-workflows`, `check-fixtures`, `audit`, `audit-local-aws`, `contract-audit`, `frontend-audit` (not `fmt`, `frontend-build`, `check-bundle-secrets` or `check-bundle-csp`) |
 | `make lint-php` | Backend: `composer validate`, PHP-CS-Fixer (dry run), PHPStan |
 | `make lint-local-aws` | The same for `docker/local-aws` |
 | `make frontend-lint` | Front-end: ESLint, Prettier check, `vue-tsc` |
@@ -278,6 +321,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make fmt` | Rewrites backend and `docker/local-aws` PHP with PHP-CS-Fixer (a formatter, it changes files) |
 | `make frontend-build` | Front-end type check and production build into `frontend/dist` |
 | `make check-bundle-secrets` | The origin-verify value is not in `frontend/dist` (run after `frontend-build`) |
+| `make check-bundle-csp` | `frontend/dist` has no inline script or style and no `eval`, so it fits a strict CSP (run after `frontend-build`) |
 
 **Guards (refuse unsafe changes; run in CI)**
 
@@ -285,7 +329,8 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 |---|---|
 | `make check-image-pins` | Every image used to build or run the stack is pinned by digest |
 | `make lint-workflows` | zizmor over the GitHub workflows and actions: hash-pinned `uses:`, pinned images, security audits |
-| `make secrets-scan` | gitleaks over the full git history. Needs a full clone, not a shallow one |
+| `make secrets-scan` | gitleaks over the full git history, then `secrets-scan-worktree`. Needs a full clone, not a shallow one. Run it before every commit |
+| `make secrets-scan-worktree` | gitleaks over uncommitted work: the staged version of each file (what the next commit holds) and the version on disk, including untracked files that are not ignored |
 | `make check-php-ini` | The Lambda PHP ini (`backend/php/conf.d`) is loaded by the pinned `bref/php-85` image with the hardened values |
 
 **Terraform (Phase 0 has no AWS resources; these need no credentials)**

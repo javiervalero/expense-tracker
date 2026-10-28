@@ -1,5 +1,6 @@
 # gitleaks configuration (`make secrets-scan`, also the `guards` CI job). It scans the FULL git history, so a value
-# removed from the tree is still reported. Findings are printed redacted.
+# removed from the tree is still reported, and uncommitted work (`make secrets-scan-worktree`: staged and on-disk
+# files, with the same repo-relative paths, so the path allowlists below apply to both). Findings are printed redacted.
 #
 # Keep the default rules; allowlist only known-fake values, each by path AND rule AND value (condition = "AND"),
 # never with a blanket regex. A real secret must never be added here: rotate it instead.
@@ -26,3 +27,12 @@ condition = "AND"
 targetRules = ["generic-api-key"]
 paths = ['''^backend/tests/Unit/(Http/ApiKernelTest|Infrastructure/Logging/JsonLoggerTest)\.php$''']
 regexes = ['''^Slot-A-0123456789-0123456789-abcdef$''']
+
+[[allowlists]]
+# Phase 4 WP7: a made-up password typed into the sign-in form by a test that proves the password never reaches the
+# address bar or the page. It is not a credential for any account or system.
+description = "Fake sign-in password in the front-end auth page tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^frontend/src/views/__tests__/AuthPages\.http\.spec\.ts$''']
+regexes = ['''^uniq-secret-pw-91$''']

@@ -225,6 +225,9 @@ jobs:
       - name: The origin-verify value is not in the bundle
         run: make RUN_NODE= check-bundle-secrets
 
+      - name: The bundle is compatible with a strict CSP (no inline script or style, no eval)
+        run: make RUN_NODE= check-bundle-csp
+
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_NODE= frontend-audit
 
