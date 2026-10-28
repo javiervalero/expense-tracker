@@ -937,6 +937,37 @@ As in Phases 1–3, each WP's findings (and anything carried) are added here as 
 - **Agent slip:** `tdd-guide` ran `python3 --version` on the host once. It printed a version and changed nothing.
 - **Result:** 1130 front-end tests, 100% coverage. `frontend-lint`, `frontend-build` and `check-bundle-csp` pass.
 
+### Whole-PR review notes (2026-10-28)
+
+- `/code-review 7`: `ecc:vue-reviewer` (front end) and `ecc:code-reviewer` (scripts, Makefile, configs, lock files), both sonnet/medium, over the whole PR. No CRITICAL, HIGH or MEDIUM.
+  - The front-end reviewer's MEDIUM ("live-region convention broken": `role="status"` in CategoriesView, ExpenseFormView, CategoryRow, ServiceUnavailableView, LoginView) was downgraded by the main session.
+  - `role="status"` is the WP7–WP8 pattern. WP9–WP10 avoided it only to keep `[role="status"]` test queries unambiguous.
+  - Full report: `.claude/reviews/pr-7-review.md` (L1–L16).
+- Fixed before ready (owner decision):
+  - L2 `useExpenseList.remove()` captures the generation. A delete answered after a new search or `stop()` writes nothing and returns null, so the view stays silent.
+  - A stale delete that succeeded is not added to `deletedIds`. Accepted: a row the new search fetched before the delete can show until the next search; deleting it then says "Already deleted".
+  - L3 `App.vue` clears the flash message when `session.user?.id` changes (sync watch).
+  - L7 `lib/bfcache.ts` reloads through `reload()` in `lib/navigation.ts`, so only navigation.ts touches location.
+  - Re-review (`ecc:vue-reviewer`): no blocking findings. Front end: 1132 tests, 100% coverage; lint, build and check-bundle-csp pass.
+- Not fixed: L8 (restrict `BroadcastChannel` to `src/lib/sessionChannel.ts` in `frontend/eslint.config.ts`). ECC's config-protection hook blocks edits to lint config; the owner chose a follow-up rather than disabling the hook.
+- Agent slip: before the config-protection hook fired, `tdd-guide` added two lines to `frontend/eslint.config.ts` with `sed` through Bash, which sidesteps the Edit hook. It reverted them with `git checkout`; the main session confirmed the file matches the last commit. Brief future agents: never edit protected config files through the shell.
+- Follow-ups (later phase), from the whole-PR review:
+  - L1 LoginView "Your session ended" is a `v-if` region that appears with its text (read in page order on a fresh load).
+  - L4 categories store `rename`/`remove` lack the epoch check `create` has.
+  - L5 session store `load()` has no generation guard.
+  - L6 ExpenseFormView requests have no AbortSignal.
+  - L8 above.
+  - L9 `http.ts` trusts the response shape (`as T`, ADR 0011); optional shape check for list responses.
+  - L10 `check-bundle-csp.sh` does not grep string-form `setTimeout`/`setInterval` (app code is covered by `no-implied-eval`).
+  - L11 shared error switch and shared message strings across feature files.
+  - L12 unused exports `NO_FILTERS`, `trimmedLength`, `checkSearch`.
+  - L13 one shared v4-UUID pattern (defined three times).
+  - L14 `health.ts` `REQUEST_TIMEOUT_MS` shadows `config.ts`; `api/health.spec.ts` outside `__tests__`.
+  - L15 rename ConfirmDeleteButton's `disabled` prop (it renders `aria-disabled`).
+  - L16 ExpenseFormView (420 lines) could move logic to a composable; `run()` in useExpenseList is ~55 lines.
+  - Tests: no spec for `stop()` during a delete, or for a stale delete that succeeded.
+- PR body: mention the dev-only phpunit 13.4.5 bump (GHSA-9vw2-f4vp-x7gf, commit `24655f7`).
+
 ## 8. Risks and decision points
 
 | # | Risk / trigger | Mitigation / fallback | WP |

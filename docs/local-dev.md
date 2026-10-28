@@ -310,7 +310,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 
 | Target | What it does |
 |---|---|
-| `make lint` | All static checks and audits: runs every target in the list below, in order |
+| `make lint` | All static checks and audits, in order: `lint-php`, `lint-local-aws`, `frontend-lint`, `contract`, `tf-check`, `check-platform`, `check-php-ini`, `check-image-pins`, `lint-workflows`, `check-fixtures`, `audit`, `audit-local-aws`, `contract-audit`, `frontend-audit` (not `fmt`, `frontend-build`, `check-bundle-secrets` or `check-bundle-csp`) |
 | `make lint-php` | Backend: `composer validate`, PHP-CS-Fixer (dry run), PHPStan |
 | `make lint-local-aws` | The same for `docker/local-aws` |
 | `make frontend-lint` | Front-end: ESLint, Prettier check, `vue-tsc` |
@@ -321,6 +321,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make fmt` | Rewrites backend and `docker/local-aws` PHP with PHP-CS-Fixer (a formatter, it changes files) |
 | `make frontend-build` | Front-end type check and production build into `frontend/dist` |
 | `make check-bundle-secrets` | The origin-verify value is not in `frontend/dist` (run after `frontend-build`) |
+| `make check-bundle-csp` | `frontend/dist` has no inline script or style and no `eval`, so it fits a strict CSP (run after `frontend-build`) |
 
 **Guards (refuse unsafe changes; run in CI)**
 
