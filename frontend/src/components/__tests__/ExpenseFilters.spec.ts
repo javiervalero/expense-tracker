@@ -32,6 +32,17 @@ describe('ExpenseFilters', () => {
     expect(wrapper.emitted('apply')).toHaveLength(1)
   })
 
+  it('has a Clear filters button that only emits clear, without submitting', async () => {
+    const wrapper = mount(ExpenseFilters, { props: { categories: CATEGORIES, errors: {} } })
+    const clear = wrapper.findAll('button').find((b) => b.text() === 'Clear filters')
+
+    expect(clear?.attributes('type')).toBe('button')
+    await clear?.trigger('click')
+
+    expect(wrapper.emitted('clear')).toHaveLength(1)
+    expect(wrapper.emitted('apply')).toBeUndefined()
+  })
+
   it('shows the user text of a category name as an option label, as text', () => {
     const name = '<img src=x onerror=alert(1)>'
     const wrapper = mount(ExpenseFilters, {

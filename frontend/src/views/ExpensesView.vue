@@ -160,8 +160,14 @@ async function apply(): Promise<void> {
   await goTo(filtersToQuery(clean))
 }
 
+// Filters in the URL: leave them through the URL, which starts the search. Only typed, unapplied values: empty the
+// fields, nothing to search. Nothing set at all: nothing happens (no search, no message, focus stays).
 async function clearFilters(): Promise<void> {
-  await goTo({})
+  if (hasFilters.value) {
+    return goTo({})
+  }
+  showInForm({ from: '', to: '', category: '', q: '' })
+  errors.clear()
 }
 
 async function retry(): Promise<void> {
@@ -218,9 +224,12 @@ const moreLabel = computed(() => {
       :categories-loaded="categories.loaded && listAnswered"
       :errors="errors.fieldErrors.value"
       @apply="apply"
+      @clear="clearFilters"
     />
 
     <h2 id="results-heading" ref="heading" tabindex="-1">Results</h2>
+    <!-- Right under the heading that takes the focus, so a message shows where the user is looking. -->
+    <div class="status" aria-live="polite" aria-atomic="true">{{ notice }}</div>
 
     <div v-if="list.status.value === 'failed'" class="load-failed">
       <p role="alert">{{ list.message.value }}</p>
@@ -261,7 +270,6 @@ const moreLabel = computed(() => {
         {{ moreLabel }}
       </button>
     </template>
-    <div class="status" aria-live="polite" aria-atomic="true">{{ notice }}</div>
   </section>
 </template>
 

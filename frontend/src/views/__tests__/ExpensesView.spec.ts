@@ -265,7 +265,7 @@ describe('ExpensesView: empty and failed states', () => {
     expect(wrapper.find('table').exists()).toBe(false)
     const link = wrapper.findAll('a').find((a) => a.attributes('href') === '/expenses/new')
     expect(link).toBeDefined()
-    expect(wrapper.text()).not.toContain('Clear filters')
+    expect(wrapper.get('.empty').text()).not.toContain('Clear filters')
   })
 
   it('says nothing matches when filters are set, and Clear filters empties the query', async () => {
@@ -273,11 +273,74 @@ describe('ExpensesView: empty and failed states', () => {
     const { wrapper, router } = await render('/expenses?q=tea')
 
     expect(wrapper.text()).toContain('No expenses match these filters')
-    await button(wrapper, 'Clear filters').trigger('click')
+    await wrapper.get('.empty button').trigger('click')
     await flushPromises()
 
     expect(router.currentRoute.value.query).toEqual({})
     expect(paramsOfCall(1)).toBe('limit=50')
+  })
+
+  it('clears from the filter form too: empties the fields and the query, and announces', async () => {
+    expensesApi.listExpenses.mockResolvedValueOnce(pageOf([expense(uid(1))]))
+    const { wrapper, router } = await render(`/expenses?from=2026-10-01&category=${FOOD}&q=tea`)
+    expensesApi.listExpenses.mockResolvedValueOnce(pageOf([expense(uid(1)), expense(uid(2))]))
+
+    await wrapper.get('form button[type="button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('form button[type="button"]').text()).toBe('Clear filters')
+    expect(router.currentRoute.value.query).toEqual({})
+    expect(paramsOfCall(1)).toBe('limit=50')
+    expect((wrapper.get('#filter-from').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#filter-q').element as HTMLInputElement).value).toBe('')
+    expect((wrapper.get('#filter-category').element as HTMLSelectElement).value).toBe('')
+    expect(status(wrapper)).toBe('2 expenses shown')
+    expect(document.activeElement).toBe(wrapper.get('#results-heading').element)
+  })
+
+  it('only empties typed, unapplied fields, without a search, when no filter is applied', async () => {
+    expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))]))
+    const { wrapper, router } = await render()
+    await wrapper.get('#filter-q').setValue('tea')
+
+    await wrapper.get('form button[type="button"]').trigger('click')
+    await flushPromises()
+
+    expect((wrapper.get('#filter-q').element as HTMLInputElement).value).toBe('')
+    expect(router.currentRoute.value.query).toEqual({})
+    expect(expensesApi.listExpenses).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes the field errors of a refused Apply when it empties the unapplied fields', async () => {
+    expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))]))
+    const { wrapper } = await render()
+    await wrapper.get('#filter-from').setValue('2026-10-02')
+    await wrapper.get('#filter-to').setValue('2026-10-01')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.find('[aria-invalid="true"]').exists()).toBe(true)
+
+    await wrapper.get('form button[type="button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[aria-invalid]').exists()).toBe(false)
+    expect(wrapper.find('#filter-from-error').exists()).toBe(false)
+    expect(wrapper.find('#filter-to-error').exists()).toBe(false)
+    expect((wrapper.get('#filter-from').element as HTMLInputElement).value).toBe('')
+  })
+
+  it('does nothing when nothing is set: no search, no message, focus stays', async () => {
+    expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))]))
+    const { wrapper } = await render()
+    const clear = wrapper.get('form button[type="button"]')
+    ;(clear.element as HTMLElement).focus()
+
+    await clear.trigger('click')
+    await flushPromises()
+
+    expect(expensesApi.listExpenses).toHaveBeenCalledTimes(1)
+    expect(status(wrapper)).toBe('')
+    expect(document.activeElement).toBe(clear.element)
   })
 
   it('shows a loading text while the first page is on its way', async () => {
@@ -1169,6 +1232,21 @@ describe('ExpensesView: the live region', () => {
     expect(region.attributes('aria-live')).toBe('polite')
     expect(region.attributes('hidden')).toBeUndefined()
     expect(getComputedStyle(region.element).display).not.toBe('none')
+  })
+
+  it('sits right after the results heading, before the table and the Load more button', async () => {
+    expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))], 'c1'))
+
+    const { wrapper } = await render()
+
+    const heading = wrapper.get('#results-heading').element
+    const region = wrapper.get('.status').element
+    const table = wrapper.get('table').element
+    const more = button(wrapper, 'Load more').element
+    const FOLLOWING = Node.DOCUMENT_POSITION_FOLLOWING
+    expect(heading.compareDocumentPosition(region) & FOLLOWING).toBeTruthy()
+    expect(region.compareDocumentPosition(table) & FOLLOWING).toBeTruthy()
+    expect(region.compareDocumentPosition(more) & FOLLOWING).toBeTruthy()
   })
 
   it('has no hiding rule in the source for the region or for any :empty selector', () => {

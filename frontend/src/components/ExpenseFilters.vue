@@ -15,7 +15,7 @@ const props = defineProps<{
   categoriesLoaded?: boolean
   errors: FilterProblems
 }>()
-const emit = defineEmits<{ apply: [] }>()
+const emit = defineEmits<{ apply: []; clear: [] }>()
 
 const from = defineModel<string>('from', { default: '' })
 const to = defineModel<string>('to', { default: '' })
@@ -80,6 +80,7 @@ const orphan = computed(() => {
       :error="errors.q"
     />
     <button type="submit" class="primary">Apply</button>
+    <button type="button" @click="emit('clear')">Clear filters</button>
   </form>
 </template>
 
