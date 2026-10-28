@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
@@ -91,6 +91,24 @@ afterEach(() => {
 })
 
 describe('ExpensesView: structure', () => {
+  it("shows no cached category option until this mount's first list response is back", async () => {
+    expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))]))
+    const { wrapper, router } = await render()
+    expect(wrapper.get('select#filter-category').text()).toContain('Food')
+    wrapper.unmount()
+    const pending = deferred<unknown>()
+    expensesApi.listExpenses.mockReset()
+    expensesApi.listExpenses.mockReturnValue(pending.promise)
+
+    const again = mount(ExpensesView, { global: { plugins: [getActivePinia()!, router] } })
+    await flushPromises()
+
+    expect(again.get('select#filter-category').text()).not.toContain('Food')
+    pending.resolve(pageOf([expense(uid(1))]))
+    await flushPromises()
+    expect(again.get('select#filter-category').text()).toContain('Food')
+  })
+
   it('has one h1, a results heading, and a table with a caption and column headers', async () => {
     expensesApi.listExpenses.mockResolvedValue(pageOf([expense(uid(1))]))
 

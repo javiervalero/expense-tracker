@@ -43,6 +43,13 @@ const description = ref('')
 // '' is Uncategorized: it is the value of the first option.
 const categoryId = ref('')
 
+// True once this mount's own refresh succeeded (always true when editing: the form only shows after its own request).
+// Until then the cached categories, maybe of a dead session, are not drawn.
+const categoriesFresh = ref(false)
+const categoriesFailed = ref(false)
+const showCategories = computed(() => isEdit.value || categoriesFresh.value)
+const shownCategories = computed(() => (showCategories.value ? categories.items : []))
+
 // The expense as last read, with a category that is no longer in the list treated as none (plan phase-4 C14).
 const original = ref<Expense | null>(null)
 const status = ref<'loading' | 'failed' | 'ready'>('ready')
@@ -136,10 +143,19 @@ watch(
       return
     }
     resetForm()
+    const mine = generation
     if (isEdit.value) {
       void loadExpense()
     } else {
-      void categories.load()
+      categoriesFresh.value = false
+      categoriesFailed.value = false
+      void categories.refresh().then((error) => {
+        if (mine !== generation) {
+          return
+        }
+        categoriesFresh.value = error === null
+        categoriesFailed.value = error !== null
+      })
     }
   },
   { immediate: true },
@@ -353,13 +369,20 @@ async function remove(): Promise<void> {
             :aria-invalid="invalid === 'true' ? 'true' : undefined"
           >
             <option value="">Uncategorized</option>
-            <option v-for="category in categories.items" :key="category.id" :value="category.id">
+            <option v-for="category in shownCategories" :key="category.id" :value="category.id">
               {{ category.name }}
             </option>
           </select>
         </template>
       </FormField>
-      <p v-if="categories.loaded && categories.items.length === 0" class="hint">
+      <p v-if="!showCategories" class="hint">
+        {{
+          categoriesFailed
+            ? 'Categories could not be loaded. Reload the page to try again.'
+            : 'Loading categories…'
+        }}
+      </p>
+      <p v-else-if="categories.loaded && categories.items.length === 0" class="hint">
         <RouterLink to="/categories">Add a category</RouterLink>
       </p>
 

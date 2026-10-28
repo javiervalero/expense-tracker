@@ -7,6 +7,7 @@ import type { ApiResult } from '@/api/http'
 import type { ApiError } from '@/api/problem'
 import type { Credentials, User } from '@/api/types'
 import { navigateTo } from '@/lib/navigation'
+import { announceSignedIn, announceSignedOut } from '@/lib/sessionChannel'
 
 /**
  * `unknown`: not asked yet. `unreachable`: the server could not be asked or answered with an error; that says nothing
@@ -68,6 +69,7 @@ export const useSessionStore = defineStore('session', () => {
     const result = await authApi.login(credentials)
     if (result.ok) {
       setSignedIn(result.data)
+      announceSignedIn(result.data.id)
     }
     return result
   }
@@ -76,6 +78,7 @@ export const useSessionStore = defineStore('session', () => {
     const result = await authApi.register(credentials)
     if (result.ok) {
       setSignedIn(result.data)
+      announceSignedIn(result.data.id)
     }
     return result
   }
@@ -94,6 +97,9 @@ export const useSessionStore = defineStore('session', () => {
       // rather than telling them sign-out failed while they are in fact signed out.
       if (result.ok || result.error.kind === 'unauthorized') {
         left = true
+        if (result.ok) {
+          announceSignedOut()
+        }
         navigateTo('/login')
         setSignedOut()
         return null

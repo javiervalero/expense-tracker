@@ -1,5 +1,5 @@
 import { flushPromises, mount } from '@vue/test-utils'
-import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, getActivePinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
@@ -111,6 +111,62 @@ afterEach(() => {
 })
 
 describe('ExpenseFormView: new', () => {
+  it('says the categories could not be loaded, and offers none, when the refresh fails', async () => {
+    const { wrapper } = await render('/expenses/new', failure({ kind: 'network' }))
+
+    expect(wrapper.findAll('#expense-categoryId option').map((o) => o.text())).toEqual([
+      'Uncategorized',
+    ])
+    expect(wrapper.text()).toContain('Categories could not be loaded')
+  })
+
+  it('ignores a categories answer that arrives after the form is gone', async () => {
+    const late = deferred<unknown>()
+    categoriesApi.listCategories.mockReturnValue(late.promise)
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [{ path: '/expenses/new', name: 'expense-new', component: ExpenseFormView }],
+    })
+    await router.push('/expenses/new')
+    const gone = mount(ExpenseFormView, { global: { plugins: [pinia, router] } })
+    gone.unmount()
+    expect(categoriesApi.listCategories).toHaveBeenCalledOnce()
+
+    late.resolve(listOf(cat(FOOD, 'Food')))
+    await flushPromises()
+
+    expect(gone.text()).not.toContain('Food')
+  })
+
+  it("shows no cached category name while this mount's own request is pending", async () => {
+    const { wrapper, router } = await render('/expenses/new')
+    expect(wrapper.get('#expense-categoryId').text()).toContain('Food')
+    wrapper.unmount()
+    categoriesApi.listCategories.mockReset()
+    categoriesApi.listCategories.mockReturnValue(new Promise(() => {}))
+
+    const again = mount(ExpenseFormView, { global: { plugins: [getActivePinia()!, router] } })
+    await flushPromises()
+
+    expect(again.findAll('#expense-categoryId option').map((o) => o.text())).toEqual([
+      'Uncategorized',
+    ])
+    expect(again.text()).toContain('Loading categories…')
+    expect(again.text()).not.toContain('Food')
+  })
+
+  it('refreshes the categories on every mount of the new form, not only the first', async () => {
+    const { wrapper, router } = await render('/expenses/new')
+    wrapper.unmount()
+
+    mount(ExpenseFormView, { global: { plugins: [getActivePinia()!, router] } })
+    await flushPromises()
+
+    expect(categoriesApi.listCategories).toHaveBeenCalledTimes(2)
+  })
+
   it('has one h1, and every field has a label', async () => {
     const { wrapper } = await render('/expenses/new')
 

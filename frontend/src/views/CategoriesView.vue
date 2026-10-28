@@ -24,9 +24,14 @@ const formAlert = useTemplateRef<{ focus: () => void }>('formAlert')
 const heading = useTemplateRef<HTMLElement>('heading')
 
 const retrying = ref(false)
+// True once this mount's own request has succeeded: until then the cached list (maybe of a dead session) is not drawn.
+const fresh = ref(false)
 
 async function load(): Promise<void> {
-  const error = await categories.load()
+  const error = await categories.refresh()
+  if (error === null) {
+    fresh.value = true
+  }
   loadMessage.value = error === null ? '' : describeCategoryError(error, false).form
 }
 onMounted(load)
@@ -115,7 +120,7 @@ async function add(): Promise<void> {
         {{ retrying ? 'Retry…' : 'Retry' }}
       </button>
     </div>
-    <p v-else-if="!categories.loaded">Loading categories…</p>
+    <p v-else-if="!categories.loaded || !fresh">Loading categories…</p>
     <p v-else-if="categories.items.length === 0" class="empty">No categories yet</p>
     <template v-else>
       <p :id="DELETE_HINT_ID" class="hint">{{ DELETE_HINT }}</p>

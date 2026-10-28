@@ -14,9 +14,14 @@ const api = vi.hoisted(() => ({
   logout: vi.fn(),
 }))
 const navigateToMock = vi.hoisted(() => vi.fn<(url: string) => void>())
+const channel = vi.hoisted(() => ({
+  announceSignedIn: vi.fn<(id: string) => void>(),
+  announceSignedOut: vi.fn<() => void>(),
+}))
 
 vi.mock('@/api/auth', () => api)
 vi.mock('@/lib/navigation', () => ({ navigateTo: navigateToMock }))
+vi.mock('@/lib/sessionChannel', () => channel)
 
 const user: User = { id: 'u1', email: 'a@example.com' }
 const credentials = { email: 'a@example.com', password: 'a-long-password-1' }
@@ -40,6 +45,8 @@ afterEach(() => {
   expiryHandler.mockReset()
   Object.values(api).forEach((mock) => mock.mockReset())
   navigateToMock.mockReset()
+  channel.announceSignedIn.mockReset()
+  channel.announceSignedOut.mockReset()
 })
 
 describe('session store: ensureLoaded', () => {
@@ -172,6 +179,29 @@ describe('session store: login and register', () => {
   })
 
   it.each([
+    ['login', 200],
+    ['register', 201],
+  ] as const)('%s announces signed-in with the id to other tabs', async (name, status) => {
+    api[name].mockResolvedValue(success(user, status))
+    const session = useSessionStore()
+
+    await session[name](credentials)
+
+    expect(channel.announceSignedIn).toHaveBeenCalledExactlyOnceWith(user.id)
+  })
+
+  it('a failed login or register announces nothing', async () => {
+    api.login.mockResolvedValue(failure({ kind: 'invalid-credentials', status: 401 }))
+    api.register.mockResolvedValue(failure({ kind: 'network' }))
+    const session = useSessionStore()
+
+    await session.login(credentials)
+    await session.register(credentials)
+
+    expect(channel.announceSignedIn).not.toHaveBeenCalled()
+  })
+
+  it.each([
     ['login', { kind: 'invalid-credentials', status: 401 }],
     ['register', { kind: 'conflict', status: 409, detail: null }],
     ['register', { kind: 'network' }],
@@ -216,8 +246,21 @@ describe('session store: logout', () => {
 
     expect(error).toBeNull()
     expect(navigateToMock).toHaveBeenCalledExactlyOnceWith('/login')
+    expect(channel.announceSignedOut).toHaveBeenCalledOnce()
     expect(session.user).toBeNull()
     expect(session.status).toBe('signed-out')
+  })
+
+  it('announces signed-out to other tabs before it navigates', async () => {
+    api.logout.mockResolvedValue(success(undefined, 204))
+    const session = await signedIn()
+    const order: string[] = []
+    channel.announceSignedOut.mockImplementation(() => order.push('announce'))
+    navigateToMock.mockImplementation(() => order.push('navigate'))
+
+    await session.logout()
+
+    expect(order).toEqual(['announce', 'navigate'])
   })
 
   it('goes to /login before it marks the user signed out', async () => {
@@ -258,6 +301,7 @@ describe('session store: logout', () => {
     const returned = await session.logout()
 
     expect(returned).toEqual(error)
+    expect(channel.announceSignedOut).not.toHaveBeenCalled()
     expect(navigateToMock).not.toHaveBeenCalled()
     expect(session.status).toBe('signed-in')
     expect(session.user).toEqual(user)

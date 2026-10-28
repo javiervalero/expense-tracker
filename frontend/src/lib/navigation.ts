@@ -17,3 +17,8 @@ export function navigateTo(url: string): void {
   }
   window.location.assign(url)
 }
+
+/** Reloads the current page, so another tab's sign-in replaces whatever this tab holds. Here for the same reason. */
+export function reload(): void {
+  window.location.reload()
+}

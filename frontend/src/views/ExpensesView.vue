@@ -64,6 +64,16 @@ watch(
 
 onBeforeUnmount(list.stop)
 
+// True once this mount's first list request has answered, whatever it said: the session was then checked. Until then the
+// cached categories (maybe of a dead session) are not offered in the filter.
+const listAnswered = ref(false)
+watch(list.status, (current) => {
+  if (current === 'ready' || current === 'failed') {
+    listAnswered.value = true
+  }
+})
+const filterCategories = computed(() => (listAnswered.value ? categories.items : []))
+
 // The category column: names from the store, with the lookup rules of plan phase-4 C14.
 const { categoryLabel } = useCategoryLabels(list.items)
 
@@ -204,8 +214,8 @@ const moreLabel = computed(() => {
       v-model:to="to"
       v-model:category="category"
       v-model:q="q"
-      :categories="categories.items"
-      :categories-loaded="categories.loaded"
+      :categories="filterCategories"
+      :categories-loaded="categories.loaded && listAnswered"
       :errors="errors.fieldErrors.value"
       @apply="apply"
     />

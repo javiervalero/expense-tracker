@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isInternalPath, navigateTo } from '../navigation'
+import { isInternalPath, navigateTo, reload } from '../navigation'
 import { INTERNAL_PATH_CASES } from './internalPathCases'
 
 const assignMock = vi.fn<(url: string) => void>()
@@ -41,4 +41,15 @@ describe('navigateTo', () => {
       expect(assignMock).not.toHaveBeenCalled()
     },
   )
+})
+
+describe('reload', () => {
+  it('reloads the current page', () => {
+    const reloadMock = vi.fn<() => void>()
+    vi.stubGlobal('location', { reload: reloadMock })
+
+    reload()
+
+    expect(reloadMock).toHaveBeenCalledOnce()
+  })
 })

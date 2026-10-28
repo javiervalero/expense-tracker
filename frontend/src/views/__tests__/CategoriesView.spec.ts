@@ -67,6 +67,38 @@ afterEach(() => {
 })
 
 describe('CategoriesView: list', () => {
+  it("shows no cached category name while this mount's own request is pending", async () => {
+    api.listCategories.mockResolvedValueOnce(listOf(cat('a', 'Apples')))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const first = mount(CategoriesView, { global: { plugins: [pinia] } })
+    await flushPromises()
+    first.unmount()
+    api.listCategories.mockReturnValueOnce(new Promise(() => {}))
+
+    const second = mount(CategoriesView, { global: { plugins: [pinia] } })
+    await flushPromises()
+
+    expect(second.text()).not.toContain('Apples')
+    expect(second.text()).toContain('Loading categories…')
+    expect(second.find('ul').exists()).toBe(false)
+  })
+
+  it('asks the server on every mount of the same app, not only the first (a dead session must get its 401)', async () => {
+    api.listCategories.mockResolvedValue(listOf(cat('a', 'Apples')))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const first = mount(CategoriesView, { global: { plugins: [pinia] } })
+    await flushPromises()
+    first.unmount()
+
+    const second = mount(CategoriesView, { global: { plugins: [pinia] } })
+    await flushPromises()
+
+    expect(api.listCategories).toHaveBeenCalledTimes(2)
+    expect(second.findAll('li bdi').map((n) => n.text())).toEqual(['Apples'])
+  })
+
   it('has one h1 and says "No categories yet" when there are none', async () => {
     const page = await render()
 
