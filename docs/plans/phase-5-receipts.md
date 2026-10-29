@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. Next: Step 0 (G2) |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). Next: WP2 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -155,6 +155,21 @@ Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL f
 | R6 | **Ran** against DynamoDB Local: `TransactWriteItems` ConditionCheck + conditional Put, and the cancellation reasons by position; `DeleteItem ALL_OLD`; `UpdateItem … REMOVE expiresAt` with a condition | WP4 |
 | R7 | jsdom 30: `File`, `Blob`, `FormData`, and how far a stubbed `XMLHttpRequest` (fake class through `vi.stubGlobal`) can fire `upload.onprogress` | WP10 |
 | R8 | CSP: confirm `form-action` does not govern XHR; the S3 virtual-hosted host form per bucket; Chrome/Firefox open a presigned PDF with `inline` in the built-in viewer | WP12, WP13 |
+
+#### Step 0 results (2026-10-29, G2)
+
+Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws-sdk-php, php-src, libgd and jsdom sources and the CSP3 spec/MDN. "Ran" rows were run by the main session: the worker and php images with `--network none` and the worker's hardening flags, and the php tools container against `make up`. Throwaway data only, all deleted afterwards.
+
+| # | Result | Effect on the plan |
+|---|---|---|
+| R1 | `PostObjectV4($client, $bucket, $formInputs, $conditions, $expiry)`: the conditions are copied as given. It adds **no** `bucket`/`key` condition by itself. With session credentials it adds `X-Amz-Security-Token` to both the inputs and the policy. A presigned GET signs `response-content-type`/`-disposition` into the query. The signed host is the signing client's endpoint host (virtual-hosted unless `use_path_style_endpoint`) | C5 already lists every condition explicitly; WP3 unit tests assert each one is present. Two clients (public for signing, internal for calls) as planned |
+| R2 | **Ran.** The worker image has GD (JPEG, PNG, WebP; no AVIF) and `exif`. Bref's default `memory_limit` is 10240M (the Lambda memory size is the real bound). A 40 MP (8000×5000) source: JPEG 0.41 s, PNG 0.41 s, from inspect to a 480×300 thumbnail at q80 (~49 KB). PHP's peak counter rose by 157 MB (JPEG) and 271 MB (PNG), so GD's pixel buffers **do** count against `memory_limit` | **Decision 21: keep 8 s / 10 s.** EXIF rotation is on (C12). Phase 7 worker memory ≥ 2 × 271 MB, so 1024 MB |
+| R3 | **Ran.** The `php` dev tools image has **no** GD and no `exif` | **Decision 19 applies:** add `gd` (JPEG, PNG, WebP) and `exif` to the `dev` stage of `docker/php/Dockerfile` in WP7 |
+| R4 | `getimagesizefromstring` reads headers only and reports a huge PNG IHDR as is; truncated input → `false`. **`imagecreatefromstring` allocates width × height × 4 up front**, before decoding. WebP VP8/VP8L/VP8X sizes are read (since PHP 7.1). CMYK JPEG: `channels = 4`, and libgd loads it with a basic CMYK→RGB conversion. No GD pixel cap; `gd.jpeg_ignore_warning` only controls warnings | C11's "check size before decoding" is required, not optional (a decompression bomb otherwise). CMYK JPEGs are accepted; WP7 adds a CMYK fixture case |
+| R5 | **Ran.** A presigned GET with overrides returns `application/pdf` + `inline; filename="receipt.pdf"`; a tampered override → 403. `ListObjectsV2` by prefix + `DeleteObjects` removes exactly that prefix (`e1/` does not touch `e10/`). **`DeleteObjects` with an empty list → `MalformedXML`.** A multipart POST from `http://localhost:5173` → 204 with `Access-Control-Allow-Origin` and `Expose-Headers: ETag`; from another origin → 204 too, with no ACAO header (CORS only hides the answer; the policy is what protects the bucket) | C8 cleanup: prefixes end with `/`; **skip `DeleteObjects` when the listing is empty**, and page through the listing (1000 keys per page). WP6 test for an expense with no receipt |
+| R6 | **Ran.** The C4 transaction commits when there is no receipt; a stale read → `TransactionCanceledException` with reasons `[None, ConditionalCheckFailed]` (→ 409); the expense gone → `[ConditionalCheckFailed, None]` (→ 404). The C10 conditional update with `REMOVE expiresAt` works; a stale key or a duplicate → `ConditionalCheckFailedException`. `DeleteItem ALL_OLD` returns the old item, or no `Attributes` when there was none | C4/C10 as planned: map the reasons **by position** (0 = expense, 1 = receipt) |
+| R7 | jsdom 30 has `File`, `Blob`, `FormData` (append keeps order), `XMLHttpRequestUpload` and `ProgressEvent` | WP10 fakes XHR with `vi.stubGlobal`; the fake must dispatch `ProgressEvent`s itself |
+| R8 | CSP3: `form-action` covers only form submissions; `connect-src` covers XHR/fetch (MDN). Virtual-hosted host: `<bucket>.s3.<region>.amazonaws.com`. Firefox opens `application/pdf` + `inline` in its viewer; **Chrome is not documented** | C20 as planned. The G3 walkthrough checks the PDF in both browsers (already listed) |
 
 ### Part A: Back-end building blocks
 
