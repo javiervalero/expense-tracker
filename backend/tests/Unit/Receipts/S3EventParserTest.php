@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Tests\Unit\Receipts;
 
 use App\Receipts\InvalidS3Event;
+use App\Receipts\ReceiptObjectKey;
 use App\Receipts\S3EventParser;
 use App\Receipts\S3ObjectRef;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -74,6 +75,27 @@ final class S3EventParserTest extends TestCase
         yield 'percent sign' => ['100%25', '100%'];
         yield 'utf-8' => ['caf%C3%A9+%F0%9F%A7%BE', 'café 🧾'];
         yield 'already plain' => ['plain/key.png', 'plain/key.png'];
+    }
+
+    public function testAnEventKeyIsDecodedOnceAndThenParsesAsAReceiptKey(): void
+    {
+        $plain = 'receipts/0b3f1c1e-5d2a-4c8e-9a41-2f6d7b8c9d01/1c4f2d2f-6e3b-4d9f-8b52-3a7e8c9dae12/2d5a3e3a-7f4c-4eaa-9c63-4b8f9daebf23';
+        $event = self::eventWithObject(['key' => str_replace('receipts/', 'receipts%2F', $plain)]);
+
+        $key = (new S3EventParser())->parse($event)[0]->key;
+
+        self::assertSame($plain, $key);
+        self::assertSame($plain, ReceiptObjectKey::parse($key)?->originalKey());
+    }
+
+    public function testADoubleEncodedEventKeyReachesTheKeyParserStillEncodedAndIsRefused(): void
+    {
+        $event = self::eventWithObject(['key' => 'receipts%252F0b3f1c1e-5d2a-4c8e-9a41-2f6d7b8c9d01/1c4f2d2f-6e3b-4d9f-8b52-3a7e8c9dae12/2d5a3e3a-7f4c-4eaa-9c63-4b8f9daebf23']);
+
+        $key = (new S3EventParser())->parse($event)[0]->key;
+
+        self::assertStringStartsWith('receipts%2F', $key);
+        self::assertNull(ReceiptObjectKey::parse($key));
     }
 
     public function testParsesEveryRecordOfTheEvent(): void

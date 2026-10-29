@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). Next: WP2 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** Next: WP3 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -177,7 +177,8 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
 - **Files:** this plan; a PLAN §12 row 5 link. **Agent:** main session. **Commit:** `docs: add phase 5 implementation plan`.
 
 #### WP2: Receipt values (S), security-critical
-- **Files:** `backend/src/Receipts/{ReceiptObjectKey,ReceiptContentType,ReceiptStatus,FailureReason,Receipt,ReceiptLimits}.php` (`MAX_BYTES`, `MAX_PIXELS`, `MAX_SIDE`, `POLICY_TTL`, `VIEW_URL_TTL`, `PENDING_TTL`, `FAILED_TTL`); unit tests under `tests/Unit/Receipts/`.
+- **Files:** `backend/src/Receipts/{ReceiptObjectKey,ReceiptContentType,ReceiptStatus,FailureReason,Receipt,ReceiptLimits}.php` (`MAX_BYTES`, `MAX_PIXELS`, `MAX_SIDE`, `POLICY_TTL_SECONDS`, `VIEW_URL_TTL_SECONDS`, `PENDING_TTL_SECONDS`, `FAILED_TTL_SECONDS`); unit tests under `tests/Unit/Receipts/`.
+- **Decided in review:** the key is URL-decoded in **one place only**, `S3EventParser`. `ReceiptObjectKey::parse()` takes an already-decoded key (`S3ObjectRef::$key` or a stored `objectKey`), refuses any `%`, and a key that parses equals its `originalKey()`. `Receipt` derives `receiptId()` from its key.
 - **Tests first:**
   - `ReceiptObjectKey`:
     - build → parse round-trips;
@@ -210,6 +211,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
     - the view URL returns the bytes with the forced type;
     - prefix delete removes both buckets' objects;
     - `api-php` reaches S3 only through the chosen path.
+- **From the WP2 security review:** on AWS the signer must produce **virtual-hosted** URLs (`<bucket>.s3.<region>.amazonaws.com`), so each bucket is its own browser origin; path style (`s3.<region>.amazonaws.com/<bucket>`) would put every bucket on one shared origin. Path style stays only for the local endpoint. A unit test pins the style per endpoint.
 - **Review:** php-reviewer; code-reviewer for the Compose/nginx part if over 30 lines; **security-reviewer**. **Commit:** `feat: add s3 policy and url signing and the api's object store`.
 
 #### WP4: Receipt repository (S–M), security-critical
@@ -223,6 +225,10 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - `markReady`/`markFailed` succeed once, a second time report "already processed", fail for another key, and fail for an expired pending record;
   - a corrupt item is a `StorageFailure`;
   - **cross-user:** user B's principal never reads or changes A's `RCPT#`.
+- **From the WP2 reviews (hydration checks, each a `StorageFailure` with a unit test):**
+  - the stored `objectKey` must parse and round-trip: `ReceiptObjectKey::parse($stored)?->originalKey() === $stored`;
+  - the key's user id and expense id must equal the item's `PK USER#<u>` and `SK RCPT#<e>` (C14: otherwise a corrupt item could get user A a view URL for user B's file);
+  - `:now` for the conditions comes from the same clock as `Receipt::isLive()`, as `getTimestamp()`.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt repository with conditional writes`.
 
 ### Part B: Endpoints (contract and code in one commit each)
@@ -283,6 +289,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - `NoSuchKey` with a pending record → throws; without one → no-op;
   - a batch with one throwing record → exactly that `itemIdentifier`;
   - `WorkerFactory::create()` builds the real processor from env, and refuses missing or non-local endpoints.
+- **From the WP2 reviews:** a processor test feeds a real `S3EventParser` result into the key check: an event key `receipts/<u>/<e>%252F<r>` must be skipped (logged, success), never normalised into another object's key.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: process receipts in the worker with conditional updates and cleanup`.
 
 #### WP9: End-to-end pipeline, isolation and log hygiene (M)
