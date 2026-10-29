@@ -303,6 +303,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make test-conformance` | Conformance tests against DynamoDB Local, ElasticMQ and the S3 emulator (needs `make up`) |
 | `make test-contract` | Contract tests: route parity, every operation documents its errors, every secured operation is covered by the cross-user isolation suite, and the validator against the real bundled spec (run `make contract-bundle` first) |
 | `make test-integration` | Integration tests (needs `make up`): the receipt pipeline S3 → relay → ElasticMQ → runner → worker, the API through nginx (contract-validated, including the cross-user isolation suite), and the DynamoDB item store against DynamoDB Local; afterwards it checks the logs: no password, session token or user content (descriptions, category names, `q`, cursors) may appear |
+| `make test-api-s3-path` | Runs a short script inside a throwaway `api-php` container (needs `make up`; `make test-integration` runs it too) and proves that the API reaches S3 only through the extra nginx listener of `api` (`http://api:9100`, not published on the host): the endpoint is that listener, a signed request through it is answered by S3, and `s3:9000` is not reachable from `api-php` |
 | `make test-shell` | Tests of the shell guards (`scripts/tests/*.test.sh`) |
 | `make tf-test` | Tests of the Terraform check (needs Docker, about 50 s) |
 

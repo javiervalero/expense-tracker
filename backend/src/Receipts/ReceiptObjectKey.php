@@ -56,6 +56,26 @@ final readonly class ReceiptObjectKey
         return new self($userId, $expenseId, $receiptId);
     }
 
+    /**
+     * The folder of every original of one expense, ending with `/` (so `e1/` never matches `e10/`).
+     *
+     * @throws InvalidArgumentException when an id is not a lower-case canonical UUID
+     */
+    public static function originalPrefix(string $userId, string $expenseId): string
+    {
+        return self::PREFIX . Uuid::require($userId, 'user id') . '/' . Uuid::require($expenseId, 'expense id') . '/';
+    }
+
+    /**
+     * The folder of every thumbnail of one expense, ending with `/`.
+     *
+     * @throws InvalidArgumentException when an id is not a lower-case canonical UUID
+     */
+    public static function thumbnailPrefix(string $userId, string $expenseId): string
+    {
+        return Uuid::require($userId, 'user id') . '/' . Uuid::require($expenseId, 'expense id') . '/';
+    }
+
     public function originalKey(): string
     {
         return self::PREFIX . $this->userId . '/' . $this->expenseId . '/' . $this->receiptId;

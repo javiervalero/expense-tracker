@@ -35,10 +35,10 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 php-image: ## Build the PHP tools image (pinned base images, pcov, Composer)
 	docker build --target dev -t $(PHP_IMAGE) -f docker/php/Dockerfile .
@@ -190,6 +190,13 @@ CLIENT_IP_MARKERS = build/client-ip-test
 # logged by api-php; descriptions and names are also checked in the nginx log, `q` and cursors are not (local nginx logs query strings, B23).
 AUTH_MARKERS = build/auth-test
 
+# Decision 15(a), proved from INSIDE the api-php service (a throwaway container of the same service, same networks and
+# hardening; `--no-deps` starts nothing else): S3_ENDPOINT is the nginx listener http://api:9100, a signed request through
+# it is answered by S3, and s3:9000 is not reachable. The script is piped in because the container mounts no scripts.
+# `make test-integration` runs it too. Needs `make up`.
+test-api-s3-path: .env check-env ## Check from inside api-php that S3 is reachable only through the nginx listener api:9100; run `make up` first
+	$(COMPOSE) run --rm --no-deps -T api-php php < scripts/api-s3-path-check.php
+
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
@@ -199,6 +206,8 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	rm -rf $(CLIENT_IP_MARKERS) $(AUTH_MARKERS); \
 	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
+	echo "make test-integration: api-php to S3 path check"; \
+	$(MAKE) --no-print-directory test-api-s3-path; \
 	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
 	[ -f $(CLIENT_IP_MARKERS)/markers.json ] || fail "the client IP test left no $(CLIENT_IP_MARKERS)/markers.json"; \
 	marker() { v=$$(sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(CLIENT_IP_MARKERS)/markers.json); [ -n "$$v" ] || fail "markers.json has no '$$1' marker (did its test run?)"; printf '%s' "$$v"; }; \

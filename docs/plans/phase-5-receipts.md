@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** Next: WP3 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** Next: WP4 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -255,6 +255,10 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - DELETE: 204, then 404; record gone before objects (spy order); S3 failure → still 204 plus the ERROR log.
   - Expense delete: objects under both prefixes removed; S3 failure → 204 plus the log.
   - The cross-user rows pass.
+- **From the WP3 reviews:**
+  - `ViewUrlSigner` gets the type **the worker verified** (the stored `contentType` after `ready`), never the declared one;
+  - prefix cleanup on expense delete: bound the work per request (pages or a total deadline) so 20 s × 3 attempts × N pages cannot outlast the Lambda timeout; whatever is left is logged by the cleaner (C9);
+  - the cross-user guarantee of the cleanup rests on passing the **session's** user id, never one from the request; a test pins it.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt status, view links and delete, and clean up on expense delete`.
 
 ### Part C: Worker
@@ -358,7 +362,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
 - **Docs (doc-updater haiku/low):**
   - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
   - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
-  - Phase 7 carry list: IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
+  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
   - PLAN §12 row 5 → Done.
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
 - **Commit:** `docs: phase 5 receipts walkthrough and adr notes`.

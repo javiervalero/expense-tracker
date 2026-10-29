@@ -16,7 +16,8 @@ final class ApiConfigTest extends TestCase
     private const HEADER = 'CloudFront-Viewer-Address';
     private const TABLE = 'expense-tracker-test';
     private const ORIGINS = 'http://localhost:5173,http://127.0.0.1:5173';
-    private const DYNAMODB = ['DYNAMODB_TABLE' => self::TABLE];
+    private const DYNAMODB = ['DYNAMODB_TABLE' => self::TABLE, 'RECEIPTS_BUCKET' => 'test-receipts', 'THUMBNAILS_BUCKET' => 'test-thumbnails'];
+    private const S3_LOCAL = ['S3_ENDPOINT' => 'http://api:9100', 'S3_PUBLIC_ENDPOINT' => 'http://localhost:9000'];
 
     public function testOneSlotIsAccepted(): void
     {
@@ -155,7 +156,7 @@ final class ApiConfigTest extends TestCase
             ApiConfig::fromEnvironment([]);
             self::fail('Expected InvalidConfiguration.');
         } catch (InvalidConfiguration $e) {
-            self::assertCount(4, $e->errors);
+            self::assertCount(6, $e->errors);
             self::assertSame($e->errors, array_values(array_unique($e->errors)));
             $sorted = $e->errors;
             sort($sorted);
@@ -284,6 +285,8 @@ final class ApiConfigTest extends TestCase
             $joined = implode("\n", $e->errors);
             self::assertStringContainsString('DYNAMODB_TABLE is missing', $joined);
             self::assertStringContainsString('AWS_REGION ', $joined);
+            self::assertCount(1, array_filter($e->errors, static fn(string $error): bool => str_starts_with($error, 'AWS_REGION ')), 'reported once, not once per settings class');
+            self::assertSame($e->errors, array_values(array_unique($e->errors)));
             self::assertStringContainsString('ORIGIN_VERIFY_SECRETS ', $joined);
             self::assertStringNotContainsString('hunter2', $joined);
             $sorted = $e->errors;
@@ -296,7 +299,7 @@ final class ApiConfigTest extends TestCase
     {
         foreach ([[], ['DYNAMODB_ENDPOINT' => '']] as $extra) {
             try {
-                ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local'] + $extra);
+                ApiConfig::fromEnvironment(self::validEnv() + self::S3_LOCAL + ['APP_ENV' => 'local'] + $extra);
                 self::fail('Expected InvalidConfiguration.');
             } catch (InvalidConfiguration $e) {
                 self::assertCount(1, $e->errors);
@@ -320,7 +323,7 @@ final class ApiConfigTest extends TestCase
     public function testEveryCaseAndPaddingOfLocalStillRequiresAnEndpoint(string $appEnv): void
     {
         try {
-            ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => $appEnv]);
+            ApiConfig::fromEnvironment(self::validEnv() + self::S3_LOCAL + ['APP_ENV' => $appEnv]);
             self::fail('Expected InvalidConfiguration.');
         } catch (InvalidConfiguration $e) {
             self::assertSame(['DYNAMODB_ENDPOINT is required when APP_ENV is local'], $e->errors);
@@ -331,7 +334,7 @@ final class ApiConfigTest extends TestCase
     {
         foreach (['   ', "\t", " \n "] as $endpoint) {
             try {
-                ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => $endpoint]);
+                ApiConfig::fromEnvironment(self::validEnv() + self::S3_LOCAL + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => $endpoint]);
                 self::fail('Expected InvalidConfiguration.');
             } catch (InvalidConfiguration $e) {
                 self::assertContains('DYNAMODB_ENDPOINT is required when APP_ENV is local', $e->errors);
@@ -341,7 +344,7 @@ final class ApiConfigTest extends TestCase
 
     public function testALocalEnvironmentWithAnEndpointAndANonLocalOneWithoutAreAccepted(): void
     {
-        $local = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000']);
+        $local = ApiConfig::fromEnvironment(self::validEnv() + self::S3_LOCAL + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000']);
         $production = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'production']);
         $unset = ApiConfig::fromEnvironment(self::validEnv());
 
@@ -359,5 +362,60 @@ final class ApiConfigTest extends TestCase
             self::assertStringStartsWith('DYNAMODB_ENDPOINT ', $e->errors[0]);
             self::assertStringNotContainsString('amazonaws', implode(' ', $e->errors));
         }
+    }
+
+    public function testTheS3SettingsAreExposed(): void
+    {
+        $config = ApiConfig::fromEnvironment(self::validEnv() + self::S3_LOCAL + ['AWS_REGION' => 'eu-west-1']);
+
+        self::assertSame('test-receipts', $config->s3->receiptsBucket);
+        self::assertSame('test-thumbnails', $config->s3->thumbnailsBucket);
+        self::assertSame('http://api:9100', $config->s3->endpoint);
+        self::assertSame('http://localhost:9000', $config->s3->publicEndpoint);
+    }
+
+    public function testBothS3EndpointsAreRequiredInALocalEnvironmentAndNamedWithoutValues(): void
+    {
+        try {
+            ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000']);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            self::assertSame(
+                ['S3_ENDPOINT is required when APP_ENV is local', 'S3_PUBLIC_ENDPOINT is required when APP_ENV is local'],
+                $e->errors,
+            );
+        }
+    }
+
+    public function testAnEmptyS3EndpointIsStillRequiredInALocalEnvironment(): void
+    {
+        try {
+            ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'local', 'DYNAMODB_ENDPOINT' => 'http://dynamodb:8000', 'S3_ENDPOINT' => ' ', 'S3_PUBLIC_ENDPOINT' => 'http://localhost:9000']);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            self::assertContains('S3_ENDPOINT is required when APP_ENV is local', $e->errors);
+        }
+    }
+
+    public function testMissingBucketsAndARealAwsEndpointAreReportedByNameAlongsideTheOthers(): void
+    {
+        $env = ['ORIGIN_VERIFY_SECRETS' => self::SLOT_A, 'CLIENT_IP_HEADER' => self::HEADER, 'APP_ORIGINS' => self::ORIGINS, 'DYNAMODB_TABLE' => self::TABLE]
+            + ['S3_ENDPOINT' => 'https://s3.eu-west-1.amazonaws.com', 'S3_PUBLIC_ENDPOINT' => 'http://localhost:9000'];
+
+        try {
+            ApiConfig::fromEnvironment($env);
+            self::fail('Expected InvalidConfiguration.');
+        } catch (InvalidConfiguration $e) {
+            self::assertSame(['RECEIPTS_BUCKET is missing', 'S3_ENDPOINT points at real AWS', 'THUMBNAILS_BUCKET is missing'], $e->errors);
+            self::assertStringNotContainsString('amazonaws', $e->getMessage());
+        }
+    }
+
+    public function testOnAwsNoS3EndpointIsNeeded(): void
+    {
+        $config = ApiConfig::fromEnvironment(self::validEnv() + ['APP_ENV' => 'production']);
+
+        self::assertNull($config->s3->endpoint);
+        self::assertNull($config->s3->publicEndpoint);
     }
 }

@@ -45,6 +45,8 @@ final class ApiFactoryStoreWiringTest extends TestCase
             'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address',
             'APP_ORIGINS' => self::ORIGIN,
             'DYNAMODB_TABLE' => $this->table->name,
+            'RECEIPTS_BUCKET' => 'test-receipts',
+            'THUMBNAILS_BUCKET' => 'test-thumbnails',
             'DYNAMODB_ENDPOINT' => $endpoint,
             'AWS_REGION' => 'eu-west-1',
         ]);

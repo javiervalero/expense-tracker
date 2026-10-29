@@ -223,8 +223,10 @@ services:
   #
   # NO SECRETS and NO env_file here: the pool has clear_env = no, so every variable of this container is visible to
   # the PHP code of every request. The environment is what the API needs, listed below. The only AWS credentials are
-  # the project's FAKE local pair (.env: localdev), which DynamoDB Local accepts and nothing else does, on a network
-  # (`api-internal`) with no route out; DYNAMODB_ENDPOINT is also checked against a local-only allow-list at startup.
+  # the project's FAKE local pair (.env: localdev). It is DynamoDB Local's key and also the ROOT user of the S3 emulator
+  # (silo), which api-php now reaches through api:9100 (accepted local risk, decisions 15a and 26; ADR 0007
+  # "Implemented in Phase 5"). Neither is a real account: `api-internal` still has no route out, and DYNAMODB_ENDPOINT, S3_ENDPOINT and
+  # S3_PUBLIC_ENDPOINT are checked against a local-only allow-list at startup.
   # Never put real AWS credentials in .env.
   # ORIGIN_VERIFY_SECRETS is the LOCAL, non-secret origin value (the same one the Vite proxy sends, see .env.example),
   # not a real secret; the default equals .env.example so an older .env still works. Production gets a real one.
@@ -248,6 +250,15 @@ services:
       APP_ORIGINS: ${APP_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
       DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:?not set - add DYNAMODB_ENDPOINT=http://dynamodb:8000 to .env (see .env.example)}
       DYNAMODB_TABLE: ${DYNAMODB_TABLE:?not set - add DYNAMODB_TABLE=expense-tracker-local to .env (see .env.example)}
+      # S3 (receipts, Phase 5). The API only sits on the internal network api-internal, so its S3 calls go through the
+      # extra nginx listener of `api` (decision 15a, docker/api/nginx.conf), NOT to s3:9000 (this is not .env's
+      # S3_ENDPOINT, which the test containers use). The signatures are made for the PUBLIC address (what the browser
+      # uses), and nginx passes the Host header through, so they stay valid. The bucket names are the ones the
+      # bootstrap (local-aws-init) creates.
+      S3_ENDPOINT: http://api:9100
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      RECEIPTS_BUCKET: receipts
+      THUMBNAILS_BUCKET: receipt-thumbnails
       AWS_REGION: ${AWS_REGION:-eu-west-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
@@ -288,6 +299,11 @@ services:
     networks: [default, api-internal]
     ports:
       - "127.0.0.1:8080:8080"
+    # 9100 is the API's way to S3 (decision 15a; docker/api/nginx.conf): reachable by the containers on the two networks,
+    # NOT published on the host. Accepted: any container on `default` or `api-internal` (for example dynamodb) can use it,
+    # as it can already reach s3:9000 (default) and php-fpm's 9000 (api-internal).
+    expose:
+      - "9100"
     # Only for the healthcheck below. The local, non-secret origin value (same default as .env.example).
     environment:
       ORIGIN_VERIFY_LOCAL: ${ORIGIN_VERIFY_LOCAL:-local-origin-verify-not-a-secret}
@@ -433,7 +449,8 @@ services:
 
 networks:
   # php-fpm's private network: `internal: true` gives it no route out and no published ports. Members: `api-php`, `api`
-  # and `dynamodb` (the one backend the API may reach). `api` and `dynamodb` can therefore both reach php-fpm on 9000;
+  # and `dynamodb`. The API reaches DynamoDB Local directly and the S3 emulator only through the nginx listener api:9100
+  # (decision 15a); it has no route to anything else. `api` and `dynamodb` can therefore both reach php-fpm on 9000;
   # accepted, see the `api-php` comment.
   api-internal:
     internal: true

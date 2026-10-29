@@ -26,6 +26,9 @@ final class DynamoDbClientFactory
     {
         $config = [
             'version' => self::API_VERSION,
+            // The environment (AWS_ENDPOINT_URL, AWS_ENDPOINT_URL_DYNAMODB) or a shared config file must never move the
+            // client: the endpoint is the application's setting or the AWS default, nothing else.
+            'ignore_configured_endpoint_urls' => true,
             'http' => ['connect_timeout' => self::CONNECT_TIMEOUT_SECONDS, 'timeout' => self::REQUEST_TIMEOUT_SECONDS],
             'retries' => ['mode' => 'standard', 'max_attempts' => self::RETRY_ATTEMPTS],
         ];

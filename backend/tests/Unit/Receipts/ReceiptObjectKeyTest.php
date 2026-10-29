@@ -106,4 +106,31 @@ final class ReceiptObjectKeyTest extends TestCase
     {
         self::assertNull(ReceiptObjectKey::parse($key));
     }
+
+    public function testTheExpensePrefixesEndWithASlashAndContainTheKeys(): void
+    {
+        $key = ReceiptObjectKey::from(self::USER, self::EXPENSE, self::RECEIPT);
+
+        $originals = ReceiptObjectKey::originalPrefix(self::USER, self::EXPENSE);
+        $thumbnails = ReceiptObjectKey::thumbnailPrefix(self::USER, self::EXPENSE);
+
+        self::assertSame('receipts/' . self::USER . '/' . self::EXPENSE . '/', $originals);
+        self::assertSame(self::USER . '/' . self::EXPENSE . '/', $thumbnails);
+        self::assertStringStartsWith($originals, $key->originalKey());
+        self::assertStringStartsWith($thumbnails, $key->thumbnailKey());
+    }
+
+    public function testThePrefixesRefuseAnInvalidId(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        ReceiptObjectKey::originalPrefix(self::USER, '../x');
+    }
+
+    public function testTheThumbnailPrefixRefusesAnInvalidId(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        ReceiptObjectKey::thumbnailPrefix('', self::EXPENSE);
+    }
 }

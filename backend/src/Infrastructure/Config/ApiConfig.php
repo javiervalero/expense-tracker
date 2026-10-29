@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Infrastructure\Config;
 
 use App\Infrastructure\DynamoDb\DynamoDbSettings;
+use App\Infrastructure\S3\S3Settings;
 
 /**
  * The API's configuration, read once from the process environment by the composition root. It grows with the
@@ -20,6 +21,8 @@ final readonly class ApiConfig
     private const APP_ENV = 'APP_ENV';
     private const LOCAL_ENV = 'local';
     private const DYNAMODB_ENDPOINT = 'DYNAMODB_ENDPOINT';
+    private const S3_ENDPOINT = 'S3_ENDPOINT';
+    private const S3_PUBLIC_ENDPOINT = 'S3_PUBLIC_ENDPOINT';
     private const APP_ORIGINS = 'APP_ORIGINS';
     private const MAX_ORIGINS = 3;
     private const MAX_PORT = 65535;
@@ -50,12 +53,14 @@ final readonly class ApiConfig
      * @param string $clientIpHeader the one header that carries the caller's address (always `CloudFront-Viewer-Address`)
      * @param list<string> $appOrigins the browser origins allowed to make state-changing calls (1 to 3, exact strings)
      * @param DynamoDbSettings $dynamoDb where the data lives
+     * @param S3Settings $s3 where the receipts live
      */
     private function __construct(
         public array $originVerifySecrets,
         public string $clientIpHeader,
         public array $appOrigins,
         public DynamoDbSettings $dynamoDb,
+        public S3Settings $s3,
     ) {}
 
     /**
@@ -70,12 +75,14 @@ final readonly class ApiConfig
         $clientIpHeader = self::clientIpHeader($env, $errors);
         $appOrigins = self::appOrigins($env, $errors);
         $dynamoDb = self::dynamoDb($env, $errors);
+        $s3 = self::s3($env, $errors);
+        $errors = array_values(array_unique($errors)); // AWS_REGION is read by both the DynamoDB and the S3 settings
         sort($errors);
-        if ($errors !== [] || $dynamoDb === null) {
+        if ($errors !== [] || $dynamoDb === null || $s3 === null) {
             throw new InvalidConfiguration($errors);
         }
 
-        return new self($secrets, $clientIpHeader, $appOrigins, $dynamoDb);
+        return new self($secrets, $clientIpHeader, $appOrigins, $dynamoDb, $s3);
     }
 
     /**
@@ -94,14 +101,46 @@ final readonly class ApiConfig
             array_push($errors, ...$invalid->errors);
             $settings = null;
         }
-        $endpoint = $env[self::DYNAMODB_ENDPOINT] ?? null;
+        self::requireEndpointWhenLocal($env, self::DYNAMODB_ENDPOINT, $errors);
+
+        return $settings;
+    }
+
+    /**
+     * Same rule as DynamoDB's: with `APP_ENV=local` both endpoints are mandatory, so an empty value can never silently
+     * mean real AWS.
+     *
+     * @param array<array-key, mixed> $env
+     * @param list<string> $errors
+     * @param-out list<string> $errors
+     */
+    private static function s3(array $env, array &$errors): ?S3Settings
+    {
+        try {
+            $settings = S3Settings::fromEnvironment($env);
+        } catch (InvalidConfiguration $invalid) {
+            array_push($errors, ...$invalid->errors);
+            $settings = null;
+        }
+        self::requireEndpointWhenLocal($env, self::S3_ENDPOINT, $errors);
+        self::requireEndpointWhenLocal($env, self::S3_PUBLIC_ENDPOINT, $errors);
+
+        return $settings;
+    }
+
+    /**
+     * @param array<array-key, mixed> $env
+     * @param list<string> $errors
+     * @param-out list<string> $errors
+     */
+    private static function requireEndpointWhenLocal(array $env, string $name, array &$errors): void
+    {
+        $endpoint = $env[$name] ?? null;
         $appEnv = $env[self::APP_ENV] ?? '';
         $isLocal = is_string($appEnv) && strtolower(trim($appEnv)) === self::LOCAL_ENV;
         if ($isLocal && ($endpoint === null || (is_string($endpoint) && trim($endpoint) === ''))) {
-            $errors[] = self::DYNAMODB_ENDPOINT . ' is required when ' . self::APP_ENV . ' is ' . self::LOCAL_ENV;
+            $errors[] = $name . ' is required when ' . self::APP_ENV . ' is ' . self::LOCAL_ENV;
         }
-
-        return $settings;
     }
 
     /**
