@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Draft**, waiting for gate G1 (owner approves this plan and section 10) |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. Next: Step 0 (G2) |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -16,14 +16,16 @@
 
 ## Contradictions found while planning
 
-- (1) ADR 0008's target CSP (`connect-src 'self'; img-src 'self'`) and ADR 0005's "one origin, no CORS" do not fit ADR 0006's direct browser→S3 POST and signed previews, so the S3 hosts have to be added.
-- (2) ADR 0006 has the API delete S3 objects, but `api-php` sits only on `api-internal`, which cannot reach `s3`; ADR 0007 R13 says to revisit if a non-AWS image joins that network.
-- (3) ADR 0006 says "delete expense + receipt in one transaction, then the objects", but `ExpenseRepository::delete` uses TransactWriteItems, which cannot return the old `objectKey`.
-- (4) ADR 0006's replace uses `PutItem ReturnValues=ALL_OLD`, but that cannot also check that the expense still exists, so a replace racing an expense delete leaves an orphan record.
-- (5) The Phase 4 lint bans `XMLHttpRequest` everywhere, yet upload progress needs it (fetch has no upload progress).
-- (6) The bootstrap CORS rule allows only `http://localhost:5173`, while `APP_ORIGINS` also allows `http://127.0.0.1:5173`.
-- (7) `ReceiptPipeTest` and the Makefile check for the Phase 0 "receipt received" log line, using a non-UUID key and junk bytes that the real worker will ignore.
-- (8) PLAN §8 puts receipt upload in "the expense form", but the API needs an existing expense id, so the new-expense form cannot upload.
+Each item ends with where it is resolved. "Decision N" means §10 (you choose); a C-row in §2 or a WP means the plan fixes it with no real alternative.
+
+- (1) ADR 0008's target CSP (`connect-src 'self'; img-src 'self'`) and ADR 0005's "one origin, no CORS" do not fit ADR 0006's direct browser→S3 POST and signed previews, so the S3 hosts have to be added. **→ Resolved by C20** (Phase 7 CSP target with the two bucket hosts, recorded in the ADR 0008 note in WP13; nothing changes locally). Not a §10 decision: direct upload to S3 needs it.
+- (2) ADR 0006 has the API delete S3 objects, but `api-php` sits only on `api-internal`, which cannot reach `s3`; ADR 0007 R13 says to revisit if a non-AWS image joins that network. **→ Decision 15** (recommended: (a) an unpublished nginx listener; (b)/(c) need an ADR 0007 amendment at G2).
+- (3) ADR 0006 says "delete expense + receipt in one transaction, then the objects", but `ExpenseRepository::delete` uses TransactWriteItems, which cannot return the old `objectKey`. **→ Resolved by C8, decision 16** (prefix cleanup of both buckets after the transaction).
+- (4) ADR 0006's replace uses `PutItem ReturnValues=ALL_OLD`, but that cannot also check that the expense still exists, so a replace racing an expense delete leaves an orphan record. **→ Resolved by C4** (one transaction: `ConditionCheck` on the expense + conditional `Put` of the receipt; 404 / 409). Not a §10 decision: it is a correctness fix; decision 18 covers only the status code.
+- (5) The Phase 4 lint bans `XMLHttpRequest` everywhere, yet upload progress needs it (fetch has no upload progress). **→ Resolved by C17, decisions 13 and 14** (an owner-added ESLint override for `src/api/upload.ts` only).
+- (6) The bootstrap CORS rule allows only `http://localhost:5173`, while `APP_ORIGINS` also allows `http://127.0.0.1:5173`. **→ No change needed.** Signing in already works only on `http://localhost:5173` (the `__Host-` `Secure` cookie, `docs/local-dev.md` sign-in note), and an upload needs a signed-in user, so `127.0.0.1` can never reach the S3 POST. WP13 repeats the "use localhost" note in the receipt walkthrough; Phase 7 sets the real CORS origin (§7 carry list).
+- (7) `ReceiptPipeTest` and the Makefile check for the Phase 0 "receipt received" log line, using a non-UUID key and junk bytes that the real worker will ignore. **→ Resolved in WP9**: the test seeds a pending receipt record and uploads under its valid key, so it checks the real worker path (`receipt ready` / `receipt failed`), not a log line for ignored keys.
+- (8) PLAN §8 puts receipt upload in "the expense form", but the API needs an existing expense id, so the new-expense form cannot upload. **→ Resolved by C16, decision 10** (upload on the edit page only).
 
 ## 0. What exists vs what Phase 5 builds
 
@@ -270,7 +272,7 @@ Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL f
 
 #### WP9: End-to-end pipeline, isolation and log hygiene (M)
 - **Files:**
-  - `tests/Integration/Pipeline/ReceiptPipeTest.php` (the upload uses a parseable key under a seeded record, or the marker moves to an "ignored key" log line);
+  - `tests/Integration/Pipeline/ReceiptPipeTest.php` (seed a pending receipt record and upload a valid file under its parseable key, so the test follows the real worker path; the poison-message → DLQ case stays as it is; contradiction 7);
   - new `tests/Integration/Receipts/ReceiptLifecycleTest.php` (API policy → multipart POST to `s3:9000` with the public `Host` → poll the record for at most 15 s with the existing helper style);
   - `Makefile` `test-integration` markers (the worker's `receipt ready` / `receipt failed` lines for a run-unique key; no `X-Amz-Signature`/`Policy` value in the `api-php` or `worker` logs).
 - **Cases:**
@@ -333,7 +335,7 @@ Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL f
 - **Security pass:** `ecc:security-reviewer` (opus/high) over `backend/src/Receipts`, `Infrastructure/S3`, the touched handlers and `frontend/src/{api,composables,components}` receipt files, against the §4 threat list. Fixes go back to tdd-guide; round 2 on the fix hunks.
 - **Docs (doc-updater haiku/low):**
   - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
-  - `docs/local-dev.md` receipt walkthrough (§6 G3 list);
+  - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
   - Phase 7 carry list: IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
   - PLAN §12 row 5 → Done.
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
@@ -392,7 +394,7 @@ Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL f
 
 ## 7. Carried items and review notes
 - **Carried in:** Phase 4 L6 (WP11), L16 (C22); Phase 4 §7.2 "connect-src/img-src for S3 hosts" (C20); ADR 0007 Host-header note (WP3, WP9); `CrossUserCoverageTest` note (WP5).
-- **Carried out (Phase 7):** the list in WP13; also make `S3_CORS_ALLOWED_ORIGIN` cover every `APP_ORIGINS` entry, or document that only `localhost` works (contradiction 6).
+- **Carried out (Phase 7):** the list in WP13; the real CORS origin on the receipts bucket (contradiction 6: locally only `localhost` can sign in, so the single-origin bootstrap rule is enough).
 - **§7.3 Review notes:** filled per WP (red run, findings, fixes, round 2).
 
 ## 8. Risks
@@ -413,6 +415,8 @@ Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL f
 Tests first, with the red run recorded; fail closed (an invalid file is an outcome, not a crash; the client never throws); security round 2 at opus/high; make-only, one run at a time; hand-written fixtures only; protected config edited only by the owner; haiku docs checked line by line; `/ecc:cost-report` at the end.
 
 ## 10. Owner decisions (recommended defaults)
+
+**Approved at G1 on 2026-10-29: every recommended default below, unchanged.** Decision 15 is option (a); decisions 19 and 21 still depend on the Step 0 results (R3, R2).
 
 1. **Max size.** 10 MiB (10,485,760 bytes), shown as "10 MB"? **Recommended: yes.** Alternative: 10,000,000 bytes.
 2. **Accepted types.** JPEG, PNG, WebP, PDF only (no HEIC, GIF, AVIF, SVG)? **Recommended: yes** (ADR 0006, ADR 0012 GD results).
