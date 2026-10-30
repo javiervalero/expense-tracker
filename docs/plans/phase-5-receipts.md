@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). **WP6 done 2026-10-30.** Next: WP7 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). **WP6 done 2026-10-30.** **WP7 done 2026-10-30.** Next: WP8 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -306,6 +306,20 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - the thumbnail of a 2000×1000 PNG with alpha is a JPEG ≤ 480 wide on white; an image of 100×50 is not upscaled;
   - the output has no EXIF (APP1 marker absent).
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt file inspection and gd thumbnails`.
+- **Outcome (2026-10-30):**
+  - **Dev image:** the `dev` stage of `docker/php/Dockerfile` now has `gd` (JPEG, PNG, WebP) and `exif` (decision 19). CI builds it through the same `make php-image`.
+  - **Header desyncs (security review, blocking twice):** PHP's `getimagesizefromstring` and the decoders could be shown different sizes, so a small reported size let GD allocate a huge one.
+    - **JPEG:** RST, TEM, `FF00` or fill bytes before SOS hid a second SOF. Fixed by `JpegStructure`, a strict walker run first:
+      - before SOS, only length-prefixed APPn, COM, DQT, DHT, DRI and exactly one SOF0, SOF1 or SOF2;
+      - its size must equal PHP's;
+      - at most 100 scans (closes the progressive "scan bomb");
+      - an EOI must follow the last scan, and trailers after it (Motion Photo, SEFT) are ignored.
+    - **PNG:** an ancillary chunk before IHDR held decoy dimensions. Fixed by requiring IHDR as the first chunk.
+    - **WebP:** checked by the reviewer; libwebp refuses a canvas and frame mismatch.
+  - **Truncated JPEG:** not a security issue (memory is fixed by the header). Caught by the walker's EOI-after-last-scan rule. The first "file must end with FFD9" rule was dropped because it refused real phone photos. `gd.jpeg_ignore_warning` is not read by `imagecreatefromstring` (R4 correction).
+  - **Error handler:** wraps all of `inspect()`. Any notice or warning is `unreadable`, except a `libpng warning` on a PNG that still decodes (benign iCCP-style warnings).
+  - **Thumbnails:** fit to 480, then orient. All 8 EXIF orientations are tested.
+  - **Not tested:** CMYK JPEG (GD cannot produce one).
 
 #### WP8: Receipt processor and worker wiring (S–M), security-critical
 - **Files:**
@@ -325,6 +339,12 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - a batch with one throwing record → exactly that `itemIdentifier`;
   - `WorkerFactory::create()` builds the real processor from env, and refuses missing or non-local endpoints.
 - **From the WP2 reviews:** a processor test feeds a real `S3EventParser` result into the key check: an event key `receipts/<u>/<e>%252F<r>` must be skipped (logged, success), never normalised into another object's key.
+- **From the WP7 reviews:**
+  - Set the worker's `memory_limit` explicitly (about 768M for a 1024 MB Lambda) rather than Bref's 10240M default. A future size-check bypass then ends as a logged PHP fatal, not a silent out-of-memory kill of the whole batch.
+  - The worker's error handler must respect `error_reporting()` for `@`-silenced calls, as `FrontController::handleError` does. `ThumbnailMaker` uses `@`.
+  - Call `ThumbnailMaker::make()` only after `FileInspector` accepted the file; a test pins it. `make()` itself does no size check.
+  - Consider an SQS batch size of 1 for the worker: one hostile file can then never delay or DLQ other users' receipts.
+  - **Open, not verified (WP7 round-2 security review, MEDIUM if confirmed):** libpng 1.6 decompresses and keeps compressed text chunks (`zTXt`, `iTXt`) that come before IDAT: up to 1000 chunks of about 8 MB each, outside PHP's `memory_limit`. An input of about 8 MB could cost gigabytes. Measuring it is a decompression-bomb test, so ask the owner first. If it is confirmed, add a PNG chunk walker that accepts only known chunks and refuses or caps compressed ancillary chunks. Measure it before Phase 7 sizes the worker's memory.
 - **From the WP5 reviews:** an upload policy stays valid for 5 minutes after a replace or an expense delete, so a file can land at an old key after the cleanup ran. A processor test pins that an original whose key does not match the current record (or has no record) is deleted along with its thumbnail (C10 step 7).
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: process receipts in the worker with conditional updates and cleanup`.
 
@@ -395,7 +415,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
 - **Docs (doc-updater haiku/low):**
   - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
   - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
-  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); an API Lambda timeout above the request worst case and below API Gateway's 30 s. The worst case (WP6 round-2 security review) is: the DynamoDB calls before cleanup (session lookup plus the write, each up to about 15 s when degraded) + the 8 s cleanup budget + one in-flight cleanup S3 call (about 12 s). The cleanup budget runs from the start of the cleanup, not the start of the request. When DynamoDB and S3 are degraded together, the request can still pass 30 s. Accepted for now. Phase 7 should take the deadline from the Lambda context's remaining time minus a margin, or tighten the DynamoDB client timeouts; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
+  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); an API Lambda timeout above the request worst case and below API Gateway's 30 s. The worst case (WP6 round-2 security review) is: the DynamoDB calls before cleanup (session lookup plus the write, each up to about 15 s when degraded) + the 8 s cleanup budget + one in-flight cleanup S3 call (about 12 s). The cleanup budget runs from the start of the cleanup, not the start of the request. When DynamoDB and S3 are degraded together, the request can still pass 30 s. Accepted for now. Phase 7 should take the deadline from the Lambda context's remaining time minus a margin, or tighten the DynamoDB client timeouts; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2 (WP7 security review: R2 measured a baseline 4:2:0 JPEG. A progressive 4:4:4 or CMYK JPEG, or a WebP, can need about 500 MB plus the runtime, so 1024 MB still holds. Re-measure with a progressive 4:4:4 JPEG with orientation 6 before sizing); timeout; visibility ≥ 6×;
   - PLAN §12 row 5 → Done.
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
 - **Commit:** `docs: phase 5 receipts walkthrough and adr notes`.
