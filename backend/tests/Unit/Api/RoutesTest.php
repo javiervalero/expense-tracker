@@ -32,6 +32,7 @@ final class RoutesTest extends TestCase
         'GET /expenses/{id}' => RequireSession::class,
         'PATCH /expenses/{id}' => RequireSession::class,
         'DELETE /expenses/{id}' => RequireSession::class,
+        'POST /expenses/{id}/receipt/upload' => RequireSession::class,
     ];
 
     /** @return array<string, Route> */
@@ -64,7 +65,7 @@ final class RoutesTest extends TestCase
         }
     }
 
-    public function testOnlyTheMeCategoryAndExpenseRoutesAreGuarded(): void
+    public function testOnlyTheMeCategoryExpenseAndReceiptRoutesAreGuarded(): void
     {
         $guarded = [];
         foreach (self::byKey() as $key => $route) {
@@ -73,6 +74,6 @@ final class RoutesTest extends TestCase
             }
         }
 
-        self::assertSame(['GET /auth/me', 'GET /categories', 'POST /categories', 'PATCH /categories/{id}', 'DELETE /categories/{id}', 'GET /expenses', 'POST /expenses', 'GET /expenses/{id}', 'PATCH /expenses/{id}', 'DELETE /expenses/{id}'], $guarded);
+        self::assertSame(['GET /auth/me', 'GET /categories', 'POST /categories', 'PATCH /categories/{id}', 'DELETE /categories/{id}', 'GET /expenses', 'POST /expenses', 'GET /expenses/{id}', 'PATCH /expenses/{id}', 'DELETE /expenses/{id}', 'POST /expenses/{id}/receipt/upload'], $guarded);
     }
 }

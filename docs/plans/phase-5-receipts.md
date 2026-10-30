@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** Next: WP5 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). Next: WP6 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -71,7 +71,7 @@ Each item ends with where it is resolved. "Decision N" means §10 (you choose); 
 | C2 | Record | `PK USER#<u>`, `SK RCPT#<e>`. Fields: `receiptId`, `objectKey`, `status` (`pending`/`ready`/`failed`), `contentType` (declared), `size` (declared), `createdAt`, `expiresAt` (pending: +24 h; failed: +7 d; removed on ready), `failureReason` (failed only), `processedAt`. Hydrated field by field like `ExpenseRepository` (a corrupt item is a `StorageFailure`) | ADR 0002, 0006 |
 | C3 | TTL is not correctness | Reads treat `pending`/`failed` with `expiresAt ≤ now` as "no receipt" (`ReceiptRepository::find` returns null), so behaviour never depends on when DynamoDB actually deletes (up to days late; DynamoDB Local was never shown to expire, ADR 0007 Phase 1 note). The worker's conditional update also compares `expiresAt > :now`, so an expired pending record cannot become ready | ADR 0006 Lifecycle row 1 |
 | C4 | `POST /expenses/{id}/receipt/upload` | Body `{contentType, size}`: `contentType` ∈ the 4 types, `size` an integer from 1 to `MAX_BYTES`. Otherwise 422 at `/contentType` or `/size`. Steps: (1) `GetItem` the current receipt; (2) one `TransactWriteItems`: `ConditionCheck EXP#<e> attribute_exists(PK)` plus `Put RCPT#<e>` with condition "unchanged since step 1" (`attribute_not_exists(PK)` or `receiptId = :old`); (3) only after it commits, delete the old original and thumbnail if there was one; (4) return the policy. The expense condition fails → 404. The receipt condition fails → 409 "changed elsewhere, reload" (one retry is not worth it). Answer: **201** with `Location: /api/v1/expenses/{id}/receipt` and `{receiptId, url, fields, expiresAt, maxBytes}`. `Cache-Control: no-store` | ADR 0006 Flow 1 and replace row; fixes contradiction 4. Decision 18 |
-| C5 | Upload policy | `PostObjectV4`, signed against the **public** endpoint (locally `S3_PUBLIC_ENDPOINT=http://localhost:9000`, path style; ADR 0007 Host-header note). No network call. Conditions: `bucket` eq, `key` eq, `Content-Type` eq the declared type, `content-length-range [1, MAX_BYTES]`, 5-minute expiry. No `acl`, no `success_action_redirect`; S3 rejects unsigned extra fields (spike case 6) | ADR 0006; spike table |
+| C5 | Upload policy | `PostObjectV4`, signed against the **public** endpoint (locally `S3_PUBLIC_ENDPOINT=http://localhost:9000`, path style; ADR 0007 Host-header note). No network call. Conditions: `bucket` eq, `key` eq, `Content-Type` eq the declared type, `content-length-range [size, size]` (exactly the declared size, 1 ≤ size ≤ `MAX_BYTES`; owner decision 2026-10-30, WP5 security review), 5-minute expiry. No `acl`, no `success_action_redirect`; S3 rejects unsigned extra fields (spike case 6) | ADR 0006; spike table |
 | C6 | `GET /expenses/{id}/receipt` | 404 when the expense is not the caller's, or there is no live receipt (C3). 200 `{receiptId, status, contentType, size, createdAt, failureReason, viewUrl, thumbnailUrl, urlsExpireAt}`. The URLs are set **only when `ready`**: `viewUrl` = presigned GET of the original with `ResponseContentType` = the type the worker verified and `ResponseContentDisposition: inline; filename="receipt.<ext>"`; `thumbnailUrl` for images only. Lifetime 5 min (decision 6). `Cache-Control: no-store` | ADR 0006 Flow 5; PLAN §9 |
 | C7 | `DELETE /expenses/{id}/receipt` | `DeleteItem RCPT#<e>` with `ReturnValues=ALL_OLD`, then `DeleteObjects` of that original and thumbnail. 204; 404 when nothing was there (decision 25) | ADR 0006 delete row |
 | C8 | Expense delete cleanup | Keep the existing transaction. Afterwards, list and delete the prefixes `receipts/<u>/<e>/` (receipts bucket) and `<u>/<e>/` (thumbnails), using `ListObjectsV2` + `DeleteObjects`. That needs no old key, and it also catches strays. Safe because no receipt can be created once the expense is gone (C4 ConditionCheck), and the ids are never reused | ADR 0006 expense row; fixes contradiction 3. Decision 16 |
@@ -257,9 +257,16 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - integration over nginx: 201 + `Location`, `no-store`, contract-valid; another user's expense → 404 with no record written; missing CSRF header → 403.
 - **From the WP4 reviews:** a `TransactionConflict` cancellation (two concurrent starts on the same `RCPT#`) is rethrown as `TransactionCancelled`. Map it to 503, as the other repositories' callers do. `startUpload` refuses a pending receipt whose id equals the current one, so the handler must always mint a fresh v4 id.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt upload policy endpoint`.
+- **Outcome (2026-10-30):**
+  - **Contract split:** only `createReceiptUpload` (path `/expenses/{id}/receipt/upload`, schemas `ReceiptUploadRequest` and `ReceiptUpload`) is in 0.12.0. The parity tests (`RoutesMatchContractTest`, `ProtectedRoutesMatchContractTest`, `CrossUserCoverageTest`) require a route and a cross-user row for every documented operation, and redocly refuses an unused `Receipt` schema. So `getReceipt`, `deleteReceipt` and `Receipt` move to WP6.
+  - **503:** the handler does not catch `TransactionCancelled`. The existing `StorageUnavailableMiddleware` maps a `TransactionConflict`-only cancellation and throttling to 503 with `Retry-After: 1`, and other cancellations to 500, as for the expense routes.
+  - **Exact size (owner decision):** the policy pins `content-length-range [size, size]`; `maxBytes` in the answer stays the 10 MiB cap. The silo refuses one byte less (`EntityTooSmall`) and one byte more (`EntityTooLarge`).
+  - **Order:** commit, then sign (local, no network), then clean up the old objects, then 201. The cleanup sits in a `finally`: once the commit points the record at the new key, the old files are unreferenced, so they are deleted even if signing throws (500). This avoids orphaned personal data (round-2 security review).
+  - **Missing RED runs:** the integration tests and the new silo size cases were written before the code but were first run green.
 
 #### WP6: `GET` and `DELETE` receipt, expense-delete cleanup (S–M), security-critical
 - **Files:** `Receipts/Http/{GetReceiptHandler,DeleteReceiptHandler,ReceiptResponse}.php`; `Expenses/Http/DeleteExpenseHandler.php` (+ cleaner); `Routes.php`; tests.
+- **From WP5:** the contract goes to 0.13.0 with path `/expenses/{id}/receipt` (`getReceipt`, `deleteReceipt`) and the `Receipt` schema, then `make contract-gen`. Add both operations to `CrossUserIsolationApiTest` `SECURED_CALLS`/`ID_ATTEMPTS`, and make its `assertUnchanged` also compare `RCPT#` records.
 - **Tests first:**
   - GET: 404 with no receipt, an expired pending one, or another user's; `pending` has null URLs; `ready` image has both URLs; `ready` PDF has `viewUrl` only; `failed` carries `failureReason`; `no-store`.
   - DELETE: 204, then 404; record gone before objects (spy order); S3 failure → still 204 plus the ERROR log.
@@ -309,6 +316,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - a batch with one throwing record → exactly that `itemIdentifier`;
   - `WorkerFactory::create()` builds the real processor from env, and refuses missing or non-local endpoints.
 - **From the WP2 reviews:** a processor test feeds a real `S3EventParser` result into the key check: an event key `receipts/<u>/<e>%252F<r>` must be skipped (logged, success), never normalised into another object's key.
+- **From the WP5 reviews:** an upload policy stays valid for 5 minutes after a replace or an expense delete, so a file can land at an old key after the cleanup ran. A processor test pins that an original whose key does not match the current record (or has no record) is deleted along with its thumbnail (C10 step 7).
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: process receipts in the worker with conditional updates and cleanup`.
 
 #### WP9: End-to-end pipeline, isolation and log hygiene (M)
@@ -343,7 +351,8 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - upload: fields in order with the file last; `withCredentials` false; no headers set; progress values; 204 → ok; 400/403 → kinds; timeout and abort; a URL with userinfo, query, fragment, `javascript:`, `http://evil.example` or an unknown field name is refused **before** `open()`;
   - `receiptFile`: type and size pre-checks (0 bytes, 10 MiB, 10 MiB + 1, `image/svg+xml`, empty type);
   - `backoff` sequence and cap;
-  - `receiptUrl` accepts only `https:` or the dev origin.
+  - `receiptUrl` accepts only `https:` or the dev origin;
+  - the policy request declares `size` = `file.size` exactly (WP5: the policy pins the exact size, so any other number makes S3 answer 400).
 - **Review:** typescript-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt api and the direct-to-s3 upload client`.
 
 #### WP11: `useReceipt` composable and form abort signals (S–M)
@@ -377,7 +386,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
 - **Docs (doc-updater haiku/low):**
   - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
   - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
-  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
+  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
   - PLAN §12 row 5 → Done.
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
 - **Commit:** `docs: phase 5 receipts walkthrough and adr notes`.

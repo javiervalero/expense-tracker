@@ -21,6 +21,7 @@ use App\Receipts\ReceiptObjectCleaner;
 use App\Receipts\ReceiptObjectKey;
 use App\Tests\Support\FrozenClock;
 use App\Tests\Support\LocalAws;
+use App\Tests\Support\ReceiptQueueDrain;
 use Aws\S3\S3Client;
 use GuzzleHttp\Client as HttpClient;
 use GuzzleHttp\Psr7\Uri;
@@ -45,9 +46,6 @@ final class ReceiptS3SigningTest extends TestCase
     private const RECEIPTS_BUCKET = 'receipts';
     private const THUMBNAILS_BUCKET = 'receipt-thumbnails';
     private const PUBLIC_HOST = 'localhost:9000';
-    private const RELAY_DEADLINE_SECONDS = 10;
-    private const POLL_INTERVAL_MICROSECONDS = 500_000;
-    private const STABLE_POLLS = 3;
     private const JPEG_BODY = "\xFF\xD8\xFF\xE0" . 'a small body that is enough for S3';
 
     private S3Settings $settings;
@@ -106,37 +104,14 @@ final class ReceiptS3SigningTest extends TestCase
         }
     }
 
-    /**
-     * One bounded wait for the whole class: poll the queue's counts until they are above zero and have not changed for
-     * a few polls (the relay has delivered what it will), or until the deadline; then purge once.
-     */
+    /** One bounded wait for the whole class, then one purge (see {@see ReceiptQueueDrain}). */
     public static function tearDownAfterClass(): void
     {
         if (!self::$sawEvents) {
             return;
         }
         self::$sawEvents = false;
-        $sqs = LocalAws::fromGlobals()->sqs();
-        $queueUrl = getenv('SQS_RECEIPTS_QUEUE_URL');
-        if (!is_string($queueUrl)) {
-            return;
-        }
-        $deadline = microtime(true) + self::RELAY_DEADLINE_SECONDS;
-        $last = -1;
-        $stable = 0;
-        while (microtime(true) < $deadline && $stable < self::STABLE_POLLS) {
-            $attributes = $sqs->getQueueAttributes(['QueueUrl' => $queueUrl, 'AttributeNames' => ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']])->get('Attributes');
-            $count = is_array($attributes) ? self::number($attributes['ApproximateNumberOfMessages'] ?? 0) + self::number($attributes['ApproximateNumberOfMessagesNotVisible'] ?? 0) : 0;
-            $stable = $count > 0 && $count === $last ? $stable + 1 : 0;
-            $last = $count;
-            usleep(self::POLL_INTERVAL_MICROSECONDS);
-        }
-        $sqs->purgeQueue(['QueueUrl' => $queueUrl]);
-    }
-
-    private static function number(mixed $value): int
-    {
-        return is_numeric($value) ? (int) $value : 0;
+        ReceiptQueueDrain::afterEvents();
     }
 
     private function newKey(): ReceiptObjectKey
@@ -194,7 +169,7 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), self::JPEG_BODY);
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY)), self::JPEG_BODY);
 
         self::assertSame(204, $result['status']);
         $head = $this->calls->headObject(['Bucket' => self::RECEIPTS_BUCKET, 'Key' => $key->originalKey()]);
@@ -209,7 +184,7 @@ final class ReceiptS3SigningTest extends TestCase
         $this->trackOriginal($signedFor);
         $this->trackOriginal($other);
 
-        $result = $this->post($this->uploads->sign($signedFor, ReceiptContentType::Jpeg), self::JPEG_BODY, ['key' => $other->originalKey()]);
+        $result = $this->post($this->uploads->sign($signedFor, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY)), self::JPEG_BODY, ['key' => $other->originalKey()]);
 
         self::assertSame(['status' => 403, 'code' => 'AccessDenied'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $other->originalKey()));
@@ -221,7 +196,7 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), self::JPEG_BODY, ['Content-Type' => 'text/html']);
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY)), self::JPEG_BODY, ['Content-Type' => 'text/html']);
 
         self::assertSame(['status' => 403, 'code' => 'AccessDenied'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
@@ -232,7 +207,7 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), str_repeat('x', ReceiptLimits::MAX_BYTES + 1));
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, ReceiptLimits::MAX_BYTES), str_repeat('x', ReceiptLimits::MAX_BYTES + 1));
 
         self::assertSame(['status' => 400, 'code' => 'EntityTooLarge'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
@@ -243,9 +218,31 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), '');
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, 1), '');
 
         self::assertSame(['status' => 400, 'code' => 'EntityTooSmall'], $result);
+        self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
+    }
+
+    public function testThePolicyRefusesABodyOneByteSmallerThanDeclared(): void
+    {
+        $key = $this->newKey();
+        $this->trackOriginal($key);
+
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY) + 1), self::JPEG_BODY);
+
+        self::assertSame(['status' => 400, 'code' => 'EntityTooSmall'], $result);
+        self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
+    }
+
+    public function testThePolicyRefusesABodyOneByteLargerThanDeclared(): void
+    {
+        $key = $this->newKey();
+        $this->trackOriginal($key);
+
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY) - 1), self::JPEG_BODY);
+
+        self::assertSame(['status' => 400, 'code' => 'EntityTooLarge'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
     }
 
@@ -254,7 +251,7 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), self::JPEG_BODY, [], ['x-amz-meta-injected' => 'evil']);
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY)), self::JPEG_BODY, [], ['x-amz-meta-injected' => 'evil']);
 
         self::assertSame(['status' => 403, 'code' => 'AccessDenied'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));
@@ -265,7 +262,7 @@ final class ReceiptS3SigningTest extends TestCase
         $key = $this->newKey();
         $this->trackOriginal($key);
 
-        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg), str_repeat('x', ReceiptLimits::MAX_BYTES));
+        $result = $this->post($this->uploads->sign($key, ReceiptContentType::Jpeg, ReceiptLimits::MAX_BYTES), str_repeat('x', ReceiptLimits::MAX_BYTES));
 
         self::assertSame(204, $result['status']);
         $head = $this->calls->headObject(['Bucket' => self::RECEIPTS_BUCKET, 'Key' => $key->originalKey()]);
@@ -278,7 +275,7 @@ final class ReceiptS3SigningTest extends TestCase
         $this->trackOriginal($key);
         $past = new UploadPolicySigner(S3ClientFactory::forSigning($this->settings), self::RECEIPTS_BUCKET, new FrozenClock('-1 hour'));
 
-        $result = $this->post($past->sign($key, ReceiptContentType::Jpeg), self::JPEG_BODY);
+        $result = $this->post($past->sign($key, ReceiptContentType::Jpeg, strlen(self::JPEG_BODY)), self::JPEG_BODY);
 
         self::assertSame(['status' => 403, 'code' => 'AccessDenied'], $result);
         self::assertFalse($this->exists(self::RECEIPTS_BUCKET, $key->originalKey()));

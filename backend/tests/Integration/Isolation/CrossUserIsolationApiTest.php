@@ -31,6 +31,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
     public const array SECURED_CALLS = [
         'createCategory' => ['POST', '/categories'],
         'createExpense' => ['POST', '/expenses'],
+        'createReceiptUpload' => ['POST', '/expenses/{id}/receipt/upload'],
         'deleteCategory' => ['DELETE', '/categories/{id}'],
         'deleteExpense' => ['DELETE', '/expenses/{id}'],
         'getCurrentUser' => ['GET', '/auth/me'],
@@ -52,6 +53,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         'getExpense' => ['GET', '/expenses/{id}'],
         'updateExpense' => ['PATCH', '/expenses/{id}'],
         'deleteExpense' => ['DELETE', '/expenses/{id}'],
+        'createReceiptUpload' => ['POST', '/expenses/{id}/receipt/upload'],
         'renameCategory' => ['PATCH', '/categories/{id}'],
         'deleteCategory' => ['DELETE', '/categories/{id}'],
     ];
@@ -246,6 +248,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         return match ($operationId) {
             'updateExpense' => ['version' => $version, 'amountCents' => 1] + ($stale ? ['categoryId' => $foreignCategoryId] : []),
             'renameCategory' => ['name' => 'Hijacked', 'version' => $version],
+            'createReceiptUpload' => ['contentType' => 'image/png', 'size' => 1024],
             default => null,
         };
     }
@@ -259,6 +262,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
             'createCategory' => ['name' => 'Anon'],
             'createExpense' => ['date' => '2026-10-01', 'amountCents' => 1, 'description' => 'Anon', 'categoryId' => self::randomUuid()],
             'renameCategory' => ['name' => 'Anon', 'version' => 1],
+            'createReceiptUpload' => ['contentType' => 'image/png', 'size' => 1024],
             'updateExpense' => ['version' => 1, 'amountCents' => 1],
             default => null,
         };

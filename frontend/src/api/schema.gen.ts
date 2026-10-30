@@ -267,6 +267,37 @@ export interface paths {
         patch: operations["updateExpense"];
         trace?: never;
     };
+    "/expenses/{id}/receipt/upload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start a receipt upload
+         * @description Starts the upload of the receipt of one expense and returns a signed form for the browser to POST the file to
+         *     the receipts bucket directly (not through this API). The body declares the file's `contentType` (one of
+         *     `image/jpeg`, `image/png`, `image/webp`, `application/pdf`) and its `size` in bytes (1 to 10485760); the policy
+         *     covers exactly that type, exactly that size and one object key, and expires in 5 minutes. The browser sends every
+         *     member of `fields` as a form field, in any order, and the file part LAST; any other field is refused by the
+         *     bucket. The file is checked after the upload; the receipt's `status` tells how that went.
+         *
+         *     An expense has at most one receipt. Starting an upload when one exists replaces it: the old receipt is gone
+         *     at once, together with its files. An id that is not an expense of the signed-in user (malformed, unknown,
+         *     deleted or someone else's) gets one and the same `404`. `409` means another request changed the receipt
+         *     between this one's read and write: reload and try again. The `201` carries the address of the receipt in
+         *     `Location`. The response holds a signature: it must never be logged or cached.
+         */
+        post: operations["createReceiptUpload"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -420,6 +451,40 @@ export interface components {
             description?: string;
             /** @description `null` makes the expense uncategorized; otherwise the id (a lower-case UUID) of one of the user's own categories. Any other value, including an upper-case UUID, gets a `422` at `/categoryId`. */
             categoryId?: string | null;
+        };
+        /** @description The body of a receipt upload start. Both members are required; anything else is a validation error. */
+        ReceiptUploadRequest: {
+            /**
+             * @description The type of the file the browser will upload. The file's first bytes must match it, or the receipt fails.
+             * @enum {string}
+             */
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
+            /** @description The file's exact size in bytes; the bucket refuses a file of any other size. A JSON integer from 1 to 10485760; `12.0`, strings and booleans are refused. */
+            size: number;
+        };
+        /**
+         * @description A signed browser upload. POST `fields` (then the file, as the last part) as `multipart/form-data` to `url`
+         *     before `expiresAt`. It holds a signature: do not log it.
+         */
+        ReceiptUpload: {
+            /**
+             * Format: uuid
+             * @description Opaque identifier of the new receipt.
+             */
+            receiptId: string;
+            /** @description Where to POST the form. */
+            url: string;
+            /** @description The form fields to send, name to value, exactly as given. */
+            fields: {
+                [key: string]: string;
+            };
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC, whole seconds. The policy is not accepted after this.
+             */
+            expiresAt: string;
+            /** @description The service's upper limit for any receipt, in bytes (10 MiB). The policy itself accepts only the declared size. */
+            maxBytes: number;
         };
         /** @description A problem with the list of invalid fields in `errors`. */
         ValidationProblemDetails: components["schemas"]["ProblemDetails"] & {
@@ -1308,6 +1373,54 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Expense"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
+            409: components["responses"]["EditConflict"];
+            413: components["responses"]["ContentTooLarge"];
+            415: components["responses"]["UnsupportedMediaType"];
+            422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createReceiptUpload: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReceiptUploadRequest"];
+            };
+        };
+        responses: {
+            /** @description The upload was started. */
+            201: {
+                headers: {
+                    Location: components["headers"]["Location"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReceiptUpload"];
                 };
             };
             400: components["responses"]["BadRequest"];

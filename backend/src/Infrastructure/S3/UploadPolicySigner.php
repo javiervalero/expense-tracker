@@ -18,7 +18,9 @@ use Aws\S3\S3Client;
  * - `bucket` equals the receipts bucket;
  * - `key` equals the one object key (built from three validated ids, never from client text);
  * - `Content-Type` equals the declared type;
- * - `content-length-range` is 1 to {@see ReceiptLimits::MAX_BYTES};
+ * - `content-length-range` is the declared size to the declared size (owner decision: the file must be exactly as big
+ *   as the client said, so the declared size the record holds is the real one); the size itself must be 1 to
+ *   {@see ReceiptLimits::MAX_BYTES};
  * - the policy expires {@see ReceiptLimits::POLICY_TTL_SECONDS} after the injected clock's now.
  *
  * No `acl` and no `success_action_redirect`; S3 refuses form fields the policy does not cover. The SDK adds the three
@@ -29,16 +31,20 @@ use Aws\S3\S3Client;
  */
 final readonly class UploadPolicySigner
 {
-    private const MIN_BYTES = 1;
-
     public function __construct(
         private S3Client $signingClient,
         private string $receiptsBucket,
         private Clock $clock,
     ) {}
 
-    public function sign(ReceiptObjectKey $key, ReceiptContentType $type): SignedUpload
+    /**
+     * @throws \InvalidArgumentException when the size is not from 1 to {@see ReceiptLimits::MAX_BYTES}
+     */
+    public function sign(ReceiptObjectKey $key, ReceiptContentType $type, int $size): SignedUpload
     {
+        if ($size < 1 || $size > ReceiptLimits::MAX_BYTES) {
+            throw new \InvalidArgumentException('An upload size must be between 1 and ' . ReceiptLimits::MAX_BYTES . ' bytes.');
+        }
         $objectKey = $key->originalKey();
         // The policy expiry comes from the Clock; the SDK dates the signature (X-Amz-Date) from the real time. Same
         // instant in production (the system clock); a frozen clock in a test moves only the expiry.
@@ -51,7 +57,7 @@ final readonly class UploadPolicySigner
                 ['bucket' => $this->receiptsBucket],
                 ['eq', '$key', $objectKey],
                 ['eq', '$Content-Type', $type->value],
-                ['content-length-range', self::MIN_BYTES, ReceiptLimits::MAX_BYTES],
+                ['content-length-range', $size, $size],
             ],
             $expiresAt,
         );

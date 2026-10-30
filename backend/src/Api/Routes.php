@@ -33,6 +33,14 @@ use App\Expenses\Listing\ExpenseLister;
 use App\Health\HealthHandler;
 use App\Http\Handler;
 use App\Http\Routing\Route;
+use App\Infrastructure\S3\S3ClientFactory;
+use App\Infrastructure\S3\S3ObjectStore;
+use App\Infrastructure\S3\S3OriginalObjects;
+use App\Infrastructure\S3\S3ThumbnailObjects;
+use App\Infrastructure\S3\UploadPolicySigner;
+use App\Receipts\Http\CreateReceiptUploadHandler;
+use App\Receipts\ReceiptObjectCleaner;
+use App\Receipts\ReceiptRepository;
 
 /**
  * The route table of the API (templates are relative to `/api/v1`). Every route holds a factory, not a handler: the
@@ -66,6 +74,7 @@ final class Routes
             new Route('GET', '/expenses/{id}', static fn(): RequireSession => self::getExpense($services)),
             new Route('PATCH', '/expenses/{id}', static fn(): RequireSession => self::updateExpense($services)),
             new Route('DELETE', '/expenses/{id}', static fn(): RequireSession => self::deleteExpense($services)),
+            new Route('POST', '/expenses/{id}/receipt/upload', static fn(): RequireSession => self::createReceiptUpload($services)),
         ];
     }
 
@@ -159,6 +168,29 @@ final class Routes
     private static function deleteExpense(ApiServices $services): RequireSession
     {
         return self::guarded(new DeleteExpenseHandler(self::expenses($services)), $services);
+    }
+
+    /**
+     * The only route that builds S3 clients, and only when it runs: the signing client (the PUBLIC endpoint, no network
+     * call) for the policy, and the calling client (the internal endpoint) for the cleanup of a replaced receipt.
+     */
+    private static function createReceiptUpload(ApiServices $services): RequireSession
+    {
+        $settings = $services->s3;
+        $store = new S3ObjectStore(S3ClientFactory::forCalls($settings));
+
+        $cleaner = new ReceiptObjectCleaner(
+            new S3OriginalObjects($store, $settings),
+            new S3ThumbnailObjects($store, $settings),
+            $services->logger,
+            $settings,
+        );
+        $signer = new UploadPolicySigner(S3ClientFactory::forSigning($settings), $settings->receiptsBucket, $services->clock);
+
+        return self::guarded(
+            new CreateReceiptUploadHandler(new ReceiptRepository($services->items), $cleaner, $signer, $services->ids, $services->clock),
+            $services,
+        );
     }
 
     private static function expenses(ApiServices $services): ExpenseRepository

@@ -20,6 +20,7 @@ final class UploadPolicySignerTest extends TestCase
     private const RECEIPT = '2d5a3e3a-7f4c-4eaa-9c63-4b8f9daebf23';
     private const BUCKET = 'expense-receipts';
     private const NOW = '2026-10-16T12:00:00+00:00';
+    private const SIZE = 2048;
 
     /** @var array<string, string|false> */
     private array $savedEnvironment = [];
@@ -71,7 +72,7 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testThePolicyHoldsExactlyTheFiveRulesOfC5(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Pdf);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Pdf, self::SIZE);
 
         $conditions = self::decodePolicy($upload->fields)['conditions'];
 
@@ -80,7 +81,7 @@ final class UploadPolicySignerTest extends TestCase
                 ['bucket' => self::BUCKET],
                 ['eq', '$key', 'receipts/' . self::USER . '/' . self::EXPENSE . '/' . self::RECEIPT],
                 ['eq', '$Content-Type', 'application/pdf'],
-                ['content-length-range', 1, ReceiptLimits::MAX_BYTES],
+                ['content-length-range', self::SIZE, self::SIZE],
             ],
             array_slice($conditions, 0, 4),
         );
@@ -88,7 +89,7 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testTheOnlyOtherConditionsAreTheThreeSignatureFieldsTheSdkAdds(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, self::SIZE);
 
         $conditions = self::decodePolicy($upload->fields)['conditions'];
 
@@ -99,7 +100,7 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testThePolicyExpiresPolicyTtlSecondsAfterTheInjectedClock(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Png);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Png, self::SIZE);
 
         $expiration = new \DateTimeImmutable(self::decodePolicy($upload->fields)['expiration']);
 
@@ -109,7 +110,7 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testTheFormFieldsAreTheKeyTheTypeAndTheSignatureNothingElse(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Webp);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Webp, self::SIZE);
 
         $names = array_keys($upload->fields);
         sort($names);
@@ -120,7 +121,7 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testThereIsNoAclAndNoRedirectAnywhere(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, self::SIZE);
 
         $everything = strtolower((string) base64_decode($upload->fields['Policy'], true) . implode(' ', array_keys($upload->fields)));
         self::assertStringNotContainsString('acl', $everything);
@@ -130,14 +131,14 @@ final class UploadPolicySignerTest extends TestCase
 
     public function testLocallyTheFormPostsToTheBucketOnThePublicEndpointInPathStyle(): void
     {
-        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg);
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, self::SIZE);
 
         self::assertSame('http://localhost:9000/' . self::BUCKET, $upload->url);
     }
 
     public function testOnAwsTheFormPostsToTheBucketsOwnVirtualHostedOrigin(): void
     {
-        $upload = $this->signer(local: false)->sign($this->key(), ReceiptContentType::Jpeg);
+        $upload = $this->signer(local: false)->sign($this->key(), ReceiptContentType::Jpeg, self::SIZE);
 
         self::assertSame('https://' . self::BUCKET . '.s3.eu-west-1.amazonaws.com', $upload->url);
     }
@@ -145,10 +146,38 @@ final class UploadPolicySignerTest extends TestCase
     public function testEachTypeIsPinnedByItsOwnPolicy(): void
     {
         foreach (ReceiptContentType::cases() as $type) {
-            $upload = $this->signer()->sign($this->key(), $type);
+            $upload = $this->signer()->sign($this->key(), $type, self::SIZE);
 
             self::assertSame(['eq', '$Content-Type', $type->value], self::decodePolicy($upload->fields)['conditions'][2]);
             self::assertSame($type->value, $upload->fields['Content-Type']);
+        }
+    }
+
+    public function testThePolicyPinsTheDeclaredSizeExactly(): void
+    {
+        $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, 777);
+
+        self::assertSame(['content-length-range', 777, 777], self::decodePolicy($upload->fields)['conditions'][3]);
+    }
+
+    public function testTheBoundarySizesAreSigned(): void
+    {
+        foreach ([1, ReceiptLimits::MAX_BYTES] as $size) {
+            $upload = $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, $size);
+
+            self::assertSame(['content-length-range', $size, $size], self::decodePolicy($upload->fields)['conditions'][3]);
+        }
+    }
+
+    public function testASizeOutsideOneToTheLimitIsRefusedBeforeAnythingIsSigned(): void
+    {
+        foreach ([0, -1, ReceiptLimits::MAX_BYTES + 1] as $size) {
+            try {
+                $this->signer()->sign($this->key(), ReceiptContentType::Jpeg, $size);
+                self::fail('expected an InvalidArgumentException for size ' . $size);
+            } catch (\InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
         }
     }
 }

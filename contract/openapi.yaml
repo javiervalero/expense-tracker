@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.11.0
+  version: 0.12.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. The other endpoints arrive in later phases.
+    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. Phase 5 adds receipts. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -32,6 +32,8 @@ tags:
     description: The signed-in user's expense categories. Another user's category is never visible, and answers like a missing one.
   - name: expenses
     description: The signed-in user's expenses. Another user's expense is never visible, and answers like a missing one.
+  - name: receipts
+    description: The receipt file of one expense. Another user's expense is never visible, and answers like a missing one.
 
 paths:
   /health:
@@ -768,6 +770,72 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /expenses/{id}/receipt/upload:
+    post:
+      operationId: createReceiptUpload
+      tags: [receipts]
+      summary: Start a receipt upload
+      description: |
+        Starts the upload of the receipt of one expense and returns a signed form for the browser to POST the file to
+        the receipts bucket directly (not through this API). The body declares the file's `contentType` (one of
+        `image/jpeg`, `image/png`, `image/webp`, `application/pdf`) and its `size` in bytes (1 to 10485760); the policy
+        covers exactly that type, exactly that size and one object key, and expires in 5 minutes. The browser sends every
+        member of `fields` as a form field, in any order, and the file part LAST; any other field is refused by the
+        bucket. The file is checked after the upload; the receipt's `status` tells how that went.
+
+        An expense has at most one receipt. Starting an upload when one exists replaces it: the old receipt is gone
+        at once, together with its files. An id that is not an expense of the signed-in user (malformed, unknown,
+        deleted or someone else's) gets one and the same `404`. `409` means another request changed the receipt
+        between this one's read and write: reload and try again. The `201` carries the address of the receipt in
+        `Location`. The response holds a signature: it must never be logged or cached.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiptUploadRequest'
+      responses:
+        '201':
+          description: The upload was started.
+          headers:
+            Location:
+              $ref: '#/components/headers/Location'
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptUpload'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '409':
+          $ref: '#/components/responses/EditConflict'
+        '413':
+          $ref: '#/components/responses/ContentTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -1314,6 +1382,49 @@ components:
             - type: string
               format: uuid
             - type: 'null'
+    ReceiptUploadRequest:
+      type: object
+      description: The body of a receipt upload start. Both members are required; anything else is a validation error.
+      additionalProperties: false
+      required: [contentType, size]
+      properties:
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp, application/pdf]
+          description: The type of the file the browser will upload. The file's first bytes must match it, or the receipt fails.
+        size:
+          type: integer
+          minimum: 1
+          maximum: 10485760
+          description: The file's exact size in bytes; the bucket refuses a file of any other size. A JSON integer from 1 to 10485760; `12.0`, strings and booleans are refused.
+    ReceiptUpload:
+      type: object
+      description: |
+        A signed browser upload. POST `fields` (then the file, as the last part) as `multipart/form-data` to `url`
+        before `expiresAt`. It holds a signature: do not log it.
+      additionalProperties: false
+      required: [receiptId, url, fields, expiresAt, maxBytes]
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+          description: Opaque identifier of the new receipt.
+        url:
+          type: string
+          description: Where to POST the form.
+        fields:
+          type: object
+          description: The form fields to send, name to value, exactly as given.
+          additionalProperties:
+            type: string
+        expiresAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds. The policy is not accepted after this.
+        maxBytes:
+          type: integer
+          minimum: 1
+          description: The service's upper limit for any receipt, in bytes (10 MiB). The policy itself accepts only the declared size.
     ValidationProblemDetails:
       description: A problem with the list of invalid fields in `errors`.
       allOf:
