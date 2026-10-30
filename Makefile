@@ -199,6 +199,7 @@ test-api-s3-path: .env check-env ## Check from inside api-php that S3 is reachab
 
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
+	scripts/check-stack-up.sh $(COMPOSE); \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
