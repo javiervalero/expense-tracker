@@ -40,6 +40,21 @@ final class AuthKeysTest extends TestCase
         AuthKeys::userPartitionOf(new Principal($id, str_repeat('a', 64)));
     }
 
+    public function testReceiptOwnerPartitionIsTheSamePartitionAsTheOwnersSessionForm(): void
+    {
+        $owner = new Principal(self::ID, str_repeat('a', 64));
+
+        self::assertSame(AuthKeys::userPartitionOf($owner), AuthKeys::receiptOwnerPartition(self::ID));
+    }
+
+    #[DataProvider('badIds')]
+    public function testReceiptOwnerPartitionRefusesAnIdThatIsNotACanonicalLowerCaseUuid(string $id): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        AuthKeys::receiptOwnerPartition($id);
+    }
+
     #[DataProvider('badIds')]
     public function testUserPartitionRefusesAnIdThatIsNotACanonicalLowerCaseUuid(string $id): void
     {

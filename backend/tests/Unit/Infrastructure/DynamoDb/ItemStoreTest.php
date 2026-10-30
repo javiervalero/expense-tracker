@@ -165,6 +165,34 @@ final class ItemStoreTest extends TestCase
         self::assertSame(['#pk' => 'PK'], $args['ExpressionAttributeNames']);
     }
 
+    public function testDeleteItemReturningOldAsksForTheOldItemAndReturnsItUnmarshalled(): void
+    {
+        $this->mock->append(new Result(['Attributes' => ['PK' => ['S' => 'A'], 'size' => ['N' => '12']]]));
+
+        $old = $this->store()->deleteItemReturningOld(['PK' => 'A', 'SK' => 'B'], 'attribute_exists(#pk)', ['#pk' => 'PK']);
+
+        $args = $this->onlyRequest('DeleteItem');
+        self::assertSame('ALL_OLD', $args['ReturnValues']);
+        self::assertSame('attribute_exists(#pk)', $args['ConditionExpression']);
+        self::assertSame(['PK' => 'A', 'size' => 12], $old);
+    }
+
+    public function testDeleteItemReturningOldWithoutAttributesIsNull(): void
+    {
+        $this->mock->append(new Result([]));
+
+        self::assertNull($this->store()->deleteItemReturningOld(['PK' => 'A', 'SK' => 'B']));
+    }
+
+    public function testDeleteItemReturningOldMapsAFailedConditionToConditionFailed(): void
+    {
+        $this->mock->append($this->failure('ConditionalCheckFailedException'));
+
+        $this->expectException(ConditionFailed::class);
+
+        $this->store()->deleteItemReturningOld(['PK' => 'A', 'SK' => 'B'], 'attribute_exists(#pk)', ['#pk' => 'PK']);
+    }
+
     public function testQuerySendsAConsistentDescendingIndexQueryWithPaging(): void
     {
         $this->mock->append(new Result([
@@ -636,6 +664,19 @@ final class ItemStoreTest extends TestCase
 
         $this->expectException(StorageFailure::class);
         $this->store()->getItem(['PK' => 'a']);
+    }
+
+    public function testDeleteItemReturningOldReportsAnUnreadableOldItemAsCorruptBecauseTheDeleteSucceeded(): void
+    {
+        $this->rawBody = '{"Attributes":{"PK":{"ZZ":"x"}}}';
+
+        try {
+            $this->store()->deleteItemReturningOld(['PK' => 'a', 'SK' => 'b']);
+            self::fail('An unreadable old item must be a StorageFailure.');
+        } catch (StorageFailure $failure) {
+            self::assertSame(StorageFailure::CORRUPT_ITEM, $failure->awsErrorCode);
+            self::assertSame('DeleteItem', $failure->operation);
+        }
     }
 
     public function testAWellFormedNestedResponseItemIsStillUnmarshalled(): void

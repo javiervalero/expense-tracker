@@ -62,6 +62,18 @@ final class AuthKeys
     }
 
     /**
+     * The partition key of a receipt owner, for the receipt worker's only entry point (Phase 5 C10): it has no session,
+     * so no Principal. The id is the user id of an object key that parsed (ReceiptObjectKey), never a request value.
+     * Every API path uses {@see self::userPartitionOf()} instead.
+     *
+     * @throws InvalidArgumentException when the id is not a lower-case canonical UUID
+     */
+    public static function receiptOwnerPartition(string $userId): string
+    {
+        return self::userPartition($userId);
+    }
+
+    /**
      * @return array{PK: string, SK: string}
      *
      * @throws InvalidArgumentException when the id is not a lower-case canonical UUID

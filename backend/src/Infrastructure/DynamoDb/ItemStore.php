@@ -122,6 +122,28 @@ final readonly class ItemStore
     }
 
     /**
+     * Deletes the item and returns what it held (`ReturnValues=ALL_OLD`), or null when there was no such item.
+     *
+     * @param array<string, mixed> $key
+     * @param literal-string|null $condition
+     * @param array<string, literal-string> $names
+     * @param array<string, mixed> $values
+     *
+     * @return array<string, mixed>|null
+     *
+     * @throws ConditionFailed
+     * @throws StorageFailure
+     */
+    public function deleteItemReturningOld(array $key, ?string $condition = null, array $names = [], array $values = []): ?array
+    {
+        $result = $this->send('DeleteItem', fn(): array => ['TableName' => $this->tableName, 'Key' => $this->marshaler->marshalItem($key), 'ReturnValues' => 'ALL_OLD']
+            + $this->expressions($condition, $names, $values));
+        $attributes = $result['Attributes'] ?? null;
+
+        return is_array($attributes) && $attributes !== [] ? $this->unmarshal('DeleteItem', $attributes, StorageFailure::CORRUPT_ITEM) : null;
+    }
+
+    /**
      * @param literal-string $keyCondition
      * @param array<string, literal-string> $names
      * @param array<string, mixed> $values
@@ -261,12 +283,13 @@ final readonly class ItemStore
 
     /**
      * @param array<array-key, mixed> $item
+     * @param string $failureCode the code of the StorageFailure when the item cannot be unmarshalled
      *
      * @return array<string, mixed>
      *
      * @throws StorageFailure
      */
-    private function unmarshal(string $operation, array $item): array
+    private function unmarshal(string $operation, array $item, string $failureCode = self::CLIENT_ERROR): array
     {
         try {
             // The SDK raises PHP warnings (not only exceptions) on malformed values, so check the shape first.
@@ -277,7 +300,7 @@ final readonly class ItemStore
             return $this->marshaler->unmarshalItem($item);
         } catch (UnexpectedValueException|InvalidArgumentException) {
             // Not chained, and the message is dropped: it can quote the response data.
-            throw new StorageFailure($operation, self::CLIENT_ERROR);
+            throw new StorageFailure($operation, $failureCode);
         }
     }
 

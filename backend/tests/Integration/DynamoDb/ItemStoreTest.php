@@ -130,6 +130,18 @@ final class ItemStoreTest extends TestCase
         $this->store->deleteItem($key, 'attribute_exists(#pk)', ['#pk' => TableLayout::PK]);
     }
 
+    public function testDeleteItemReturningOldGivesTheOldItemOnceAndNullAfterwards(): void
+    {
+        $key = [TableLayout::PK => 'USER#1', TableLayout::SK => 'EXP#a'];
+        $this->store->putItem(self::expense('1', 'a', '2026-01-01'));
+
+        $old = $this->store->deleteItemReturningOld($key);
+
+        self::assertSame(100, $old['amountCents'] ?? null);
+        self::assertNull($this->store->getItem($key));
+        self::assertNull($this->store->deleteItemReturningOld($key));
+    }
+
     public function testLsi1RangeQueryIsDescendingAndConsistent(): void
     {
         foreach ([['a', '2026-01-05'], ['b', '2026-01-20'], ['c', '2026-01-31'], ['d', '2026-02-01'], ['e', '2025-12-31']] as [$id, $date]) {

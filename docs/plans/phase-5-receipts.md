@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** Next: WP4 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** Next: WP5 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -230,6 +230,15 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - the key's user id and expense id must equal the item's `PK USER#<u>` and `SK RCPT#<e>` (C14: otherwise a corrupt item could get user A a view URL for user B's file);
   - `:now` for the conditions comes from the same clock as `Receipt::isLive()`, as `getTimestamp()`.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt repository with conditional writes`.
+- **Outcome (2026-10-30):**
+  - Red run: 53 errors and 18 failures (class and method not found).
+  - Round 1: no critical or high findings. Medium items: `receiptOwnerPartition` was not guarded, and `remove()` deleted before checking and ignored expiry. Fixed with:
+    - two new architecture tests (`ReceiptOwnerPartitionCallTest`, `ReceiptWorkerCallTest`; string-literal references are flagged too) and a public-surface test;
+    - the `UserPartitionCallTest` left unchanged (owner decision: a dedicated `AuthKeys::receiptOwnerPartition` instead of an allow-list entry);
+    - `remove()` semantics pinned by tests and passed to WP6;
+    - a same-id replace refused.
+  - Round 2: the `remove()` docblock overstated "deleted". Fixed so that only `CORRUPT_ITEM` means deleted (`ItemStore::deleteItemReturningOld` now reports an unreadable old item as `CORRUPT_ITEM`).
+  - Separate commit: `scripts/check-stack-up.sh` now guards `make test-integration`, which used to half-start a stopped stack through `compose run` dependencies.
 
 ### Part B: Endpoints (contract and code in one commit each)
 
@@ -246,6 +255,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - handler order: principal → route id → body → store;
   - a replace deletes the old objects **after** the commit (a spy shows the order);
   - integration over nginx: 201 + `Location`, `no-store`, contract-valid; another user's expense → 404 with no record written; missing CSRF header → 403.
+- **From the WP4 reviews:** a `TransactionConflict` cancellation (two concurrent starts on the same `RCPT#`) is rethrown as `TransactionCancelled`. Map it to 503, as the other repositories' callers do. `startUpload` refuses a pending receipt whose id equals the current one, so the handler must always mint a fresh v4 id.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt upload policy endpoint`.
 
 #### WP6: `GET` and `DELETE` receipt, expense-delete cleanup (S–M), security-critical
@@ -259,6 +269,11 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - `ViewUrlSigner` gets the type **the worker verified** (the stored `contentType` after `ready`), never the declared one;
   - prefix cleanup on expense delete: bound the work per request (pages or a total deadline) so 20 s × 3 attempts × N pages cannot outlast the Lambda timeout; whatever is left is logged by the cleaner (C9);
   - the cross-user guarantee of the cleanup rests on passing the **session's** user id, never one from the request; a test pins it.
+- **From the WP4 reviews (`ReceiptRepository::remove`):**
+  - The delete is unconditional and returns the old record, even an expired one. The handler answers 404 when `isLive($now)` is false (C3, matching GET) and still deletes that record's objects.
+  - `StorageFailure` with code `CORRUPT_ITEM` means the record IS deleted but unreadable. Clean up only **this expense's** two prefixes, built from the Principal (`ReceiptObjectKey::originalPrefix($owner->userId, $expenseId)` and the thumbnail prefix), never the user's whole prefix. Log it.
+  - Any other `StorageFailure` means the outcome is unknown and the record may still exist. Do **not** clean up; answer 5xx (a retry is safe). A test pins that this path never deletes objects.
+  - The worker-only methods (`findByKey`, `markReady`, `markFailed`) may be called only from `src/Worker/` (`ReceiptWorkerCallTest`), and the repository's public methods are pinned (`ReceiptRepositoryPublicSurfaceTest`). The API handlers use `find`, `startUpload` and `remove` only.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt status, view links and delete, and clean up on expense delete`.
 
 ### Part C: Worker
