@@ -30,6 +30,8 @@ final class S3ClientFactory
     private const CONNECT_TIMEOUT_SECONDS = 2;
     private const REQUEST_TIMEOUT_SECONDS = 20;
     private const RETRY_ATTEMPTS = 3;
+    private const CLEANUP_REQUEST_TIMEOUT_SECONDS = 5;
+    private const CLEANUP_RETRY_ATTEMPTS = 2;
 
     public static function forSigning(S3Settings $settings, ?callable $handler = null): S3Client
     {
@@ -41,16 +43,31 @@ final class S3ClientFactory
         return self::create($settings, $settings->endpoint, $handler);
     }
 
-    private static function create(S3Settings $settings, ?string $endpoint, ?callable $handler): S3Client
+    /**
+     * Like {@see self::forCalls()} (the internal endpoint) with tighter limits for the cleanup that runs inside an API
+     * request: 2 s to connect, 5 s per attempt, 2 attempts. One failing call then ends within about 15 s, so the log line
+     * of {@see \App\Receipts\ReceiptObjectCleaner} is written before API Gateway's 30 s (C9).
+     */
+    public static function forCleanup(S3Settings $settings, ?callable $handler = null): S3Client
     {
+        return self::create($settings, $settings->endpoint, $handler, self::CLEANUP_REQUEST_TIMEOUT_SECONDS, self::CLEANUP_RETRY_ATTEMPTS);
+    }
+
+    private static function create(
+        S3Settings $settings,
+        ?string $endpoint,
+        ?callable $handler,
+        int $requestTimeoutSeconds = self::REQUEST_TIMEOUT_SECONDS,
+        int $retryAttempts = self::RETRY_ATTEMPTS,
+    ): S3Client {
         $config = [
             'version' => self::API_VERSION,
             // The environment (AWS_ENDPOINT_URL, AWS_ENDPOINT_URL_S3) or a shared config file must never move the client:
             // the endpoint is the application's setting or the AWS default, nothing else.
             'ignore_configured_endpoint_urls' => true,
             'use_path_style_endpoint' => $endpoint !== null,
-            'http' => ['connect_timeout' => self::CONNECT_TIMEOUT_SECONDS, 'timeout' => self::REQUEST_TIMEOUT_SECONDS],
-            'retries' => ['mode' => 'standard', 'max_attempts' => self::RETRY_ATTEMPTS],
+            'http' => ['connect_timeout' => self::CONNECT_TIMEOUT_SECONDS, 'timeout' => $requestTimeoutSeconds],
+            'retries' => ['mode' => 'standard', 'max_attempts' => $retryAttempts],
         ];
         if ($settings->region !== null) {
             $config['region'] = $settings->region;

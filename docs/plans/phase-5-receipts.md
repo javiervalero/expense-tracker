@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). Next: WP6 |
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). **WP6 done 2026-10-30.** Next: WP7 |
 | Phase | 5 (PLAN §12, essential track), size L |
 | Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
 | Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
@@ -282,6 +282,15 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
   - Any other `StorageFailure` means the outcome is unknown and the record may still exist. Do **not** clean up; answer 5xx (a retry is safe). A test pins that this path never deletes objects.
   - The worker-only methods (`findByKey`, `markReady`, `markFailed`) may be called only from `src/Worker/` (`ReceiptWorkerCallTest`), and the repository's public methods are pinned (`ReceiptRepositoryPublicSurfaceTest`). The API handlers use `find`, `startUpload` and `remove` only.
 - **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt status, view links and delete, and clean up on expense delete`.
+- **Outcome (2026-10-30):**
+  - **Contract 0.13.0:** `getReceipt`, `deleteReceipt` and the `Receipt` schema. Both operations are in `CrossUserIsolationApiTest`; user A owns a pending receipt, and `assertUnchanged` compares `GET …/receipt`.
+  - **CORRUPT_ITEM on DELETE → 204:** the unconditional `DeleteItem` has already removed the record. A warning is logged, and only this expense's two prefixes are swept, built from the Principal. Accepted: that sweep can also remove a file the same user uploads at the same moment (own data only, and it needs a corrupt record first).
+  - **Cleanup is bounded in time (round-1 security review):**
+    - `ReceiptObjectCleaner` gets an 8 s budget per call (`Deadline`, from the injected clock). The deadline is checked before each S3 call and before each `deletePrefix` page. When it passes, the cleaner logs `receipt cleanup failed` with `DeadlineReached` and the key or prefix that is left.
+    - The cleanup S3 client (`S3ClientFactory::forCleanup`) uses a 2 s connect timeout, a 5 s timeout and 2 attempts, and the 3-page cap per prefix stays.
+    - Combined failure codes are reported, e.g. `AccessDenied,PageLimitReached`.
+  - **Expense DELETE builds an S3 client** when its route matches, so a bad S3 setting gives a 500 before the transaction runs, and nothing is deleted.
+  - **The implementing agent broke two rules:** it ran a bare `python3` on the host (nothing ran), and a `sed` with an empty line number damaged two files, which it repaired. The reviewer confirmed the final diffs are clean. Briefs now say: edit with the Edit tool only.
 
 ### Part C: Worker
 
@@ -386,7 +395,7 @@ Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws
 - **Docs (doc-updater haiku/low):**
   - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
   - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
-  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
+  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); an API Lambda timeout above the request worst case and below API Gateway's 30 s. The worst case (WP6 round-2 security review) is: the DynamoDB calls before cleanup (session lookup plus the write, each up to about 15 s when degraded) + the 8 s cleanup budget + one in-flight cleanup S3 call (about 12 s). The cleanup budget runs from the start of the cleanup, not the start of the request. When DynamoDB and S3 are degraded together, the request can still pass 30 s. Accepted for now. Phase 7 should take the deadline from the Lambda context's remaining time minus a margin, or tighten the DynamoDB client timeouts; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2; timeout; visibility ≥ 6×;
   - PLAN §12 row 5 → Done.
 - **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
 - **Commit:** `docs: phase 5 receipts walkthrough and adr notes`.

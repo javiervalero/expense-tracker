@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\Unit\Infrastructure\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use App\Infrastructure\S3\ObjectStoreFailure;
 use App\Infrastructure\S3\S3ObjectStore;
+use App\Tests\Support\ExpiringClock;
 use App\Tests\Support\S3\RecordingS3;
 use GuzzleHttp\Psr7\FnStream;
 use GuzzleHttp\Psr7\Utils;
@@ -184,6 +186,116 @@ final class S3ObjectStoreTest extends TestCase
             self::assertSame('DeleteObjects', $failure->operation);
             self::assertSame('AccessDenied', $failure->errorCode);
         }
+    }
+
+    public function testDeletePrefixStopsAfterTheLastAllowedPageAndReportsTheLeftover(): void
+    {
+        $answers = [];
+        for ($page = 1; $page <= 3; ++$page) {
+            $answers[] = self::page(['u/e1/k' . $page], 'T' . $page);
+            $answers[] = new Result(['Deleted' => [['Key' => 'u/e1/k' . $page]]]);
+        }
+        // A fourth page exists, but one request must not page without end: it is never asked for.
+        $answers[] = self::page(['u/e1/k4'], 'T4');
+        $s3 = new RecordingS3($answers);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/');
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('ListObjectsV2', $failure->operation);
+            self::assertSame('PageLimitReached', $failure->errorCode);
+        }
+        self::assertSame(['ListObjectsV2', 'DeleteObjects', 'ListObjectsV2', 'DeleteObjects', 'ListObjectsV2', 'DeleteObjects'], $s3->operations());
+    }
+
+    public function testDeletePrefixReportsBothPerKeyErrorsAndThePageLimit(): void
+    {
+        $answers = [self::page(['u/e1/a'], 'T1'), new Result(['Errors' => [['Key' => 'u/e1/a', 'Code' => 'AccessDenied', 'Message' => 'no']]])];
+        for ($page = 2; $page <= 3; ++$page) {
+            $answers[] = self::page(['u/e1/k' . $page], 'T' . $page);
+            $answers[] = new Result(['Deleted' => [['Key' => 'u/e1/k' . $page]]]);
+        }
+        $s3 = new RecordingS3($answers);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/');
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('DeleteObjects', $failure->operation);
+            self::assertSame('AccessDenied,PageLimitReached', $failure->errorCode);
+            self::assertSame(1, $failure->errorCount);
+        }
+        self::assertCount(6, $s3->calls, 'three pages were handled, no fourth was listed');
+    }
+
+    public function testDeletePrefixStopsBeforeAPageOnceTheDeadlineHasPassed(): void
+    {
+        // Read 1 builds the deadline, read 2 is the check before page 1, read 3 the check after its listing; the check
+        // before page 2 finds it passed.
+        $deadline = Deadline::after(new ExpiringClock(3), 8);
+        $s3 = new RecordingS3([self::page(['u/e1/a'], 'T1'), new Result(['Deleted' => [['Key' => 'u/e1/a']]]), self::page(['u/e1/b'])]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/', $deadline);
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('ListObjectsV2', $failure->operation);
+            self::assertSame('DeadlineReached', $failure->errorCode);
+        }
+        self::assertSame(['ListObjectsV2', 'DeleteObjects'], $s3->operations());
+    }
+
+    public function testDeletePrefixDoesNotSendDeleteObjectsWhenTheDeadlinePassesAfterTheListing(): void
+    {
+        // Read 1 builds the deadline, read 2 is the check before the listing, read 3 (after the listing) finds it passed.
+        $deadline = Deadline::after(new ExpiringClock(2), 8);
+        $s3 = new RecordingS3([self::page(['u/e1/a']), new Result(['Deleted' => [['Key' => 'u/e1/a']]])]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/', $deadline);
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('ListObjectsV2', $failure->operation);
+            self::assertSame('DeadlineReached', $failure->errorCode);
+        }
+        self::assertSame(['ListObjectsV2'], $s3->operations(), 'no DeleteObjects after the deadline');
+    }
+
+    public function testDeletePrefixWithAPassedDeadlineMakesNoCallAtAll(): void
+    {
+        $s3 = new RecordingS3([self::page(['u/e1/a'])]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/', Deadline::after(new ExpiringClock(1), 8));
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('DeadlineReached', $failure->errorCode);
+        }
+        self::assertSame([], $s3->operations());
+    }
+
+    public function testDeletePrefixReportsBothPerKeyErrorsAndTheDeadline(): void
+    {
+        $deadline = Deadline::after(new ExpiringClock(3), 8);
+        $s3 = new RecordingS3([self::page(['u/e1/a'], 'T1'), new Result(['Errors' => [['Key' => 'u/e1/a', 'Code' => 'AccessDenied', 'Message' => 'no']]])]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/', $deadline);
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('DeleteObjects', $failure->operation);
+            self::assertSame('AccessDenied,DeadlineReached', $failure->errorCode);
+        }
+    }
+
+    public function testDeletePrefixFinishesWithoutErrorWhenTheLastPageEndsJustAsTheDeadlinePasses(): void
+    {
+        // One page, no token: nothing is left, so a deadline that passes afterwards is not a failure.
+        $deadline = Deadline::after(new ExpiringClock(3), 8);
+        $s3 = new RecordingS3([self::page(['u/e1/a']), new Result(['Deleted' => [['Key' => 'u/e1/a']]])]);
+
+        self::assertSame(1, (new S3ObjectStore($s3->client()))->deletePrefix(self::BUCKET, 'u/e1/', $deadline));
     }
 
     public function testDeletePrefixFailsOnATruncatedListingWithoutAToken(): void

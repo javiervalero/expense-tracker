@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace App\Tests\Unit\Infrastructure\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use App\Infrastructure\S3\S3OriginalObjects;
 use App\Infrastructure\S3\S3ThumbnailObjects;
 use App\Receipts\ReceiptLimits;
 use App\Receipts\ReceiptObjectKey;
+use App\Tests\Support\FrozenClock;
 use App\Tests\Support\S3\InMemoryObjectStore;
 use App\Tests\Support\S3\TestS3Settings;
 use PHPUnit\Framework\TestCase;
@@ -46,6 +48,19 @@ final class ReceiptObjectPortsTest extends TestCase
 
         self::assertSame(['deletePrefix rcp receipts/' . self::USER . '/' . self::EXPENSE . '/'], $store->calls);
         self::assertSame(['receipts/' . self::USER . '/' . self::EXPENSE . '0/a' => 'sibling'], $store->objects['rcp']);
+    }
+
+    public function testBothPortsPassTheDeadlineToTheFolderDeletion(): void
+    {
+        $store = new InMemoryObjectStore();
+        $deadline = Deadline::after(new FrozenClock(), 8);
+
+        (new S3OriginalObjects($store, TestS3Settings::create()))->deleteExpense(self::USER, self::EXPENSE, $deadline);
+        self::assertSame($deadline, $store->lastDeadline);
+        $store->lastDeadline = null;
+        (new S3ThumbnailObjects($store, TestS3Settings::create()))->deleteExpense(self::USER, self::EXPENSE, $deadline);
+
+        self::assertSame($deadline, $store->lastDeadline);
     }
 
     public function testThumbnailsWriteAJpegAndDeleteInTheThumbnailsBucketOnly(): void

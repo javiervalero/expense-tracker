@@ -4,18 +4,23 @@ declare(strict_types=1);
 
 namespace App\Tests\Unit\Receipts;
 
+use App\Infrastructure\Clock\Clock;
 use App\Infrastructure\Logging\JsonLogger;
+use App\Infrastructure\S3\ObjectStoreFailure;
 use App\Infrastructure\S3\S3ObjectStore;
 use App\Infrastructure\S3\S3OriginalObjects;
 use App\Infrastructure\S3\S3ThumbnailObjects;
 use App\Receipts\ReceiptObjectCleaner;
 use App\Receipts\ReceiptObjectKey;
+use App\Tests\Support\FrozenClock;
+use App\Tests\Support\S3\FailingPrefixStore;
 use App\Tests\Support\S3\InMemoryObjectStore;
 use App\Tests\Support\S3\RecordingS3;
 use App\Tests\Support\S3\TestS3Settings;
 use Aws\Command;
 use Aws\Result;
 use Aws\S3\Exception\S3Exception;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 
 final class ReceiptObjectCleanerTest extends TestCase
@@ -52,14 +57,20 @@ final class ReceiptObjectCleanerTest extends TestCase
         }
     }
 
-    private function cleanerOver(\App\Infrastructure\S3\ObjectStore $store): ReceiptObjectCleaner
+    private function cleanerOver(\App\Infrastructure\S3\ObjectStore $store, ?Clock $clock = null): ReceiptObjectCleaner
     {
         $stream = fopen('php://memory', 'w+b');
         self::assertIsResource($stream);
         $this->stream = $stream;
         $settings = TestS3Settings::create();
 
-        return new ReceiptObjectCleaner(new S3OriginalObjects($store, $settings), new S3ThumbnailObjects($store, $settings), new JsonLogger($stream), $settings);
+        return new ReceiptObjectCleaner(new S3OriginalObjects($store, $settings), new S3ThumbnailObjects($store, $settings), new JsonLogger($stream), $settings, $clock ?? new FrozenClock());
+    }
+
+    /** An ObjectStore whose deletePrefix throws the given failure, recording each call; the other methods do nothing. */
+    private static function storeFailingPrefixWith(string $operation, string $code): FailingPrefixStore
+    {
+        return new FailingPrefixStore(new ObjectStoreFailure($operation, $code));
     }
 
     private function key(): ReceiptObjectKey
@@ -239,5 +250,113 @@ final class ReceiptObjectCleanerTest extends TestCase
         self::assertSame('AccessDenied,InternalError', $lines[0]['errorCode']);
         self::assertSame(2, $lines[0]['errorCount']);
         $this->assertNoLeak($this->logged());
+    }
+
+    /** @return array<string, array{string, string}> */
+    public static function folderLimitFailures(): array
+    {
+        return [
+            'page limit' => ['ListObjectsV2', 'PageLimitReached'],
+            'deadline' => ['ListObjectsV2', 'DeadlineReached'],
+            'errors and page limit' => ['DeleteObjects', 'AccessDenied,PageLimitReached'],
+        ];
+    }
+
+    #[DataProvider('folderLimitFailures')]
+    public function testAFolderThatCouldNotBeEmptiedIsLoggedWithItsPrefixAndTheOtherBucketIsStillTried(string $operation, string $code): void
+    {
+        $store = self::storeFailingPrefixWith($operation, $code);
+        $cleaner = $this->cleanerOver($store);
+
+        $cleaner->removeExpense(self::USER, self::EXPENSE);
+
+        $originalPrefix = 'receipts/' . self::USER . '/' . self::EXPENSE . '/';
+        $thumbnailPrefix = self::USER . '/' . self::EXPENSE . '/';
+        self::assertSame(['rcp ' . $originalPrefix, 'thumbs ' . $thumbnailPrefix], $store->prefixCalls);
+        $lines = $this->lines();
+        self::assertCount(2, $lines);
+        self::assertSame('error', $lines[0]['level']);
+        self::assertSame('receipt cleanup failed', $lines[0]['message']);
+        self::assertSame($code, $lines[0]['errorCode']);
+        self::assertSame($operation, $lines[0]['operation']);
+        self::assertSame('rcp', $lines[0]['bucket']);
+        self::assertSame([$originalPrefix], $lines[0]['keys']);
+        self::assertSame($code, $lines[1]['errorCode']);
+        self::assertSame('thumbs', $lines[1]['bucket']);
+        self::assertSame([$thumbnailPrefix], $lines[1]['keys']);
+    }
+
+    public function testOnceTheBudgetHasPassedTheNextFileIsNotTriedButLogged(): void
+    {
+        $clock = new FrozenClock();
+        $this->store->afterCall = static fn() => $clock->advance(9);
+        $cleaner = $this->cleanerOver($this->store, $clock);
+
+        $cleaner->removeReceipt($this->key());
+
+        self::assertSame(['delete rcp ' . $this->key()->originalKey()], $this->store->calls, 'no call is made after the deadline');
+        $lines = $this->lines();
+        self::assertCount(1, $lines);
+        self::assertSame('error', $lines[0]['level']);
+        self::assertSame('receipt cleanup failed', $lines[0]['message']);
+        self::assertSame('thumbs', $lines[0]['bucket']);
+        self::assertSame([$this->key()->thumbnailKey()], $lines[0]['keys']);
+        self::assertSame('DeadlineReached', $lines[0]['errorCode']);
+    }
+
+    public function testOnceTheBudgetHasPassedTheSecondFolderIsLoggedAndNotCalled(): void
+    {
+        $clock = new FrozenClock();
+        $this->store->afterCall = static fn() => $clock->advance(9);
+        $cleaner = $this->cleanerOver($this->store, $clock);
+
+        $cleaner->removeExpense(self::USER, self::EXPENSE);
+
+        self::assertSame(['deletePrefix rcp receipts/' . self::USER . '/' . self::EXPENSE . '/'], $this->store->calls);
+        $lines = $this->lines();
+        self::assertCount(1, $lines);
+        self::assertSame('thumbs', $lines[0]['bucket']);
+        self::assertSame([self::USER . '/' . self::EXPENSE . '/'], $lines[0]['keys']);
+        self::assertSame('DeadlineReached', $lines[0]['errorCode']);
+    }
+
+    public function testTheDeadlineIsPassedDownToTheFolderDeletion(): void
+    {
+        $clock = new FrozenClock();
+        $cleaner = $this->cleanerOver($this->store, $clock);
+
+        $cleaner->removeExpense(self::USER, self::EXPENSE);
+
+        $deadline = $this->store->lastDeadline;
+        self::assertNotNull($deadline);
+        self::assertFalse($deadline->hasPassed());
+        $clock->advance(ReceiptObjectCleaner::BUDGET_SECONDS - 1);
+        self::assertFalse($deadline->hasPassed());
+        $clock->advance(1);
+        self::assertTrue($deadline->hasPassed());
+    }
+
+    public function testWithinTheBudgetBothFilesAreDeleted(): void
+    {
+        $clock = new FrozenClock();
+        $this->store->afterCall = static fn() => $clock->advance(7);
+        $cleaner = $this->cleanerOver($this->store, $clock);
+
+        $cleaner->removeReceipt($this->key());
+
+        self::assertCount(2, $this->store->calls);
+        self::assertSame('', $this->logged());
+    }
+
+    public function testTheBudgetStartsWhenTheCallStartsNotWhenTheCleanerIsBuilt(): void
+    {
+        $clock = new FrozenClock();
+        $cleaner = $this->cleanerOver($this->store, $clock);
+        $clock->advance(3600);
+
+        $cleaner->removeReceipt($this->key());
+
+        self::assertCount(2, $this->store->calls);
+        self::assertSame('', $this->logged());
     }
 }

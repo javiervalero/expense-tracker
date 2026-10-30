@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Tests\Support\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use App\Infrastructure\S3\ObjectStore;
 use App\Infrastructure\S3\ObjectStoreFailure;
 
@@ -21,6 +22,15 @@ final class InMemoryObjectStore implements ObjectStore
     public bool $failing = false;
 
     public ?int $lastMaxBytes = null;
+
+    /** The deadline given to the last deletePrefix(), to show that it is passed down. */
+    public ?Deadline $lastDeadline = null;
+
+    /** @var (\Closure(): void)|null run after each recorded call, e.g. to move a clock as a slow S3 would */
+    public ?\Closure $afterCall = null;
+
+    /** @var \ArrayObject<int, string>|null a list shared with other spies, so a test sees the ORDER of calls across them */
+    public ?\ArrayObject $events = null;
 
     public function get(string $bucket, string $key, ?int $maxBytes = null): ?string
     {
@@ -42,8 +52,9 @@ final class InMemoryObjectStore implements ObjectStore
         unset($this->objects[$bucket][$key]);
     }
 
-    public function deletePrefix(string $bucket, string $prefix): int
+    public function deletePrefix(string $bucket, string $prefix, ?Deadline $deadline = null): int
     {
+        $this->lastDeadline = $deadline;
         $this->record('deletePrefix', $bucket, $prefix);
         $removed = 0;
         foreach (array_keys($this->objects[$bucket] ?? []) as $key) {
@@ -67,8 +78,12 @@ final class InMemoryObjectStore implements ObjectStore
     private function record(string $operation, string $bucket, string $key): void
     {
         $this->calls[] = "{$operation} {$bucket} {$key}";
+        $this->events?->append("s3 {$operation} {$bucket} {$key}");
         if ($this->failing) {
             throw new ObjectStoreFailure($operation, 'AccessDenied');
+        }
+        if ($this->afterCall !== null) {
+            ($this->afterCall)();
         }
     }
 }

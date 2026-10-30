@@ -38,7 +38,10 @@ use App\Infrastructure\S3\S3ObjectStore;
 use App\Infrastructure\S3\S3OriginalObjects;
 use App\Infrastructure\S3\S3ThumbnailObjects;
 use App\Infrastructure\S3\UploadPolicySigner;
+use App\Infrastructure\S3\ViewUrlSigner;
 use App\Receipts\Http\CreateReceiptUploadHandler;
+use App\Receipts\Http\DeleteReceiptHandler;
+use App\Receipts\Http\GetReceiptHandler;
 use App\Receipts\ReceiptObjectCleaner;
 use App\Receipts\ReceiptRepository;
 
@@ -75,6 +78,8 @@ final class Routes
             new Route('PATCH', '/expenses/{id}', static fn(): RequireSession => self::updateExpense($services)),
             new Route('DELETE', '/expenses/{id}', static fn(): RequireSession => self::deleteExpense($services)),
             new Route('POST', '/expenses/{id}/receipt/upload', static fn(): RequireSession => self::createReceiptUpload($services)),
+            new Route('GET', '/expenses/{id}/receipt', static fn(): RequireSession => self::getReceipt($services)),
+            new Route('DELETE', '/expenses/{id}/receipt', static fn(): RequireSession => self::deleteReceipt($services)),
         ];
     }
 
@@ -165,31 +170,64 @@ final class Routes
         return self::guarded(new UpdateExpenseHandler(self::expenses($services), self::categories($services), $services->clock), $services);
     }
 
+    /**
+     * Builds an S3 client (through {@see self::cleaner()}) when the route matches, before the transaction runs: a bad S3
+     * setting makes this request a 500 and nothing is deleted (it fails safe, the expense stays).
+     */
     private static function deleteExpense(ApiServices $services): RequireSession
     {
-        return self::guarded(new DeleteExpenseHandler(self::expenses($services)), $services);
+        return self::guarded(new DeleteExpenseHandler(self::expenses($services), self::cleaner($services)), $services);
     }
 
     /**
-     * The only route that builds S3 clients, and only when it runs: the signing client (the PUBLIC endpoint, no network
-     * call) for the policy, and the calling client (the internal endpoint) for the cleanup of a replaced receipt.
+     * Builds two S3 clients, and only when the route runs: the signing client (the PUBLIC endpoint, no network call) for
+     * the upload policy, and, through {@see self::cleaner()}, the cleanup client (the internal endpoint) for the replaced
+     * receipt's files.
      */
     private static function createReceiptUpload(ApiServices $services): RequireSession
     {
         $settings = $services->s3;
-        $store = new S3ObjectStore(S3ClientFactory::forCalls($settings));
+        $signer = new UploadPolicySigner(S3ClientFactory::forSigning($settings), $settings->receiptsBucket, $services->clock);
 
-        $cleaner = new ReceiptObjectCleaner(
+        return self::guarded(
+            new CreateReceiptUploadHandler(new ReceiptRepository($services->items), self::cleaner($services), $signer, $services->ids, $services->clock),
+            $services,
+        );
+    }
+
+    /** Builds only the signing client (the PUBLIC endpoint, no network call): the view addresses are made locally. */
+    private static function getReceipt(ApiServices $services): RequireSession
+    {
+        $settings = $services->s3;
+        $urls = new ViewUrlSigner(S3ClientFactory::forSigning($settings), $settings->receiptsBucket, $settings->thumbnailsBucket, $services->clock);
+
+        return self::guarded(new GetReceiptHandler(new ReceiptRepository($services->items), $urls, $services->clock), $services);
+    }
+
+    private static function deleteReceipt(ApiServices $services): RequireSession
+    {
+        return self::guarded(
+            new DeleteReceiptHandler(new ReceiptRepository($services->items), self::cleaner($services), $services->logger, $services->clock),
+            $services,
+        );
+    }
+
+    /**
+     * The cleanup of receipt files (C9), over the CLEANUP client (the internal endpoint, tight timeouts and retries) and
+     * a time budget from the services' clock. Called only inside the factories of the routes that replace or delete
+     * receipts or delete expenses, so no other route builds an S3 client.
+     */
+    private static function cleaner(ApiServices $services): ReceiptObjectCleaner
+    {
+        $settings = $services->s3;
+        $store = new S3ObjectStore(S3ClientFactory::forCleanup($settings));
+
+        return new ReceiptObjectCleaner(
             new S3OriginalObjects($store, $settings),
             new S3ThumbnailObjects($store, $settings),
             $services->logger,
             $settings,
-        );
-        $signer = new UploadPolicySigner(S3ClientFactory::forSigning($settings), $settings->receiptsBucket, $services->clock);
-
-        return self::guarded(
-            new CreateReceiptUploadHandler(new ReceiptRepository($services->items), $cleaner, $signer, $services->ids, $services->clock),
-            $services,
+            $services->clock,
         );
     }
 

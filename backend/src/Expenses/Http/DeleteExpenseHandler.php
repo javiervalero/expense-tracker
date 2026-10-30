@@ -14,19 +14,24 @@ use App\Http\Response;
 use App\Http\Routing\RouteId;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use App\Infrastructure\DynamoDb\TransactionCancelled;
+use App\Receipts\ReceiptObjectCleaner;
 use LogicException;
 
 /**
  * `DELETE /expenses/{id}`, behind {@see \App\Auth\Session\RequireSession}. In this order: the principal, the route id
  * (a malformed one is the generic `404`, no storage call), the delete. It is unconditional and needs no read first:
  * the repository's transaction fails on a missing expense (another user's included, which the key cannot reach), and
- * that is the same `404`. A second delete finds nothing and gets `404`. The answer is `204` with an empty body.
+ * that is the same `404`. A second delete finds nothing and gets `404`. After the commit, both folders of the expense in the
+ * buckets are emptied (C8), by the id of the signed-in user. The answer is `204` with an empty body, even if S3 failed.
  *
  * Storage failures are not caught (503 for overload, otherwise a generic 500).
  */
 final readonly class DeleteExpenseHandler implements Handler
 {
-    public function __construct(private ExpenseRepository $expenses) {}
+    public function __construct(
+        private ExpenseRepository $expenses,
+        private ReceiptObjectCleaner $cleaner,
+    ) {}
 
     /**
      * @throws HttpProblem
@@ -43,6 +48,10 @@ final readonly class DeleteExpenseHandler implements Handler
         } catch (ExpenseNotFound) {
             throw RouteId::notFound();
         }
+
+        // C8: only after the transaction committed, and only for the SESSION's user id, never one from the request. The
+        // cleaner logs S3 failures and does not throw, so the answer stays a success.
+        $this->cleaner->removeExpense($principal->userId, $id);
 
         return Response::empty(204);
     }

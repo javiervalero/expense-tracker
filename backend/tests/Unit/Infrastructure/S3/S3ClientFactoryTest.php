@@ -122,6 +122,51 @@ final class S3ClientFactoryTest extends TestCase
         self::assertSame(20, $options['timeout'] ?? null);
     }
 
+    public function testTheCleanupClientUsesTheInternalEndpointLikeTheCallClient(): void
+    {
+        $client = S3ClientFactory::forCleanup($this->localSettings());
+
+        self::assertSame('http://api:9100', (string) $client->getEndpoint());
+        self::assertTrue($client->getConfig('use_path_style_endpoint'));
+        self::assertFalse(S3ClientFactory::forCleanup(S3Settings::fromEnvironment(self::BUCKETS))->getConfig('use_path_style_endpoint'));
+    }
+
+    public function testTheCleanupClientGivesUpSoonerAThrottledCallIsAttemptedTwiceInTotal(): void
+    {
+        $attempts = 0;
+        $busy = static function (CommandInterface $command) use (&$attempts): never {
+            ++$attempts;
+
+            throw new S3Exception('slow down', $command, ['code' => 'SlowDown', 'response' => null]);
+        };
+        $client = S3ClientFactory::forCleanup(S3Settings::fromEnvironment(self::BUCKETS), new MockHandler([$busy, $busy, $busy, $busy]));
+
+        try {
+            $client->deleteObject(['Bucket' => 'expense-receipts', 'Key' => 'k']);
+            self::fail('Expected the error after the retries');
+        } catch (S3Exception) {
+            self::assertSame(2, $attempts);
+        }
+    }
+
+    public function testTheCleanupClientHasTighterTimeouts(): void
+    {
+        /** @var array{connect_timeout?: int, timeout?: int} $options */
+        $options = [];
+        $handler = new MockHandler([static function (CommandInterface $command) use (&$options): Result {
+            $http = $command['@http'];
+            self::assertIsArray($http);
+            $options = $http;
+
+            return new Result([]);
+        }]);
+
+        S3ClientFactory::forCleanup(S3Settings::fromEnvironment(self::BUCKETS), $handler)->deleteObject(['Bucket' => 'expense-receipts', 'Key' => 'k']);
+
+        self::assertSame(2, $options['connect_timeout'] ?? null);
+        self::assertSame(5, $options['timeout'] ?? null);
+    }
+
     public function testAnEndpointFromTheEnvironmentNeverMovesTheClient(): void
     {
         $saved = [getenv('AWS_ENDPOINT_URL'), getenv('AWS_ENDPOINT_URL_S3')];

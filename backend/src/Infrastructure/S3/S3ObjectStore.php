@@ -4,20 +4,31 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use Aws\Exception\AwsException;
 use Aws\S3\S3Client;
 use GuzzleHttp\Psr7\Utils;
 use Psr\Http\Message\StreamInterface;
 
 /**
- * {@see ObjectStore} over S3. Takes the CALLS client ({@see S3ClientFactory::forCalls()}). The SDK retries a failing
- * call (3 attempts in total); what still fails becomes an {@see ObjectStoreFailure} without the SDK's message.
+ * {@see ObjectStore} over S3. Takes the CALLS or CLEANUP client ({@see S3ClientFactory::forCalls()}, {@see S3ClientFactory::forCleanup()}).
+ * The SDK retries a failing call (3 attempts in total on the first, 2 on the second); what still fails becomes an
+ * {@see ObjectStoreFailure} without the SDK's message.
  */
 final readonly class S3ObjectStore implements ObjectStore
 {
     /** What S3 returns per ListObjectsV2 page, and accepts per DeleteObjects call. */
     private const PAGE_SIZE = 1000;
     private const MIN_PREFIX_SEGMENTS = 2;
+    /**
+     * Pages of a folder that one call handles (3000 keys). An expense has one receipt and a few strays, so this is far
+     * above real use, and it bounds the time of a request (each S3 call may take 20 s x 3 attempts on the general client, 5 s
+     * x 2 attempts on the cleanup client; the caller's deadline is the tighter bound). What is left is
+     * reported as a failure, which {@see \App\Receipts\ReceiptObjectCleaner} logs with the folder (C9).
+     */
+    private const MAX_PAGES = 3;
+    private const PAGE_LIMIT_REACHED = 'PageLimitReached';
+    private const DEADLINE_REACHED = 'DeadlineReached';
 
     public function __construct(private S3Client $client) {}
 
@@ -84,14 +95,20 @@ final readonly class S3ObjectStore implements ObjectStore
         }
     }
 
-    public function deletePrefix(string $bucket, string $prefix): int
+    public function deletePrefix(string $bucket, string $prefix, ?Deadline $deadline = null): int
     {
         self::assertFolder($prefix);
         $deleted = 0;
         $errorCodes = [];
         $errorCount = 0;
         $token = null;
+        $pages = 0;
+        $stoppedBy = null;
         do {
+            if ($deadline?->hasPassed() === true) {
+                $stoppedBy = self::DEADLINE_REACHED;
+                break;
+            }
             $keys = [];
             try {
                 $page = $this->client->listObjectsV2(
@@ -107,16 +124,30 @@ final readonly class S3ObjectStore implements ObjectStore
             }
             // S3 answers MalformedXML to DeleteObjects with an empty list (Step 0 R5): an empty page sends nothing.
             if ($keys !== []) {
+                // The listing may have been slow: check again, so the worst case is the budget plus one S3 call.
+                if ($deadline?->hasPassed() === true) {
+                    $stoppedBy = self::DEADLINE_REACHED;
+                    break;
+                }
                 $codes = $this->deleteKeys($bucket, $keys);
                 $deleted += count($keys) - count($codes);
                 $errorCount += count($codes);
                 $errorCodes = [...$errorCodes, ...$codes];
             }
+            ++$pages;
             $token = $this->nextToken($page);
+            if ($token !== null && $pages >= self::MAX_PAGES) {
+                // More pages exist: stop instead of paging without end, and report the leftover below.
+                $stoppedBy = self::PAGE_LIMIT_REACHED;
+                break;
+            }
         } while ($token !== null);
-        if ($errorCount > 0) {
-            // After the last page, so one bad key does not leave the rest of the folder behind.
-            throw new ObjectStoreFailure('DeleteObjects', implode(',', array_values(array_unique($errorCodes))), null, null, null, $errorCount);
+        if ($errorCount > 0 || $stoppedBy !== null) {
+            // After the last page handled, so one bad key does not leave the rest of the folder behind. Both causes are
+            // reported: per-key errors first, then why the listing stopped early.
+            $codes = $stoppedBy === null ? $errorCodes : [...$errorCodes, $stoppedBy];
+
+            throw new ObjectStoreFailure($errorCount > 0 ? 'DeleteObjects' : 'ListObjectsV2', implode(',', array_values(array_unique($codes))), null, null, null, max($errorCount, 1));
         }
 
         return $deleted;

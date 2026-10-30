@@ -34,8 +34,10 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         'createReceiptUpload' => ['POST', '/expenses/{id}/receipt/upload'],
         'deleteCategory' => ['DELETE', '/categories/{id}'],
         'deleteExpense' => ['DELETE', '/expenses/{id}'],
+        'deleteReceipt' => ['DELETE', '/expenses/{id}/receipt'],
         'getCurrentUser' => ['GET', '/auth/me'],
         'getExpense' => ['GET', '/expenses/{id}'],
+        'getReceipt' => ['GET', '/expenses/{id}/receipt'],
         'listCategories' => ['GET', '/categories'],
         'listExpenses' => ['GET', '/expenses'],
         'renameCategory' => ['PATCH', '/categories/{id}'],
@@ -54,6 +56,8 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         'updateExpense' => ['PATCH', '/expenses/{id}'],
         'deleteExpense' => ['DELETE', '/expenses/{id}'],
         'createReceiptUpload' => ['POST', '/expenses/{id}/receipt/upload'],
+        'getReceipt' => ['GET', '/expenses/{id}/receipt'],
+        'deleteReceipt' => ['DELETE', '/expenses/{id}/receipt'],
         'renameCategory' => ['PATCH', '/categories/{id}'],
         'deleteCategory' => ['DELETE', '/categories/{id}'],
     ];
@@ -286,6 +290,10 @@ final class CrossUserIsolationApiTest extends ApiTestCase
             $body = ['date' => '2026-10-' . $day, 'amountCents' => 1000 + $index, 'description' => $index === 0 ? "A lunch $needle" : "A item $index"];
             $aExpenses[] = $this->createId('/expenses', $index < 4 ? $body + ['categoryId' => $aCategories[$index % 2]] : $body);
         }
+        // A has a pending receipt on her first expense (a RCPT# record, no file), so a foreign read, replace or delete
+        // that reached her record changes the snapshot below.
+        $started = $this->call('POST', '/expenses/{id}/receipt/upload', '/expenses/' . $aExpenses[0] . '/receipt/upload', ['contentType' => 'image/png', 'size' => 1024]);
+        self::assertSame(201, $started->getStatusCode());
         $snapshot = $this->snapshot($aExpenses);
 
         $b = $this->register();
@@ -312,6 +320,8 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         $bodies = ['/categories' => (string) $this->call('GET', '/categories', '/categories', null)->getBody()];
         foreach ($expenses as $id) {
             $bodies['/expenses/' . $id] = (string) $this->call('GET', '/expenses/{id}', '/expenses/' . $id, null)->getBody();
+            // The RCPT# record, as the API shows it: a pending receipt (A's first expense) or 404 (no record).
+            $bodies['/expenses/' . $id . '/receipt'] = (string) $this->call('GET', '/expenses/{id}/receipt', '/expenses/' . $id . '/receipt', null)->getBody();
         }
         $bodies['/expenses'] = (string) $this->listing('')->getBody();
 
@@ -327,7 +337,11 @@ final class CrossUserIsolationApiTest extends ApiTestCase
     {
         $this->actAs($world['a']);
         foreach ($world['snapshot'] as $path => $before) {
-            $template = str_starts_with($path, '/expenses/') ? '/expenses/{id}' : $path;
+            $template = match (true) {
+                str_ends_with($path, '/receipt') => '/expenses/{id}/receipt',
+                str_starts_with($path, '/expenses/') => '/expenses/{id}',
+                default => $path,
+            };
             self::assertSame($before, (string) $this->call('GET', $template, $path, null)->getBody(), "A's $path changed");
         }
     }

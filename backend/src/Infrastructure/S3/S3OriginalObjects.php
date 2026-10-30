@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use App\Receipts\OriginalObjects;
 use App\Receipts\ReceiptLimits;
 use App\Receipts\ReceiptObjectKey;
@@ -29,8 +30,8 @@ final readonly class S3OriginalObjects implements OriginalObjects
         $this->store->delete($this->bucket, $key->originalKey());
     }
 
-    public function deleteExpense(string $userId, string $expenseId): void
+    public function deleteExpense(string $userId, string $expenseId, ?Deadline $deadline = null): void
     {
-        $this->store->deletePrefix($this->bucket, ReceiptObjectKey::originalPrefix($userId, $expenseId));
+        $this->store->deletePrefix($this->bucket, ReceiptObjectKey::originalPrefix($userId, $expenseId), $deadline);
     }
 }

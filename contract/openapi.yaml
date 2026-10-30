@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.12.0
+  version: 0.13.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -741,7 +741,9 @@ paths:
       tags: [expenses]
       summary: Delete an expense
       description: |
-        Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`.
+        Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`. The
+        files of the expense's receipt are removed on a best-effort basis after the expense is gone: the answer is `204`
+        even if the file store could not be reached, and the leftover files are reported in the server log.
       security:
         - sessionCookie: []
       parameters:
@@ -831,6 +833,87 @@ paths:
           $ref: '#/components/responses/UnsupportedMediaType'
         '422':
           $ref: '#/components/responses/ValidationFailed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /expenses/{id}/receipt:
+    get:
+      operationId: getReceipt
+      tags: [receipts]
+      summary: Read the receipt of an expense
+      description: |
+        Returns the receipt of one expense of the signed-in user: its `status` (`pending` until the file has been
+        checked, then `ready` or `failed`) and, only when `ready`, two signed addresses valid for 5 minutes until
+        `urlsExpireAt`: `viewUrl` opens the original (served by the file store, not by this API, with the type the
+        check verified) and `thumbnailUrl` shows a thumbnail (images only; a PDF has none). An id that is not an expense
+        of the signed-in user (malformed, unknown, deleted or someone else's), an expense with no receipt, and a
+        `pending` or `failed` receipt that has expired all get one and the same `404`. The response holds signatures: it
+        must never be logged or cached.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+      responses:
+        '200':
+          description: The receipt.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Receipt'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+    delete:
+      operationId: deleteReceipt
+      tags: [receipts]
+      summary: Delete the receipt of an expense
+      description: |
+        Deletes the receipt of one expense, whatever its status, together with its files. The record goes first, then
+        the files; if the file store cannot be reached the answer is still `204` (the receipt is gone) and the leftover
+        files are reported in the server log. The same `404` as for reading answers an id that is not an expense of the
+        signed-in user, an expense with no receipt, and an expired `pending` or `failed` receipt (whose files are still
+        removed). A second delete gets `404`.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: '#/components/parameters/ResourceId'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '204':
+          description: The receipt is deleted.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/ResourceNotFound'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
         '500':
           $ref: '#/components/responses/InternalServerError'
         '503':
@@ -1425,6 +1508,57 @@ components:
           type: integer
           minimum: 1
           description: The service's upper limit for any receipt, in bytes (10 MiB). The policy itself accepts only the declared size.
+    Receipt:
+      type: object
+      description: |
+        The receipt of one expense. `viewUrl`, `thumbnailUrl` and `urlsExpireAt` are `null` unless `status` is `ready`;
+        `thumbnailUrl` is also `null` for a PDF. The addresses hold signatures: do not log or cache them.
+      additionalProperties: false
+      required: [receiptId, status, contentType, size, createdAt, failureReason, viewUrl, thumbnailUrl, urlsExpireAt]
+      properties:
+        receiptId:
+          type: string
+          format: uuid
+          description: Opaque identifier of the receipt.
+        status:
+          type: string
+          enum: [pending, ready, failed]
+          description: '`pending` until the uploaded file has been checked; then `ready`, or `failed` with a `failureReason`.'
+        contentType:
+          type: string
+          enum: [image/jpeg, image/png, image/webp, application/pdf]
+          description: The declared type while `pending` or `failed`; the type the check verified once `ready`.
+        size:
+          type: integer
+          minimum: 1
+          maximum: 10485760
+          description: The declared size in bytes.
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC, whole seconds.
+        failureReason:
+          description: Why the file was refused; `null` unless `status` is `failed`.
+          oneOf:
+            - type: string
+              enum: [unsupported-type, too-large, unreadable]
+            - type: 'null'
+        viewUrl:
+          description: A signed address that opens the original for 5 minutes; `null` unless `ready`.
+          oneOf:
+            - type: string
+            - type: 'null'
+        thumbnailUrl:
+          description: A signed address of a JPEG thumbnail for 5 minutes; `null` unless `ready` and an image.
+          oneOf:
+            - type: string
+            - type: 'null'
+        urlsExpireAt:
+          description: ISO 8601 UTC, whole seconds. The addresses stop working at this instant; `null` when there are none.
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
     ValidationProblemDetails:
       description: A problem with the list of invalid fields in `errors`.
       allOf:

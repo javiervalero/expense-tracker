@@ -250,7 +250,9 @@ export interface paths {
         post?: never;
         /**
          * Delete an expense
-         * @description Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`.
+         * @description Deletes an expense. It is unconditional (no version is needed). A second delete of the same id gets `404`. The
+         *     files of the expense's receipt are removed on a best-effort basis after the expense is gone: the answer is `204`
+         *     even if the file store could not be reached, and the leftover files are reported in the server log.
          */
         delete: operations["deleteExpense"];
         options?: never;
@@ -293,6 +295,40 @@ export interface paths {
          */
         post: operations["createReceiptUpload"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/expenses/{id}/receipt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the receipt of an expense
+         * @description Returns the receipt of one expense of the signed-in user: its `status` (`pending` until the file has been
+         *     checked, then `ready` or `failed`) and, only when `ready`, two signed addresses valid for 5 minutes until
+         *     `urlsExpireAt`: `viewUrl` opens the original (served by the file store, not by this API, with the type the
+         *     check verified) and `thumbnailUrl` shows a thumbnail (images only; a PDF has none). An id that is not an expense
+         *     of the signed-in user (malformed, unknown, deleted or someone else's), an expense with no receipt, and a
+         *     `pending` or `failed` receipt that has expired all get one and the same `404`. The response holds signatures: it
+         *     must never be logged or cached.
+         */
+        get: operations["getReceipt"];
+        put?: never;
+        post?: never;
+        /**
+         * Delete the receipt of an expense
+         * @description Deletes the receipt of one expense, whatever its status, together with its files. The record goes first, then
+         *     the files; if the file store cannot be reached the answer is still `204` (the receipt is gone) and the leftover
+         *     files are reported in the server log. The same `404` as for reading answers an id that is not an expense of the
+         *     signed-in user, an expense with no receipt, and an expired `pending` or `failed` receipt (whose files are still
+         *     removed). A second delete gets `404`.
+         */
+        delete: operations["deleteReceipt"];
         options?: never;
         head?: never;
         patch?: never;
@@ -485,6 +521,42 @@ export interface components {
             expiresAt: string;
             /** @description The service's upper limit for any receipt, in bytes (10 MiB). The policy itself accepts only the declared size. */
             maxBytes: number;
+        };
+        /**
+         * @description The receipt of one expense. `viewUrl`, `thumbnailUrl` and `urlsExpireAt` are `null` unless `status` is `ready`;
+         *     `thumbnailUrl` is also `null` for a PDF. The addresses hold signatures: do not log or cache them.
+         */
+        Receipt: {
+            /**
+             * Format: uuid
+             * @description Opaque identifier of the receipt.
+             */
+            receiptId: string;
+            /**
+             * @description `pending` until the uploaded file has been checked; then `ready`, or `failed` with a `failureReason`.
+             * @enum {string}
+             */
+            status: "pending" | "ready" | "failed";
+            /**
+             * @description The declared type while `pending` or `failed`; the type the check verified once `ready`.
+             * @enum {string}
+             */
+            contentType: "image/jpeg" | "image/png" | "image/webp" | "application/pdf";
+            /** @description The declared size in bytes. */
+            size: number;
+            /**
+             * Format: date-time
+             * @description ISO 8601 UTC, whole seconds.
+             */
+            createdAt: string;
+            /** @description Why the file was refused; `null` unless `status` is `failed`. */
+            failureReason: ("unsupported-type" | "too-large" | "unreadable") | null;
+            /** @description A signed address that opens the original for 5 minutes; `null` unless `ready`. */
+            viewUrl: string | null;
+            /** @description A signed address of a JPEG thumbnail for 5 minutes; `null` unless `ready` and an image. */
+            thumbnailUrl: string | null;
+            /** @description ISO 8601 UTC, whole seconds. The addresses stop working at this instant; `null` when there are none. */
+            urlsExpireAt: string | null;
         };
         /** @description A problem with the list of invalid fields in `errors`. */
         ValidationProblemDetails: components["schemas"]["ProblemDetails"] & {
@@ -1432,6 +1504,75 @@ export interface operations {
             413: components["responses"]["ContentTooLarge"];
             415: components["responses"]["UnsupportedMediaType"];
             422: components["responses"]["ValidationFailed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getReceipt: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The receipt. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Receipt"];
+                };
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    deleteReceipt: {
+        parameters: {
+            query?: never;
+            header: {
+                /**
+                 * @description Must be exactly `XMLHttpRequest`. A cross-site form post cannot set it, which is what the cross-site request
+                 *     check relies on. A request without it gets `403`. The browser's `Origin` header is checked too; it is not
+                 *     declared here because browsers set it and JavaScript cannot.
+                 */
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                /** @description The identifier of the resource (a lower-case UUID). Any other value gets the same `404` as an unknown id. */
+                id: components["parameters"]["ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The receipt is deleted. */
+            204: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];
         };

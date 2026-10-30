@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Infrastructure\S3;
 
+use App\Infrastructure\Clock\Deadline;
 use App\Receipts\ReceiptObjectKey;
 use App\Receipts\ThumbnailObjects;
 
@@ -29,8 +30,8 @@ final readonly class S3ThumbnailObjects implements ThumbnailObjects
         $this->store->delete($this->bucket, $key->thumbnailKey());
     }
 
-    public function deleteExpense(string $userId, string $expenseId): void
+    public function deleteExpense(string $userId, string $expenseId, ?Deadline $deadline = null): void
     {
-        $this->store->deletePrefix($this->bucket, ReceiptObjectKey::thumbnailPrefix($userId, $expenseId));
+        $this->store->deletePrefix($this->bucket, ReceiptObjectKey::thumbnailPrefix($userId, $expenseId), $deadline);
     }
 }

@@ -12,6 +12,7 @@ use App\Http\Pipeline;
 use App\Http\Request;
 use App\Http\Response;
 use App\Http\Routing\RouteId;
+use App\Infrastructure\Clock\Deadline;
 use App\Infrastructure\DynamoDb\DynamoDbClientFactory;
 use App\Infrastructure\DynamoDb\DynamoDbSettings;
 use App\Infrastructure\DynamoDb\ItemStore;
@@ -110,7 +111,7 @@ final class CreateReceiptUploadHandlerTest extends TestCase
                 $this->events->append('delete original ' . $key->receiptId());
             }
 
-            public function deleteExpense(string $userId, string $expenseId): void {}
+            public function deleteExpense(string $userId, string $expenseId, ?Deadline $deadline = null): void {}
         };
         $thumbnails = new class ($this->events) implements ThumbnailObjects {
             /** @param \ArrayObject<int, string> $events */
@@ -123,7 +124,7 @@ final class CreateReceiptUploadHandlerTest extends TestCase
                 $this->events->append('delete thumbnail ' . $key->receiptId());
             }
 
-            public function deleteExpense(string $userId, string $expenseId): void {}
+            public function deleteExpense(string $userId, string $expenseId, ?Deadline $deadline = null): void {}
         };
         $signing = new S3Client([
             'version' => '2006-03-01',
@@ -156,7 +157,7 @@ final class CreateReceiptUploadHandlerTest extends TestCase
 
         return new CreateReceiptUploadHandler(
             new ReceiptRepository($items),
-            new ReceiptObjectCleaner($originals, $thumbnails, new JsonLogger($this->log), $s3),
+            new ReceiptObjectCleaner($originals, $thumbnails, new JsonLogger($this->log), $s3, new FrozenClock()),
             new UploadPolicySigner($signing, TestS3Settings::RECEIPTS, new FrozenClock()),
             $ids,
             new FrozenClock(),
@@ -488,6 +489,7 @@ final class CreateReceiptUploadHandlerTest extends TestCase
             new S3ThumbnailObjects($failing, $s3),
             new JsonLogger($this->log),
             $s3,
+            new FrozenClock(),
         );
         $signing = new S3Client([
             'version' => '2006-03-01', 'region' => 'eu-west-1', 'endpoint' => 'http://localhost:9000', 'use_path_style_endpoint' => true,

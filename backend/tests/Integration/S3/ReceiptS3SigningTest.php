@@ -386,6 +386,7 @@ final class ReceiptS3SigningTest extends TestCase
             new S3ThumbnailObjects($this->store, $this->settings),
             new JsonLogger($stream),
             $this->settings,
+            new FrozenClock(),
         );
 
         $cleaner->removeExpense($key->userId(), $key->expenseId());
