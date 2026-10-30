@@ -57,6 +57,32 @@ final class ReceiptTest extends TestCase
         self::assertNull($receipt->expiresAt);
     }
 
+    public function testASettledReceiptMayCarryTheEtagOfTheInspectedBytes(): void
+    {
+        $key = ReceiptObjectKey::from('0b3f1c1e-5d2a-4c8e-9a41-2f6d7b8c9d01', '1c4f2d2f-6e3b-4d9f-8b52-3a7e8c9dae12', self::RECEIPT_ID);
+        $processed = $this->at(self::NOW);
+
+        $ready = new Receipt($key, ReceiptStatus::Ready, ReceiptContentType::Png, 1, $this->at(self::CREATED), null, null, $processed, 'abc123');
+
+        self::assertSame('abc123', $ready->objectEtag);
+        self::assertNull($this->ready()->objectEtag);
+    }
+
+    public function testAPendingReceiptHasNoEtagAndAnEtagIsNotEmpty(): void
+    {
+        $key = ReceiptObjectKey::from('0b3f1c1e-5d2a-4c8e-9a41-2f6d7b8c9d01', '1c4f2d2f-6e3b-4d9f-8b52-3a7e8c9dae12', self::RECEIPT_ID);
+        $expires = $this->at('2026-10-30T12:00:00+00:00');
+
+        foreach ([[ReceiptStatus::Pending, 'abc123'], [ReceiptStatus::Ready, '']] as [$status, $etag]) {
+            try {
+                new Receipt($key, $status, ReceiptContentType::Png, 1, $this->at(self::CREATED), $status === ReceiptStatus::Ready ? null : $expires, null, $status === ReceiptStatus::Ready ? $this->at(self::NOW) : null, $etag);
+                self::fail('Expected InvalidArgumentException.');
+            } catch (InvalidArgumentException) {
+                $this->addToAssertionCount(1);
+            }
+        }
+    }
+
     public function testTheSizeBoundsPass(): void
     {
         self::assertSame(1, $this->pending(size: 1)->size);

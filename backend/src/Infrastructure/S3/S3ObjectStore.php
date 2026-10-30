@@ -20,6 +20,7 @@ final readonly class S3ObjectStore implements ObjectStore
     /** What S3 returns per ListObjectsV2 page, and accepts per DeleteObjects call. */
     private const PAGE_SIZE = 1000;
     private const MIN_PREFIX_SEGMENTS = 2;
+    private const NOT_FOUND = 404;
     /**
      * Pages of a folder that one call handles (3000 keys). An expense has one receipt and a few strays, so this is far
      * above real use, and it bounds the time of a request (each S3 call may take 20 s x 3 attempts on the general client, 5 s
@@ -33,6 +34,28 @@ final readonly class S3ObjectStore implements ObjectStore
     public function __construct(private S3Client $client) {}
 
     public function get(string $bucket, string $key, ?int $maxBytes = null): ?string
+    {
+        return $this->read($bucket, $key, $maxBytes)[0] ?? null;
+    }
+
+    public function getObject(string $bucket, string $key, ?int $maxBytes = null): ?StoredObject
+    {
+        $read = $this->read($bucket, $key, $maxBytes);
+        if ($read === null) {
+            return null;
+        }
+        if ($read[1] === null) {
+            // The caller compares ETags later: an answer without one is retried, never stored as "no ETag".
+            throw new ObjectStoreFailure('GetObject', 'UnexpectedResponse');
+        }
+
+        return new StoredObject($read[0], $read[1]);
+    }
+
+    /**
+     * @return array{string, string|null}|null the body and the ETag (null when the answer had none), or null when the key is gone
+     */
+    private function read(string $bucket, string $key, ?int $maxBytes): ?array
     {
         try {
             // stream: the body is not downloaded until it is read, so the size can be checked first.
@@ -51,10 +74,40 @@ final readonly class S3ObjectStore implements ObjectStore
             throw new ObjectStoreFailure('GetObject', 'UnexpectedResponse');
         }
         try {
-            return $this->readBody($body, $result['ContentLength'] ?? null, $maxBytes);
+            $content = $this->readBody($body, $result['ContentLength'] ?? null, $maxBytes);
         } finally {
             $body->close();
         }
+
+        return [$content, self::normalisedEtag($result['ETag'] ?? null)];
+    }
+
+    public function etag(string $bucket, string $key): ?string
+    {
+        try {
+            $result = $this->client->headObject(['Bucket' => $bucket, 'Key' => $key]);
+        } catch (\RuntimeException $e) {
+            // A HEAD has no body, so S3 answers a missing key with 404 and the code NotFound rather than NoSuchKey.
+            if ($e instanceof AwsException && ($e->getStatusCode() === self::NOT_FOUND || $e->getAwsErrorCode() === 'NoSuchKey')) {
+                return null;
+            }
+
+            throw ObjectStoreFailure::fromSdk('HeadObject', $e);
+        }
+        $etag = self::normalisedEtag($result['ETag'] ?? null);
+        if ($etag === null) {
+            throw new ObjectStoreFailure('HeadObject', 'UnexpectedResponse');
+        }
+
+        return $etag;
+    }
+
+    /** S3 sends the ETag in quotes; everything above this class compares the bare value. */
+    private static function normalisedEtag(mixed $etag): ?string
+    {
+        $bare = is_string($etag) ? trim($etag, '"') : '';
+
+        return $bare === '' ? null : $bare;
     }
 
     /**
@@ -63,7 +116,7 @@ final readonly class S3ObjectStore implements ObjectStore
     private function readBody(StreamInterface $body, mixed $length, ?int $maxBytes): string
     {
         if ($maxBytes !== null && is_int($length) && $length > $maxBytes) {
-            throw new ObjectStoreFailure('GetObject', 'TooLarge');
+            throw new ObjectStoreFailure('GetObject', ObjectStoreFailure::TOO_LARGE);
         }
         try {
             $content = $maxBytes === null ? $body->getContents() : Utils::copyToString($body, $maxBytes + 1);
@@ -71,7 +124,7 @@ final readonly class S3ObjectStore implements ObjectStore
             throw ObjectStoreFailure::fromSdk('GetObject', $e);
         }
         if ($maxBytes !== null && strlen($content) > $maxBytes) {
-            throw new ObjectStoreFailure('GetObject', 'TooLarge');
+            throw new ObjectStoreFailure('GetObject', ObjectStoreFailure::TOO_LARGE);
         }
 
         return $content;

@@ -47,7 +47,10 @@ final class ApiFactoryStoreWiringTest extends TestCase
             'DYNAMODB_TABLE' => $this->table->name,
             'RECEIPTS_BUCKET' => 'test-receipts',
             'THUMBNAILS_BUCKET' => 'test-thumbnails',
+            'APP_ENV' => 'local',
             'DYNAMODB_ENDPOINT' => $endpoint,
+            'S3_ENDPOINT' => 'http://api:9100',
+            'S3_PUBLIC_ENDPOINT' => 'http://localhost:9000',
             'AWS_REGION' => 'eu-west-1',
         ]);
         $stream = fopen('php://memory', 'w+b');

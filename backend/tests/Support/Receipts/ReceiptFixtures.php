@@ -56,12 +56,64 @@ final class ReceiptFixtures
         return self::insertApp1($jpeg, "Exif\x00\x00" . $tiff);
     }
 
-    /** A PNG that is only the signature and an IHDR chunk with a correct CRC: the declared size, and no pixel data. */
+    /**
+     * A PNG that is only the signature, an IHDR chunk with a correct CRC and IEND: the declared size, and no pixel data.
+     * The chunk structure is complete, so it passes {@see \App\Receipts\Processing\PngStructure}; libpng stops at the
+     * missing IDAT before it allocates anything.
+     */
     public static function pngHeaderOnly(int $width, int $height): string
     {
-        $data = pack('NN', $width, $height) . "\x08\x02\x00\x00\x00";
+        return self::pngOfChunks([['IHDR', self::pngIhdrData($width, $height)], ['IEND', '']]);
+    }
 
-        return "\x89PNG\r\n\x1A\n" . self::pngChunk('IHDR', $data);
+    /** The 13 data bytes of an IHDR chunk: the size, 8-bit truecolour, no interlace. */
+    public static function pngIhdrData(int $width, int $height): string
+    {
+        return pack('NN', $width, $height) . "\x08\x02\x00\x00\x00";
+    }
+
+    /**
+     * The signature followed by the chunks as given (type, data), each with a correct length and CRC. Nothing is checked:
+     * a test can build any order, including an invalid one.
+     *
+     * @param list<array{string, string}> $chunks
+     */
+    public static function pngOfChunks(array $chunks): string
+    {
+        $png = "\x89PNG\r\n\x1A\n";
+        foreach ($chunks as [$type, $data]) {
+            $png .= self::pngChunk($type, $data);
+        }
+
+        return $png;
+    }
+
+    /**
+     * A real 10 x 10 PNG with the given chunks (type, data) inserted right after its IHDR.
+     *
+     * @param list<array{string, string}> $chunks
+     */
+    public static function pngWithChunksAfterIhdr(array $chunks): string
+    {
+        $png = self::png(10, 10);
+        $extra = '';
+        foreach ($chunks as [$type, $data]) {
+            $extra .= self::pngChunk($type, $data);
+        }
+
+        return substr($png, 0, 33) . $extra . substr($png, 33);
+    }
+
+    /** The data of a zTXt chunk: a keyword, the method byte and a few deflated bytes of text (it inflates to 5 bytes). */
+    public static function ztxtData(): string
+    {
+        return "Comment\x00\x00" . (string) gzcompress('hello');
+    }
+
+    /** The data of an iTXt chunk: keyword, compression flag and method, empty language and translated keyword, then the text. */
+    public static function itxtData(bool $compressed): string
+    {
+        return "Comment\x00" . ($compressed ? "\x01" : "\x00") . "\x00\x00\x00" . ($compressed ? (string) gzcompress('hello') : 'hello');
     }
 
     /** A real PNG with an extra iCCP chunk (a profile name and bytes that are not a zlib stream) after the IHDR. */
@@ -194,7 +246,7 @@ final class ReceiptFixtures
         return substr($jpeg, 0, 2) . "\xFF\xE1" . pack('n', strlen($payload) + 2) . $payload . substr($jpeg, 2);
     }
 
-    private static function pngChunk(string $type, string $data): string
+    public static function pngChunk(string $type, string $data): string
     {
         return pack('N', strlen($data)) . $type . $data . pack('N', crc32($type . $data));
     }

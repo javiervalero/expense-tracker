@@ -7,6 +7,7 @@ namespace App\Tests\Support\S3;
 use App\Infrastructure\Clock\Deadline;
 use App\Infrastructure\S3\ObjectStore;
 use App\Infrastructure\S3\ObjectStoreFailure;
+use App\Infrastructure\S3\StoredObject;
 
 /**
  * An ObjectStore whose deletePrefix() always throws the failure it was given (for example `PageLimitReached` or
@@ -20,6 +21,16 @@ final class FailingPrefixStore implements ObjectStore
     public function __construct(private readonly ObjectStoreFailure $failure) {}
 
     public function get(string $bucket, string $key, ?int $maxBytes = null): ?string
+    {
+        return null;
+    }
+
+    public function getObject(string $bucket, string $key, ?int $maxBytes = null): ?StoredObject
+    {
+        return null;
+    }
+
+    public function etag(string $bucket, string $key): ?string
     {
         return null;
     }

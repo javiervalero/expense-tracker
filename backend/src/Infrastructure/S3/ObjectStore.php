@@ -19,6 +19,20 @@ interface ObjectStore
      */
     public function get(string $bucket, string $key, ?int $maxBytes = null): ?string;
 
+    /**
+     * Like {@see self::get()}, with the ETag of the very bytes that were read (one request, so they cannot differ).
+     *
+     * @return StoredObject|null null when there is no such key
+     */
+    public function getObject(string $bucket, string $key, ?int $maxBytes = null): ?StoredObject;
+
+    /**
+     * The ETag (without quotes) of the object now stored, from a HEAD: no body is read.
+     *
+     * @return string|null null when there is no such key
+     */
+    public function etag(string $bucket, string $key): ?string;
+
     public function put(string $bucket, string $key, string $body, string $contentType): void;
 
     /** Deleting a key that is not there succeeds, as on S3. */

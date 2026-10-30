@@ -14,7 +14,7 @@ use PHPUnit\Framework\TestCase;
  */
 final class ReceiptRepositoryPublicSurfaceTest extends TestCase
 {
-    private const PUBLIC_METHODS = ['__construct', 'find', 'findByKey', 'startUpload', 'remove', 'markReady', 'markFailed'];
+    private const PUBLIC_METHODS = ['__construct', 'find', 'findByKey', 'startUpload', 'remove', 'markReady', 'markFailed', 'markReplaced'];
 
     public function testThePublicMethodsAreExactlyTheReviewedOnes(): void
     {

@@ -21,6 +21,7 @@ use App\Infrastructure\Id\Uuid;
 use App\Infrastructure\Logging\JsonLogger;
 use App\Infrastructure\S3\S3OriginalObjects;
 use App\Infrastructure\S3\S3ThumbnailObjects;
+use App\Infrastructure\S3\StoredObject;
 use App\Infrastructure\S3\UploadPolicySigner;
 use App\Receipts\Http\CreateReceiptUploadHandler;
 use App\Receipts\OriginalObjects;
@@ -101,7 +102,12 @@ final class CreateReceiptUploadHandlerTest extends TestCase
             /** @param \ArrayObject<int, string> $events */
             public function __construct(private \ArrayObject $events) {}
 
-            public function get(ReceiptObjectKey $key): ?string
+            public function fetch(ReceiptObjectKey $key): ?StoredObject
+            {
+                return null;
+            }
+
+            public function etag(ReceiptObjectKey $key): ?string
             {
                 return null;
             }

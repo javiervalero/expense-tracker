@@ -35,6 +35,7 @@ final class StoredReceipt
         ?string $expiresAt = '2026-10-17T11:00:00+00:00',
         ?string $failureReason = null,
         ?string $processedAt = null,
+        ?string $objectEtag = null,
     ): array {
         $item = [
             'PK' => ['S' => 'USER#' . self::USER],
@@ -55,14 +56,17 @@ final class StoredReceipt
         if ($processedAt !== null) {
             $item['processedAt'] = ['S' => $processedAt];
         }
+        if ($objectEtag !== null) {
+            $item['objectEtag'] = ['S' => $objectEtag];
+        }
 
         return $item;
     }
 
     /** @return Result<string, mixed> a GetItem answer holding the record */
-    public static function found(string $status = 'pending', string $contentType = 'image/png', ?string $expiresAt = '2026-10-17T11:00:00+00:00', ?string $failureReason = null, ?string $processedAt = null): Result
+    public static function found(string $status = 'pending', string $contentType = 'image/png', ?string $expiresAt = '2026-10-17T11:00:00+00:00', ?string $failureReason = null, ?string $processedAt = null, ?string $objectEtag = null): Result
     {
-        return new Result(['Item' => self::item($status, $contentType, $expiresAt, $failureReason, $processedAt)]);
+        return new Result(['Item' => self::item($status, $contentType, $expiresAt, $failureReason, $processedAt, $objectEtag)]);
     }
 
     /** @return Result<string, mixed> a DeleteItem ALL_OLD answer holding the record */
@@ -72,8 +76,8 @@ final class StoredReceipt
     }
 
     /** @return Result<string, mixed> a ready record */
-    public static function ready(string $contentType = 'image/png'): Result
+    public static function ready(string $contentType = 'image/png', ?string $objectEtag = null): Result
     {
-        return self::found('ready', $contentType, null, null, '2026-10-16T11:01:00Z');
+        return self::found('ready', $contentType, null, null, '2026-10-16T11:01:00Z', $objectEtag);
     }
 }

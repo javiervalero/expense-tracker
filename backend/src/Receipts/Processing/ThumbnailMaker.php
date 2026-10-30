@@ -16,7 +16,7 @@ use RuntimeException;
  * The image is fitted first and turned afterwards. The box is square, so the result is the same, and the turn works on
  * the small copy instead of making a second full-size one.
  */
-final class ThumbnailMaker
+final class ThumbnailMaker implements ThumbnailRenderer
 {
     private const int THUMBNAIL_SIDE = 480;
     private const int JPEG_QUALITY = 80;

@@ -171,7 +171,7 @@ test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local,
 #   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included). That test
 #      writes the run-unique upload key and poison message id under build/pipe-test/, and the recipe then greps the
 #      service logs for exactly those values (an empty queue alone could mean "no event"): the worker must have logged
-#      "receipt received" for the key, and (unless FAST) the runner must have logged "messages failed, left on the
+#      "receipt event skipped" for the key (the pipe test's key is not a receipt key, so the real worker skips it; WP9 moves this to a real upload), and (unless FAST) the runner must have logged "messages failed, left on the
 #      queue" for the poison id (the worker reported it in batchItemFailures, so this is the partial-failure path, not an
 #      outage and not a whole-batch failure);
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
@@ -253,8 +253,8 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	$(COMPOSE) start worker-runner; \
 	$(PHPUNIT_INTEGRATION) --group needs-runner $(EXCLUDE_SLOW); \
 	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || { echo "make test-integration: the pipe test left no upload key marker" >&2; exit 1; }; \
-	$(COMPOSE) logs --no-log-prefix --since "$$since" worker | grep -F '"message":"receipt received"' | grep -qF "\"key\":\"$$key\"" \
-		|| { echo "make test-integration: the worker logged no 'receipt received' line for the key $$key" >&2; exit 1; }; \
+	$(COMPOSE) logs --no-log-prefix --since "$$since" worker | grep -F '"message":"receipt event skipped"' | grep -qF "\"key\":\"$$key\"" \
+		|| { echo "make test-integration: the worker logged no 'receipt event skipped' line for the key $$key" >&2; exit 1; }; \
 	if [ -z "$(FAST)" ]; then \
 		id=$$(cat $(PIPE_MARKERS)/poison-message-id.txt) || { echo "make test-integration: the dead-letter test left no message id marker" >&2; exit 1; }; \
 		$(COMPOSE) logs --no-log-prefix --since "$$since" worker-runner | grep -F '"message":"messages failed, left on the queue"' | grep -qF "\"failedMessageIds\":[\"$$id\"]" \

@@ -224,6 +224,56 @@ final class FileInspectorTest extends TestCase
     }
 
     /**
+     * libpng inflates these outside PHP's memory limit, so the structure walker refuses them before anything is decoded.
+     * The text inside is a few bytes: nothing here inflates to a large size.
+     *
+     * @return array<string, array{string}>
+     */
+    public static function pngsWithCompressedChunks(): array
+    {
+        return [
+            'zTXt' => [ReceiptFixtures::pngWithChunksAfterIhdr([['zTXt', ReceiptFixtures::ztxtData()]])],
+            'compressed iTXt' => [ReceiptFixtures::pngWithChunksAfterIhdr([['iTXt', ReceiptFixtures::itxtData(true)]])],
+            'two profiles' => [ReceiptFixtures::pngWithChunksAfterIhdr([['iCCP', "p\x00\x00" . 'x'], ['iCCP', "q\x00\x00" . 'y']])],
+        ];
+    }
+
+    #[DataProvider('pngsWithCompressedChunks')]
+    public function testRefusesAPngWithCompressedTextOrASecondProfileAsUnreadable(string $bytes): void
+    {
+        $result = (new FileInspector())->inspect($bytes, ReceiptContentType::Png);
+
+        self::assertFalse($result->isAccepted());
+        self::assertSame(FailureReason::Unreadable, $result->failure);
+    }
+
+    public function testAcceptsAScreenshotLikePngWithOneProfileAndPlainText(): void
+    {
+        $bytes = ReceiptFixtures::pngWithChunksAfterIhdr([
+            ['iCCP', "sRGB\x00\x00" . (string) gzcompress('profile')],
+            ['sRGB', "\x00"],
+            ['gAMA', pack('N', 45455)],
+            ['pHYs', pack('NNC', 2835, 2835, 1)],
+            ['tEXt', "Software\x00test"],
+            ['iTXt', ReceiptFixtures::itxtData(false)],
+        ]);
+
+        $result = (new FileInspector())->inspect($bytes, ReceiptContentType::Png);
+
+        self::assertTrue($result->isAccepted());
+        self::assertSame(10, $result->width);
+    }
+
+    public function testRefusesAPngWithoutIendAsUnreadable(): void
+    {
+        $bytes = substr(ReceiptFixtures::png(10, 10), 0, -12);
+
+        $result = (new FileInspector())->inspect($bytes, ReceiptContentType::Png);
+
+        self::assertSame(FailureReason::Unreadable, $result->failure);
+    }
+
+    /**
      * The worker's error handler may throw on any error (the front controller's does). Files that are cut short, mixed
      * up or malformed make the decoder and header reader warn; under a throwing handler each must still be a refusal,
      * never an exception: an invalid file is a normal outcome, not a failure.

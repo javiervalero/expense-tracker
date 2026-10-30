@@ -14,6 +14,9 @@ use Aws\Exception\AwsException;
  */
 final class ObjectStoreFailure extends \RuntimeException
 {
+    /** The code of a read that was refused because the object is bigger than the caller's limit. */
+    public const string TOO_LARGE = 'TooLarge';
+
     public function __construct(
         public readonly string $operation,
         public readonly ?string $errorCode,

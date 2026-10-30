@@ -77,6 +77,80 @@ final class S3ObjectStoreTest extends TestCase
         self::assertSame(['Bucket' => self::BUCKET, 'Key' => 'a/b'], array_intersect_key($s3->calls[0]['args'], ['Bucket' => 1, 'Key' => 1]));
     }
 
+    public function testGetObjectReturnsTheBodyAndTheEtagWithoutItsQuotes(): void
+    {
+        $s3 = new RecordingS3([new Result(['Body' => Utils::streamFor('bytes'), 'ContentLength' => 5, 'ETag' => '"5d41402abc4b2a76b9719d911017c592"'])]);
+
+        $object = (new S3ObjectStore($s3->client()))->getObject(self::BUCKET, 'a/b', 100);
+
+        self::assertNotNull($object);
+        self::assertSame('bytes', $object->body);
+        self::assertSame('5d41402abc4b2a76b9719d911017c592', $object->etag);
+    }
+
+    public function testGetObjectWithoutAnEtagInTheAnswerIsAFailureToRetry(): void
+    {
+        $s3 = new RecordingS3([new Result(['Body' => Utils::streamFor('x'), 'ContentLength' => 1])]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->getObject(self::BUCKET, 'a/b');
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('GetObject', $failure->operation);
+            self::assertSame('UnexpectedResponse', $failure->errorCode);
+        }
+    }
+
+    public function testGetObjectOfAGoneKeyIsNullAndPlainGetNeedsNoEtag(): void
+    {
+        $s3 = new RecordingS3([self::error('GetObject', 'NoSuchKey', 404), new Result(['Body' => Utils::streamFor('x'), 'ContentLength' => 1])]);
+        $store = new S3ObjectStore($s3->client());
+
+        self::assertNull($store->getObject(self::BUCKET, 'a/b'));
+        self::assertSame('x', $store->get(self::BUCKET, 'a/b'));
+    }
+
+    public function testEtagSendsOneHeadObjectAndReturnsTheEtagWithoutQuotes(): void
+    {
+        $s3 = new RecordingS3([new Result(['ETag' => '"abc-2"'])]);
+
+        $etag = (new S3ObjectStore($s3->client()))->etag(self::BUCKET, 'a/b');
+
+        self::assertSame('abc-2', $etag);
+        self::assertSame(['HeadObject'], $s3->operations());
+        self::assertSame(['Bucket' => self::BUCKET, 'Key' => 'a/b'], array_intersect_key($s3->calls[0]['args'], ['Bucket' => 1, 'Key' => 1]));
+    }
+
+    public function testEtagIsNullWhenTheKeyIsGone(): void
+    {
+        $s3 = new RecordingS3([self::error('HeadObject', 'NotFound', 404)]);
+
+        self::assertNull((new S3ObjectStore($s3->client()))->etag(self::BUCKET, 'a/b'));
+    }
+
+    public function testEtagReportsOtherErrorsWithoutTheSdkText(): void
+    {
+        $s3 = new RecordingS3([self::error('HeadObject', 'AccessDenied')]);
+
+        try {
+            (new S3ObjectStore($s3->client()))->etag(self::BUCKET, 'a/b');
+            self::fail('Expected ObjectStoreFailure');
+        } catch (ObjectStoreFailure $failure) {
+            self::assertSame('HeadObject', $failure->operation);
+            self::assertSame('AccessDenied', $failure->errorCode);
+            self::assertStringNotContainsString('Signature', $failure->getMessage());
+        }
+    }
+
+    public function testEtagFailsWhenTheAnswerHasNone(): void
+    {
+        $s3 = new RecordingS3([new Result([])]);
+
+        $this->expectException(ObjectStoreFailure::class);
+
+        (new S3ObjectStore($s3->client()))->etag(self::BUCKET, 'a/b');
+    }
+
     public function testGetReturnsNullWhenTheKeyIsGone(): void
     {
         $s3 = new RecordingS3([self::error('GetObject', 'NoSuchKey', 404)]);

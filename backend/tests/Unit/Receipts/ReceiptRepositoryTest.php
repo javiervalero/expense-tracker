@@ -326,6 +326,9 @@ final class ReceiptRepositoryTest extends TestCase
         $keyFor = static fn(string $user, string $expense, string $receipt): string => ReceiptObjectKey::from($user, $expense, $receipt)->originalKey();
 
         return [
+            'etag that is not a string' => [self::readyFields(['objectEtag' => 5])],
+            'empty etag' => [self::readyFields(['objectEtag' => ''])],
+            'etag on a pending record' => [['objectEtag' => 'abc123']],
             'object key that does not parse' => [['objectKey' => 'receipts/not/a/key']],
             'object key with an upper-case id' => [['objectKey' => strtoupper(self::keyOf()->originalKey())]],
             'object key with a fourth segment' => [['objectKey' => self::keyOf()->originalKey() . '/x']],
@@ -578,7 +581,7 @@ final class ReceiptRepositoryTest extends TestCase
         $this->mock->append(new Result(['Attributes' => self::rawItem(self::readyFields())]));
         $now = new DateTimeImmutable('2026-10-29T14:00:00+02:00');
 
-        $result = $this->repository()->markReady(self::keyOf(), ReceiptContentType::Jpeg, $now);
+        $result = $this->repository()->markReady(self::keyOf(), ReceiptContentType::Jpeg, $now, null);
 
         self::assertSame(SettleResult::Applied, $result);
         $this->assertCommandNames('UpdateItem');
@@ -601,7 +604,7 @@ final class ReceiptRepositoryTest extends TestCase
     {
         $this->mock->append(self::conditionFailed(), self::stored(self::readyFields()));
 
-        $result = $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW));
+        $result = $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null);
 
         self::assertSame(SettleResult::AlreadyProcessed, $result);
         $this->assertCommandNames('UpdateItem', 'GetItem');
@@ -611,7 +614,7 @@ final class ReceiptRepositoryTest extends TestCase
     {
         $this->mock->append(self::conditionFailed(), self::stored(['status' => 'failed', 'failureReason' => 'unreadable', 'processedAt' => '2026-10-29T10:01:00Z']));
 
-        self::assertSame(SettleResult::AlreadyProcessed, $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW)));
+        self::assertSame(SettleResult::AlreadyProcessed, $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null));
     }
 
     public function testMarkReadyForAnotherKeyIsNotPending(): void
@@ -620,7 +623,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW));
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null);
     }
 
     public function testMarkReadyForAnotherKeyThatIsSettledIsStillNotPending(): void
@@ -629,7 +632,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW));
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null);
     }
 
     public function testMarkReadyOfAnExpiredPendingRecordIsNotPending(): void
@@ -638,7 +641,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::EXPIRES));
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::EXPIRES), null);
     }
 
     public function testMarkReadyOfAMissingRecordIsNotPending(): void
@@ -647,7 +650,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW));
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null);
     }
 
     public function testMarkReadyRethrowsAStorageFailure(): void
@@ -656,24 +659,116 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(StorageFailure::class);
 
-        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW));
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null);
     }
 
     public function testMarkReadyWhoseReReadIsCorruptIsAStorageFailure(): void
     {
         $this->mock->append(self::conditionFailed(), self::stored(['PK' => 'USER#' . self::OTHER_USER]));
 
-        $this->assertCorrupt(fn() => $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW)), 'GetItem');
+        $this->assertCorrupt(fn() => $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), null), 'GetItem');
+    }
+
+    public function testMarkReadyRecordsTheEtagOfTheInspectedBytes(): void
+    {
+        $this->mock->append(new Result(['Attributes' => self::rawItem(self::readyFields())]));
+
+        $this->repository()->markReady(self::keyOf(), ReceiptContentType::Png, self::at(self::NOW), 'abc123');
+
+        $command = $this->commandBody(0);
+        self::assertSame(
+            'SET #status = :ready, #contentType = :detected, #processedAt = :processedAt, #objectEtag = :etag REMOVE #expiresAt, #failureReason',
+            $command['UpdateExpression'],
+        );
+        $names = $this->commands[0]->toArray()['ExpressionAttributeNames'] ?? null;
+        self::assertIsArray($names);
+        self::assertSame('objectEtag', $names['#objectEtag'] ?? null);
+        self::assertSame('abc123', self::valueOf($command, ':etag'));
+        self::assertSame('#objectKey = :key AND #status = :pending AND #expiresAt > :now', $command['ConditionExpression']);
+    }
+
+    // markReplaced
+
+    public function testMarkReplacedFailsAReadyRecordOnlyWhileItsEtagIsTheStoredOne(): void
+    {
+        $this->mock->append(new Result(['Attributes' => self::rawItem(self::readyFields())]));
+        $now = new DateTimeImmutable('2026-10-29T14:00:00+02:00');
+
+        $this->repository()->markReplaced(self::keyOf(), 'abc123', FailureReason::Unreadable, $now);
+
+        $this->assertCommandNames('UpdateItem');
+        $command = $this->commandBody(0);
+        self::assertSame(['PK' => 'USER#' . self::USER, 'SK' => 'RCPT#' . self::EXPENSE], $command['Key'] ?? null);
+        self::assertSame('#objectKey = :key AND #status = :ready AND #objectEtag = :stored', $command['ConditionExpression']);
+        self::assertSame(
+            'SET #status = :failed, #failureReason = :reason, #expiresAt = :expiresAt, #processedAt = :processedAt',
+            $command['UpdateExpression'],
+        );
+        self::assertSame(self::keyOf()->originalKey(), self::valueOf($command, ':key'));
+        self::assertSame('ready', self::valueOf($command, ':ready'));
+        self::assertSame('abc123', self::valueOf($command, ':stored'));
+        self::assertSame('failed', self::valueOf($command, ':failed'));
+        self::assertSame('unreadable', self::valueOf($command, ':reason'));
+        self::assertSame((string) ($now->getTimestamp() + 604_800), self::valueOf($command, ':expiresAt'));
+        self::assertSame('2026-10-29T12:00:00Z', self::valueOf($command, ':processedAt'));
+    }
+
+    public function testMarkReplacedWhoseConditionFailsIsNotPendingAndWritesNothingElse(): void
+    {
+        $this->mock->append(self::conditionFailed());
+
+        try {
+            $this->repository()->markReplaced(self::keyOf(), 'abc123', FailureReason::Unreadable, self::at(self::NOW));
+            self::fail('The caller must re-read the record.');
+        } catch (ReceiptNotPending) {
+            $this->assertCommandNames('UpdateItem');
+        }
+    }
+
+    public function testMarkReplacedRethrowsAStorageFailure(): void
+    {
+        $this->mock->append(new DynamoDbException('denied', new \Aws\Command('UpdateItem'), ['code' => 'AccessDeniedException']));
+
+        $this->expectException(StorageFailure::class);
+
+        $this->repository()->markReplaced(self::keyOf(), 'abc123', FailureReason::Unreadable, self::at(self::NOW));
+    }
+
+    public function testFindByKeyHydratesTheEtagOfASettledRecord(): void
+    {
+        $this->mock->append(self::stored(self::readyFields(['objectEtag' => 'abc123'])), self::stored(self::readyFields()));
+
+        $with = $this->repository()->findByKey(self::keyOf());
+        $without = $this->repository()->findByKey(self::keyOf());
+
+        self::assertNotNull($with);
+        self::assertNotNull($without);
+        self::assertSame('abc123', $with->objectEtag);
+        self::assertNull($without->objectEtag);
     }
 
     // markFailed
+
+    public function testMarkFailedRecordsTheEtagWhenThereIsOne(): void
+    {
+        $this->mock->append(new Result(['Attributes' => self::rawItem()]));
+
+        $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::NOW), 'abc123');
+
+        $command = $this->commandBody(0);
+        self::assertSame(
+            'SET #status = :failed, #failureReason = :reason, #expiresAt = :expiresAt, #processedAt = :processedAt, #objectEtag = :etag',
+            $command['UpdateExpression'],
+        );
+        self::assertSame('abc123', self::valueOf($command, ':etag'));
+    }
 
     public function testMarkFailedSendsTheConditionalUpdateWithTheFailedLifetime(): void
     {
         $this->mock->append(new Result(['Attributes' => self::rawItem()]));
         $now = new DateTimeImmutable('2026-10-29T14:00:00+02:00');
 
-        $result = $this->repository()->markFailed(self::keyOf(), FailureReason::TooLarge, $now);
+        $result = $this->repository()->markFailed(self::keyOf(), FailureReason::TooLarge, $now, null);
 
         self::assertSame(SettleResult::Applied, $result);
         $this->assertCommandNames('UpdateItem');
@@ -694,7 +789,7 @@ final class ReceiptRepositoryTest extends TestCase
     {
         $this->mock->append(self::conditionFailed(), self::stored(self::readyFields()));
 
-        self::assertSame(SettleResult::AlreadyProcessed, $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::NOW)));
+        self::assertSame(SettleResult::AlreadyProcessed, $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::NOW), null));
     }
 
     public function testMarkFailedForAnotherKeyIsNotPending(): void
@@ -703,7 +798,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::NOW));
+        $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::NOW), null);
     }
 
     public function testMarkFailedOfAnExpiredPendingRecordIsNotPending(): void
@@ -712,6 +807,6 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::EXPIRES));
+        $this->repository()->markFailed(self::keyOf(), FailureReason::Unreadable, self::at(self::EXPIRES), null);
     }
 }

@@ -19,10 +19,15 @@ final readonly class S3OriginalObjects implements OriginalObjects
         $this->bucket = $settings->receiptsBucket;
     }
 
-    public function get(ReceiptObjectKey $key): ?string
+    public function fetch(ReceiptObjectKey $key): ?StoredObject
     {
         // Nothing the browser could upload is bigger (the policy's content-length-range); more means a wrong object.
-        return $this->store->get($this->bucket, $key->originalKey(), ReceiptLimits::MAX_BYTES);
+        return $this->store->getObject($this->bucket, $key->originalKey(), ReceiptLimits::MAX_BYTES);
+    }
+
+    public function etag(ReceiptObjectKey $key): ?string
+    {
+        return $this->store->etag($this->bucket, $key->originalKey());
     }
 
     public function delete(ReceiptObjectKey $key): void

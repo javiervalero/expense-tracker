@@ -31,11 +31,26 @@ final class ReceiptObjectPortsTest extends TestCase
         $store->objects['rcp'][$this->key()->originalKey()] = 'bytes';
         $originals = new S3OriginalObjects($store, TestS3Settings::create());
 
-        self::assertSame('bytes', $originals->get($this->key()));
+        $object = $originals->fetch($this->key());
+        self::assertNotNull($object);
+        self::assertSame('bytes', $object->body);
+        self::assertSame(InMemoryObjectStore::etagOf('bytes'), $object->etag);
         $originals->delete($this->key());
 
         self::assertSame([], $store->keys('rcp'));
         self::assertSame(['get rcp ' . $this->key()->originalKey(), 'delete rcp ' . $this->key()->originalKey()], $store->calls);
+    }
+
+    public function testOriginalsAskForTheEtagWithoutReadingTheBody(): void
+    {
+        $store = new InMemoryObjectStore();
+        $store->objects['rcp'][$this->key()->originalKey()] = 'bytes';
+        $originals = new S3OriginalObjects($store, TestS3Settings::create());
+
+        self::assertSame(InMemoryObjectStore::etagOf('bytes'), $originals->etag($this->key()));
+        unset($store->objects['rcp'][$this->key()->originalKey()]);
+        self::assertNull($originals->etag($this->key()));
+        self::assertSame(['etag rcp ' . $this->key()->originalKey(), 'etag rcp ' . $this->key()->originalKey()], $store->calls);
     }
 
     public function testOriginalsDeleteAnExpenseByItsPrefix(): void
@@ -88,7 +103,7 @@ final class ReceiptObjectPortsTest extends TestCase
     {
         $store = new InMemoryObjectStore();
 
-        (new S3OriginalObjects($store, TestS3Settings::create()))->get($this->key());
+        (new S3OriginalObjects($store, TestS3Settings::create()))->fetch($this->key());
 
         self::assertSame(ReceiptLimits::MAX_BYTES, $store->lastMaxBytes);
     }

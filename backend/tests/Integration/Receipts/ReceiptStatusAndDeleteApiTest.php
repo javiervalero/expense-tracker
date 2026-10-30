@@ -129,7 +129,7 @@ final class ReceiptStatusAndDeleteApiTest extends ApiTestCase
 
     private static function makeReady(string $userId, ReceiptObjectKey $key, ReceiptContentType $type): void
     {
-        self::receipts()->markReady($key, $type, new \DateTimeImmutable());
+        self::receipts()->markReady($key, $type, new \DateTimeImmutable(), null);
         self::assertSame('ready', self::receipts()->find(new Principal($userId, str_repeat('a', 64)), $key->expenseId(), new \DateTimeImmutable())?->status->value);
     }
 

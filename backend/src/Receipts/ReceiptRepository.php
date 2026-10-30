@@ -31,6 +31,10 @@ final readonly class ReceiptRepository
     /** Position of the expense's condition check in an upload start's transaction (expense first, receipt second). */
     private const int EXPENSE_POSITION = 0;
     private const int RECEIPT_POSITION = 1;
+    private const string ETAG_NAME = '#objectEtag';
+    /** The SET that fails a record, shared by {@see self::markFailed()} and {@see self::markReplaced()}. */
+    private const string FAILED_UPDATE = 'SET #status = :failed, #failureReason = :reason, #expiresAt = :expiresAt, #processedAt = :processedAt';
+    private const array FAILED_NAMES = ['#failureReason' => 'failureReason', '#processedAt' => 'processedAt'];
     private const string SETTLE_CONDITION = '#objectKey = :key AND #status = :pending AND #expiresAt > :now';
 
     public function __construct(private ItemStore $items) {}
@@ -141,17 +145,19 @@ final readonly class ReceiptRepository
      * @throws ReceiptNotPending the record is missing, another upload's, or an expired pending one
      * @throws StorageFailure
      */
-    public function markReady(ReceiptObjectKey $key, ReceiptContentType $detected, DateTimeImmutable $now): SettleResult
+    public function markReady(ReceiptObjectKey $key, ReceiptContentType $detected, DateTimeImmutable $now, ?string $objectEtag): SettleResult
     {
+        [$setEtag, $etagNames, $etagValues] = self::etagAssignment($objectEtag);
+
         return $this->settle($key, fn(): array => $this->items->updateItem(
             self::keyOfRecord($key),
-            'SET #status = :ready, #contentType = :detected, #processedAt = :processedAt REMOVE #expiresAt, #failureReason',
-            self::settleNames(['#contentType' => 'contentType', '#processedAt' => 'processedAt', '#failureReason' => 'failureReason']),
+            'SET #status = :ready, #contentType = :detected, #processedAt = :processedAt' . $setEtag . ' REMOVE #expiresAt, #failureReason',
+            self::settleNames(['#contentType' => 'contentType', '#processedAt' => 'processedAt', '#failureReason' => 'failureReason'] + $etagNames),
             self::settleValues($key, $now) + [
                 ':ready' => ReceiptStatus::Ready->value,
                 ':detected' => $detected->value,
                 ':processedAt' => StoredTime::format($now),
-            ],
+            ] + $etagValues,
             self::SETTLE_CONDITION,
         ));
     }
@@ -162,20 +168,72 @@ final readonly class ReceiptRepository
      * @throws ReceiptNotPending the record is missing, another upload's, or an expired pending one
      * @throws StorageFailure
      */
-    public function markFailed(ReceiptObjectKey $key, FailureReason $reason, DateTimeImmutable $now): SettleResult
+    public function markFailed(ReceiptObjectKey $key, FailureReason $reason, DateTimeImmutable $now, ?string $objectEtag): SettleResult
     {
+        [$setEtag, $etagNames, $etagValues] = self::etagAssignment($objectEtag);
+
         return $this->settle($key, fn(): array => $this->items->updateItem(
             self::keyOfRecord($key),
-            'SET #status = :failed, #failureReason = :reason, #expiresAt = :expiresAt, #processedAt = :processedAt',
-            self::settleNames(['#failureReason' => 'failureReason', '#processedAt' => 'processedAt']),
-            self::settleValues($key, $now) + [
-                ':failed' => ReceiptStatus::Failed->value,
-                ':reason' => $reason->value,
-                ':expiresAt' => $now->getTimestamp() + ReceiptLimits::FAILED_TTL_SECONDS,
-                ':processedAt' => StoredTime::format($now),
-            ],
+            self::FAILED_UPDATE . $setEtag,
+            self::settleNames(self::FAILED_NAMES + $etagNames),
+            self::settleValues($key, $now) + self::failedValues($reason, $now) + $etagValues,
             self::SETTLE_CONDITION,
         ));
+    }
+
+    /**
+     * Ready to failed, because the object at the key is no longer the one that was inspected: someone wrote other bytes to
+     * it with the same upload policy after the receipt was settled. Only while the record is still this upload, `ready`
+     * and holding the ETag of the inspected bytes.
+     *
+     * @throws ReceiptNotPending the condition failed: the caller re-reads the record and decides again
+     * @throws StorageFailure
+     */
+    public function markReplaced(ReceiptObjectKey $key, string $inspectedEtag, FailureReason $reason, DateTimeImmutable $now): void
+    {
+        try {
+            $this->items->updateItem(
+                self::keyOfRecord($key),
+                self::FAILED_UPDATE,
+                self::settleNames(self::FAILED_NAMES + [self::ETAG_NAME => 'objectEtag']),
+                self::failedValues($reason, $now) + [
+                    ':key' => $key->originalKey(),
+                    ':ready' => ReceiptStatus::Ready->value,
+                    ':stored' => $inspectedEtag,
+                ],
+                '#objectKey = :key AND #status = :ready AND #objectEtag = :stored',
+            );
+        } catch (ConditionFailed) {
+            throw new ReceiptNotPending();
+        }
+    }
+
+    /**
+     * What a record keeps of the inspected bytes: the clause to append to a SET, and its names and values (none when
+     * there is no ETag, which then is simply not stored).
+     *
+     * @return array{literal-string, array<string, literal-string>, array<string, string>}
+     */
+    private static function etagAssignment(?string $objectEtag): array
+    {
+        if ($objectEtag === null) {
+            return ['', [], []];
+        }
+
+        return [', #objectEtag = :etag', [self::ETAG_NAME => 'objectEtag'], [':etag' => $objectEtag]];
+    }
+
+    /**
+     * @return array<string, string|int>
+     */
+    private static function failedValues(FailureReason $reason, DateTimeImmutable $now): array
+    {
+        return [
+            ':failed' => ReceiptStatus::Failed->value,
+            ':reason' => $reason->value,
+            ':expiresAt' => $now->getTimestamp() + ReceiptLimits::FAILED_TTL_SECONDS,
+            ':processedAt' => StoredTime::format($now),
+        ];
     }
 
     /**
@@ -313,11 +371,15 @@ final readonly class ReceiptRepository
         $expiresAt = self::optional($item, TableLayout::EXPIRES_AT, static fn(mixed $value): ?DateTimeImmutable => is_int($value) ? new DateTimeImmutable('@' . $value) : null);
         $reason = self::optional($item, 'failureReason', static fn(mixed $value): ?FailureReason => is_string($value) ? FailureReason::tryFrom($value) : null);
         $processedAt = self::optional($item, 'processedAt', StoredTime::parse(...));
+        $etag = $item['objectEtag'] ?? null;
         if ($status === null || $contentType === null || !is_int($size) || $createdAt === null || $expiresAt === false || $reason === false || $processedAt === false) {
             throw self::corrupt($operation);
         }
+        if ($etag !== null && !is_string($etag)) {
+            throw self::corrupt($operation);
+        }
         try {
-            return new Receipt($objectKey, $status, $contentType, $size, $createdAt, $expiresAt, $reason, $processedAt);
+            return new Receipt($objectKey, $status, $contentType, $size, $createdAt, $expiresAt, $reason, $processedAt, $etag);
         } catch (InvalidArgumentException) {
             throw self::corrupt($operation);
         }

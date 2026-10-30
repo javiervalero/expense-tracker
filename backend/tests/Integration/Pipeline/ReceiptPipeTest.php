@@ -26,7 +26,8 @@ use PHPUnit\Framework\TestCase;
  * test has no way to read the other containers' logs (no Docker socket). So each test leaves a marker file under
  * `build/pipe-test/` (the repository's build/, mounted at /app/build) and `make test-integration` greps the logs for
  * exactly that run-unique value:
- *  - `upload-key.txt`: the worker's log must have a "receipt received" line with that exact (decoded) key;
+ *  - `upload-key.txt`: the worker's log must have a "receipt event skipped" line with that exact (decoded) key (this key
+ *    is not a receipt key, so the real worker skips it at C10 step 1; WP9 replaces this with a real upload);
  *  - `poison-message-id.txt`: the runner's log must have a "messages failed, left on the queue" line naming that message
  *    id (the worker returned it in batchItemFailures), so the DLQ test proves a rejection by the worker and not just
  *    an outage of the runner or the worker.

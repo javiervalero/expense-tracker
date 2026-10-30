@@ -12,7 +12,8 @@ use App\Receipts\ReceiptLimits;
  * Decides whether a stored object is the receipt the client said it was (plan C11). The order is the defence:
  *
  * 1. the first bytes must name exactly the declared type (SVG, HTML, GIF and the rest have no type);
- * 2. for a JPEG, {@see JpegStructure} walks the markers strictly and gives the size libjpeg will use;
+ * 2. for a JPEG, {@see JpegStructure} walks the markers strictly and gives the size libjpeg will use; for a PNG,
+ *    {@see PngStructure} walks the chunks strictly (IHDR first, no compressed text, one profile at most);
  * 3. for an image, the header alone (`getimagesizefromstring`, which does not decode) must agree on the type and the
  *    size, and the size must be inside the limits. `imagecreatefromstring` allocates width x height x 4 bytes before it
  *    reads a pixel, so a 50,000 x 50,000 header must be refused before any decode;
@@ -54,20 +55,28 @@ final class FileInspector
 
     private static function inspectImage(string $bytes, ReceiptContentType $declared): Inspection
     {
-        $structure = null;
-        if ($declared === ReceiptContentType::Jpeg) {
-            $structure = JpegStructure::parse($bytes);
-            if ($structure === null) {
-                return Inspection::refused(FailureReason::Unreadable);
-            }
-        }
-
         // PHP reads a PNG's size from fixed offsets without checking the chunk there; libpng skips an ancillary chunk
-        // placed before IHDR and uses the real one. Requiring IHDR first makes both read the same bytes.
-        if ($declared === ReceiptContentType::Png && substr($bytes, 8, 8) !== "\x00\x00\x00\x0DIHDR") {
-            return Inspection::refused(FailureReason::Unreadable);
-        }
+        // placed before IHDR and uses the real one. PngStructure requires IHDR first, so both read the same bytes (and
+        // it refuses the compressed chunks libpng inflates outside PHP's memory limit).
+        // One arm per type, each returning: a new image type fails to compile here instead of skipping a walker.
+        return match ($declared) {
+            ReceiptContentType::Jpeg => self::inspectWith(JpegStructure::parse($bytes), $bytes, $declared),
+            ReceiptContentType::Png => self::inspectWith(PngStructure::parse($bytes), $bytes, $declared),
+            ReceiptContentType::Webp => self::inspectHeader($bytes, $declared, null), // libwebp refuses a canvas and frame mismatch
+            ReceiptContentType::Pdf => throw new \LogicException('A PDF is not an image.'),
+        };
+    }
 
+    /** A walker that found no acceptable structure refuses the file; otherwise the header must agree with it. */
+    private static function inspectWith(JpegStructure|PngStructure|null $structure, string $bytes, ReceiptContentType $declared): Inspection
+    {
+        return $structure === null
+            ? Inspection::refused(FailureReason::Unreadable)
+            : self::inspectHeader($bytes, $declared, $structure);
+    }
+
+    private static function inspectHeader(string $bytes, ReceiptContentType $declared, JpegStructure|PngStructure|null $structure): Inspection
+    {
         $header = getimagesizefromstring($bytes);
         if ($header === false) {
             return Inspection::refused(FailureReason::Unreadable);

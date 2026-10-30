@@ -182,12 +182,12 @@ final class ReceiptRepositoryTest extends TestCase
         self::assertNotNull($this->receipts->find(self::owner(), self::EXPENSE, self::now(86_399)));
         self::assertNull($this->receipts->find(self::owner(), self::EXPENSE, self::now(86_400)));
 
-        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60));
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60), null);
         self::assertNotNull($this->receipts->find(self::owner(), self::EXPENSE, self::now(60 + 604_799)));
         self::assertNull($this->receipts->find(self::owner(), self::EXPENSE, self::now(60 + 604_800)));
 
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::SECOND));
-        $this->receipts->markReady(self::keyOf(self::SECOND), ReceiptContentType::Png, self::now(120));
+        $this->receipts->markReady(self::keyOf(self::SECOND), ReceiptContentType::Png, self::now(120), null);
         self::assertNotNull($this->receipts->find(self::owner(), self::EXPENSE, self::now(10 * 365 * 86_400)));
     }
 
@@ -238,8 +238,8 @@ final class ReceiptRepositoryTest extends TestCase
         $this->putExpense();
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::FIRST));
 
-        $first = $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Jpeg, self::now(60));
-        $second = $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Jpeg, self::now(61));
+        $first = $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Jpeg, self::now(60), null);
+        $second = $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Jpeg, self::now(61), null);
 
         self::assertSame(SettleResult::Applied, $first);
         self::assertSame(SettleResult::AlreadyProcessed, $second);
@@ -257,8 +257,8 @@ final class ReceiptRepositoryTest extends TestCase
         $this->putExpense();
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::FIRST));
 
-        $first = $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::UnsupportedType, self::now(60));
-        $second = $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(61));
+        $first = $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::UnsupportedType, self::now(60), null);
+        $second = $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(61), null);
 
         self::assertSame(SettleResult::Applied, $first);
         self::assertSame(SettleResult::AlreadyProcessed, $second);
@@ -273,9 +273,9 @@ final class ReceiptRepositoryTest extends TestCase
     {
         $this->putExpense();
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::FIRST));
-        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60));
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60), null);
 
-        self::assertSame(SettleResult::AlreadyProcessed, $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(61)));
+        self::assertSame(SettleResult::AlreadyProcessed, $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(61), null));
         self::assertSame(ReceiptStatus::Failed, $this->receipts->findByKey(self::keyOf(self::FIRST))?->status);
     }
 
@@ -286,7 +286,7 @@ final class ReceiptRepositoryTest extends TestCase
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::SECOND));
 
         try {
-            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60));
+            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), null);
             self::fail('A replaced upload must not settle the new record.');
         } catch (ReceiptNotPending) {
             $current = $this->receipts->findByKey(self::keyOf(self::SECOND));
@@ -303,7 +303,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60));
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60), null);
     }
 
     public function testMarkReadyOfAnExpiredPendingRecordFailsAndLeavesItPending(): void
@@ -312,7 +312,7 @@ final class ReceiptRepositoryTest extends TestCase
         $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::FIRST));
 
         try {
-            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(86_400));
+            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(86_400), null);
             self::fail('An expired pending record must not become ready.');
         } catch (ReceiptNotPending) {
             self::assertSame(ReceiptStatus::Pending, $this->receipts->findByKey(self::keyOf(self::FIRST))?->status);
@@ -326,16 +326,103 @@ final class ReceiptRepositoryTest extends TestCase
 
         $this->expectException(ReceiptNotPending::class);
 
-        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(86_401));
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(86_401), null);
     }
 
     public function testMarkReadyOfAMissingRecordFailsAndCreatesNothing(): void
     {
         try {
-            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60));
+            $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), null);
             self::fail('There is nothing to settle.');
         } catch (ReceiptNotPending) {
             self::assertSame([], $this->rawReceipt());
+        }
+    }
+
+    // objectEtag, markReplaced
+
+    private function startPending(): void
+    {
+        $this->putExpense();
+        $this->receipts->startUpload(self::owner(), self::EXPENSE, self::pending(self::FIRST));
+    }
+
+    public function testMarkReadyKeepsTheEtagOfTheInspectedBytesAndFindByKeyReadsItBack(): void
+    {
+        $this->startPending();
+
+        $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), 'etag-one');
+
+        $ready = $this->receipts->findByKey(self::keyOf(self::FIRST));
+        self::assertNotNull($ready);
+        self::assertSame(ReceiptStatus::Ready, $ready->status);
+        self::assertSame('etag-one', $ready->objectEtag);
+        self::assertSame('etag-one', $this->rawReceipt()['objectEtag'] ?? null);
+    }
+
+    public function testMarkFailedKeepsTheEtagToo(): void
+    {
+        $this->startPending();
+
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::Unreadable, self::now(60), 'etag-one');
+
+        self::assertSame('etag-one', $this->receipts->findByKey(self::keyOf(self::FIRST))?->objectEtag);
+    }
+
+    public function testMarkReplacedFailsAReadyRecordWhoseEtagMatches(): void
+    {
+        $this->startPending();
+        $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), 'etag-one');
+
+        $this->receipts->markReplaced(self::keyOf(self::FIRST), 'etag-one', FailureReason::Unreadable, self::now(120));
+
+        $failed = $this->receipts->findByKey(self::keyOf(self::FIRST));
+        self::assertNotNull($failed);
+        self::assertSame(ReceiptStatus::Failed, $failed->status);
+        self::assertSame(FailureReason::Unreadable, $failed->failureReason);
+        self::assertSame(self::now(120 + 604_800)->getTimestamp(), $failed->expiresAt?->getTimestamp());
+        self::assertSame(self::now(120)->getTimestamp(), $failed->processedAt?->getTimestamp());
+    }
+
+    public function testMarkReplacedLosesToADifferentEtagAndLeavesTheRecordReady(): void
+    {
+        $this->startPending();
+        $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), 'etag-one');
+
+        $this->assertReplacedLosesAndStatusIs(ReceiptStatus::Ready, 'etag-two');
+    }
+
+    public function testMarkReplacedLosesOnAReadyRecordWithoutAnEtag(): void
+    {
+        $this->startPending();
+        $this->receipts->markReady(self::keyOf(self::FIRST), ReceiptContentType::Png, self::now(60), null);
+
+        $this->assertReplacedLosesAndStatusIs(ReceiptStatus::Ready, 'etag-one');
+    }
+
+    public function testMarkReplacedLosesOnAPendingRecord(): void
+    {
+        $this->startPending();
+
+        $this->assertReplacedLosesAndStatusIs(ReceiptStatus::Pending, 'etag-one');
+    }
+
+    public function testMarkReplacedLosesOnAFailedRecordEvenWithTheSameEtag(): void
+    {
+        $this->startPending();
+        $this->receipts->markFailed(self::keyOf(self::FIRST), FailureReason::UnsupportedType, self::now(60), 'etag-one');
+
+        $this->assertReplacedLosesAndStatusIs(ReceiptStatus::Failed, 'etag-one');
+        self::assertSame(FailureReason::UnsupportedType, $this->receipts->findByKey(self::keyOf(self::FIRST))?->failureReason);
+    }
+
+    private function assertReplacedLosesAndStatusIs(ReceiptStatus $status, string $etag): void
+    {
+        try {
+            $this->receipts->markReplaced(self::keyOf(self::FIRST), $etag, FailureReason::Unreadable, self::now(120));
+            self::fail('The condition must refuse this record.');
+        } catch (ReceiptNotPending) {
+            self::assertSame($status, $this->receipts->findByKey(self::keyOf(self::FIRST))?->status);
         }
     }
 
@@ -376,7 +463,7 @@ final class ReceiptRepositoryTest extends TestCase
 
         self::assertNull($this->receipts->findByKey($foreignKey));
         try {
-            $this->receipts->markReady($foreignKey, ReceiptContentType::Png, self::now(60));
+            $this->receipts->markReady($foreignKey, ReceiptContentType::Png, self::now(60), null);
             self::fail('A key under another user must not settle this record.');
         } catch (ReceiptNotPending) {
             self::assertSame(ReceiptStatus::Pending, $this->receipts->findByKey(self::keyOf(self::FIRST))?->status);

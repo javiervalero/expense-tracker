@@ -8,7 +8,7 @@ use App\Tests\Architecture\Support\TokenScanner;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Phase 5 (C10): `ReceiptRepository::findByKey()`, `markReady()` and `markFailed()` act on a record from an object key
+ * Phase 5 (C10): `ReceiptRepository::findByKey()`, `markReady()`, `markFailed()` and `markReplaced()` act on a record from an object key
  * alone, with no session. They are for the receipt worker, so they may be called only from files under src/Worker/.
  *
  * It tokenises with PhpToken: a call (`::`, `->` or `?->`) of one of the three names in any case. Comments and strings
@@ -20,13 +20,14 @@ final class ReceiptWorkerCallTest extends TestCase
 {
     private const FIXTURES = __DIR__ . '/Fixtures/receiptworkercall';
 
-    private const METHODS = ['findbykey', 'markready', 'markfailed'];
+    private const METHODS = ['findbykey', 'markready', 'markfailed', 'markreplaced'];
 
     /**
-     * Relative to src/, a directory prefix. Only the worker settles an upload; none of its code exists yet (WP10).
+     * Relative to src/, a directory prefix. Only the worker settles an upload: `Receipts/Processing/ReceiptProcessor`
+     * (WP8) is the worker's per-record code and lives beside the file inspection, so that directory is the worker's too.
      * Adding an entry here needs a reason in this comment.
      */
-    private const ALLOWED_DIRECTORIES = ['Worker/'];
+    private const ALLOWED_DIRECTORIES = ['Worker/', 'Receipts/Processing/'];
 
     public function testCleanFixtureHasNoCall(): void
     {
@@ -65,7 +66,7 @@ final class ReceiptWorkerCallTest extends TestCase
             }
         }
 
-        self::assertSame([], $hits, 'findByKey, markReady and markFailed are for the receipt worker (src/Worker/) only.');
+        self::assertSame([], $hits, 'findByKey, markReady, markFailed and markReplaced are for the receipt worker only.');
     }
 
     private function isAllowed(string $relativePath): bool
@@ -81,7 +82,7 @@ final class ReceiptWorkerCallTest extends TestCase
 
     private static function namesGuarded(string $literal): bool
     {
-        return preg_match('/(?:\A|::)(?:findbykey|markready|markfailed)\z/i', substr($literal, 1, -1)) === 1;
+        return preg_match('/(?:\A|::)(?:findbykey|markready|markfailed|markreplaced)\z/i', substr($literal, 1, -1)) === 1;
     }
 
     /**

@@ -136,7 +136,11 @@ services:
   # The receipt worker (WP10): the Bref PHP 8.5 image in function mode, with the Runtime Interface Emulator that ships
   # in it. RIE answers on container port 8080 at POST /2015-03-31/functions/function/invocations; `worker-runner`
   # (WP11) posts SQS-shaped events there, the way the Lambda event source mapping would. Internal only: nothing is
-  # published to the host, and the worker has no AWS access or credentials (Phase 0 only logs what it receives).
+  # published to the host. Since Phase 5 (WP8) it runs the real receipt processor: it reads the record in DynamoDB
+  # Local, reads and deletes originals in the `receipts` bucket and writes thumbnails to `receipt-thumbnails`, all on the
+  # default network (the same stand-ins the php tools container uses). The only credentials are the project's FAKE local
+  # pair (.env: localdev), also DynamoDB Local's key and the S3 emulator's root user (decision 26); nothing real is
+  # reachable from here.
   worker:
     image: expense-tracker-worker:dev
     build:
@@ -144,7 +148,22 @@ services:
       dockerfile: docker/worker/Dockerfile
       target: runtime
     expose: ["8080"]
-    # No env_file and no secrets. BREF_RUNTIME=function and BREF_PING_DISABLE=1 come from the image (ENV).
+    # No env_file and no secrets: only what the processor reads (backend/src/Worker/WorkerConfig.php), validated at start
+    # (a missing value, or an endpoint that is not a local stand-in, stops the handler from loading). S3_PUBLIC_ENDPOINT is
+    # not used by the worker (it signs nothing) but the shared S3 settings require it next to S3_ENDPOINT. The bucket names
+    # are the ones local-aws-init creates. BREF_RUNTIME=function and BREF_PING_DISABLE=1 come from the image (ENV).
+    environment:
+      APP_ENV: local
+      DYNAMODB_ENDPOINT: ${DYNAMODB_ENDPOINT:?not set - add DYNAMODB_ENDPOINT=http://dynamodb:8000 to .env (see .env.example)}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:?not set - add DYNAMODB_TABLE=expense-tracker-local to .env (see .env.example)}
+      S3_ENDPOINT: ${S3_ENDPOINT:?not set - add S3_ENDPOINT=http://s3:9000 to .env (see .env.example)}
+      S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
+      RECEIPTS_BUCKET: receipts
+      THUMBNAILS_BUCKET: receipt-thumbnails
+      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
+      AWS_EC2_METADATA_DISABLED: "true"
     # Same hardening as the other services: not root, no capabilities, no privilege gain, read-only root filesystem.
     # The Lambda base image itself runs as root (Lambda swaps in its own user), so 10001 is set here. The one
     # writable place is a small tmpfs /tmp, which is also where Lambda allows writes (the later image handling goes there).
