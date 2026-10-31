@@ -4,8 +4,12 @@ declare(strict_types=1);
 
 namespace App\Tests\Integration\Pipeline;
 
+use App\Receipts\ReceiptObjectKey;
+use App\Receipts\ReceiptStatus;
 use App\Tests\Support\LocalAws;
 use App\Tests\Support\PresignedPostUpload;
+use App\Tests\Support\Receipts\ReceiptFixtures;
+use App\Tests\Support\ReceiptWorld;
 use Aws\S3\S3Client;
 use Aws\Sqs\SqsClient;
 use GuzzleHttp\Client as HttpClient;
@@ -26,8 +30,8 @@ use PHPUnit\Framework\TestCase;
  * test has no way to read the other containers' logs (no Docker socket). So each test leaves a marker file under
  * `build/pipe-test/` (the repository's build/, mounted at /app/build) and `make test-integration` greps the logs for
  * exactly that run-unique value:
- *  - `upload-key.txt`: the worker's log must have a "receipt event skipped" line with that exact (decoded) key (this key
- *    is not a receipt key, so the real worker skips it at C10 step 1; WP9 replaces this with a real upload);
+ *  - `upload-key.txt`: the worker's log must have a "receipt ready" line with that exact key (the test seeds a pending
+ *    record and uploads a valid JPEG under its receipt key, so the real worker path runs: C10 steps 2 to 6);
  *  - `poison-message-id.txt`: the runner's log must have a "messages failed, left on the queue" line naming that message
  *    id (the worker returned it in batchItemFailures), so the DLQ test proves a rejection by the worker and not just
  *    an outage of the runner or the worker.
@@ -46,8 +50,7 @@ final class ReceiptPipeTest extends TestCase
     private const DEAD_LETTER_WITHIN_SECONDS = 60;
     private const MIN_SECONDS_BEFORE_DEAD_LETTER = 20;
     private const POLL_PAUSE_MICROSECONDS = 250_000;
-    /** Read by the Makefile (`make test-integration`); keep the names in sync with it. */
-    private const MARKER_DIRECTORY = 'build/pipe-test';
+    /** Read by the Makefile (`make test-integration`); keep the names in sync with it. The directory is ReceiptWorld::MARKER_DIRECTORY. */
     private const UPLOAD_KEY_MARKER = 'upload-key.txt';
     private const POISON_ID_MARKER = 'poison-message-id.txt';
 
@@ -56,8 +59,8 @@ final class ReceiptPipeTest extends TestCase
     private HttpClient $http;
     private string $queueUrl;
     private string $deadLetterQueueUrl;
-    /** @var list<string> */
-    private array $createdKeys = [];
+    /** @var list<ReceiptObjectKey> */
+    private array $seeded = [];
 
     protected function setUp(): void
     {
@@ -72,26 +75,33 @@ final class ReceiptPipeTest extends TestCase
 
     protected function tearDown(): void
     {
-        foreach ($this->createdKeys as $key) {
-            $this->s3->deleteObject(['Bucket' => self::BUCKET, 'Key' => $key]);
+        foreach ($this->seeded as $key) {
+            ReceiptWorld::deleteRecord($key);
+            ReceiptWorld::deleteEverythingOf($key->userId(), $key->expenseId());
         }
-        $this->createdKeys = [];
+        $this->seeded = [];
         $this->purgeBoth();
     }
 
     public function testAnUploadUnderReceiptsIsConsumedAndNothingReachesTheDeadLetterQueue(): void
     {
-        $id = bin2hex(random_bytes(4));
-        // The prefix `pipe+` is what `make test-integration` looks for in the worker's log; the '+' travels percent-encoded.
-        $key = "receipts/pipe+{$id}/expense-{$id}/receipt-{$id}";
-        $this->createdKeys[] = $key;
-        self::writeMarker(self::UPLOAD_KEY_MARKER, $key);
+        // Arrange: a pending record and a valid file under its parseable key, so the real worker path runs (plan contradiction 7).
+        $file = ReceiptFixtures::jpeg(40, 30);
+        $receiptKey = ReceiptWorld::newKey();
+        $key = $receiptKey->originalKey();
+        $this->seeded[] = $receiptKey;
+        ReceiptWorld::seedPending($receiptKey, PresignedPostUpload::CONTENT_TYPE, strlen($file));
+        ReceiptWorld::writeMarker(self::UPLOAD_KEY_MARKER, $key);
 
-        self::assertSame(204, PresignedPostUpload::send($this->s3, $this->http, self::BUCKET, $key));
+        // Act
+        self::assertSame(204, PresignedPostUpload::send($this->s3, $this->http, self::BUCKET, $key, $file));
         $seconds = $this->secondsUntilDrained($this->queueUrl);
 
+        // Assert
         self::assertLessThanOrEqual(self::CONSUMED_WITHIN_SECONDS, $seconds, 'the receipts queue was not empty within the time limit');
         self::assertSame(0, $this->messagesIn($this->deadLetterQueueUrl), 'a message the worker accepts must not reach the DLQ');
+        $receipt = ReceiptWorld::receipt($receiptKey->userId(), $receiptKey->expenseId());
+        self::assertSame(ReceiptStatus::Ready, $receipt?->status, 'the worker settled the record as ready');
         fwrite(STDERR, sprintf("\n[ReceiptPipeTest] upload consumed in %.1f s\n", $seconds));
     }
 
@@ -102,7 +112,7 @@ final class ReceiptPipeTest extends TestCase
         $sent = $this->sqs->sendMessage(['QueueUrl' => $this->queueUrl, 'MessageBody' => $poison]);
         $messageId = $sent->get('MessageId');
         self::assertIsString($messageId);
-        self::writeMarker(self::POISON_ID_MARKER, $messageId);
+        ReceiptWorld::writeMarker(self::POISON_ID_MARKER, $messageId);
 
         $start = microtime(true);
         $deadLettered = null;
@@ -185,16 +195,6 @@ final class ReceiptPipeTest extends TestCase
     {
         $this->sqs->purgeQueue(['QueueUrl' => $this->queueUrl]);
         $this->sqs->purgeQueue(['QueueUrl' => $this->deadLetterQueueUrl]);
-    }
-
-    /**
-     * Writes the run-unique value that the Makefile looks for in the service logs (see the class comment).
-     */
-    private static function writeMarker(string $file, string $value): void
-    {
-        $directory = dirname(__DIR__, 4) . '/' . self::MARKER_DIRECTORY;
-        self::assertTrue(is_dir($directory) || mkdir($directory, 0o775, true), 'cannot create ' . $directory);
-        self::assertNotFalse(file_put_contents($directory . '/' . $file, $value . "\n"), 'cannot write the marker ' . $file);
     }
 
     private static function requiredEnvironment(string $name): string

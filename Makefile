@@ -168,10 +168,13 @@ test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local,
 # purge that same queue themselves, so they cannot run while the runner is up. The recipe therefore:
 #   1. stops `worker-runner` (project-scoped: only this Compose project's service), then runs every suite except the
 #      group `needs-runner` (so S3ToQueueTest, RelayHttpTest and RieInvocationTest);
-#   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included). That test
+#   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included; ReceiptLifecycleTest: the API-to-worker life cycle). That test
 #      writes the run-unique upload key and poison message id under build/pipe-test/, and the recipe then greps the
 #      service logs for exactly those values (an empty queue alone could mean "no event"): the worker must have logged
-#      "receipt event skipped" for the key (the pipe test's key is not a receipt key, so the real worker skips it; WP9 moves this to a real upload), and (unless FAST) the runner must have logged "messages failed, left on the
+#      "receipt ready" for the pipe test's key and for the lifecycle test's JPEG key, and "receipt failed" for its HTML key
+#      (both tests seed or request a real receipt, so the real worker path runs); no value of the lifecycle test's upload
+#      policy (Policy, X-Amz-Signature) and not the name X-Amz-Signature may appear in the api-php or worker logs (C15);
+#      and (unless FAST) the runner must have logged "messages failed, left on the
 #      queue" for the poison id (the worker reported it in batchItemFailures, so this is the partial-failure path, not an
 #      outage and not a whole-batch failure);
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
@@ -252,9 +255,20 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(COMPOSE) start worker-runner; \
 	$(PHPUNIT_INTEGRATION) --group needs-runner $(EXCLUDE_SLOW); \
-	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || { echo "make test-integration: the pipe test left no upload key marker" >&2; exit 1; }; \
-	$(COMPOSE) logs --no-log-prefix --since "$$since" worker | grep -F '"message":"receipt event skipped"' | grep -qF "\"key\":\"$$key\"" \
-		|| { echo "make test-integration: the worker logged no 'receipt event skipped' line for the key $$key" >&2; exit 1; }; \
+	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || fail "the pipe test left no upload key marker"; \
+	readykey=$$(cat $(PIPE_MARKERS)/ready-key.txt) || fail "the lifecycle test left no ready-key marker"; \
+	failedkey=$$(cat $(PIPE_MARKERS)/failed-key.txt) || fail "the lifecycle test left no failed-key marker"; \
+	workerlogs=$$($(COMPOSE) logs --no-log-prefix --since "$$since" worker) || fail "could not read the worker logs"; \
+	apilogs2=$$($(COMPOSE) logs --no-log-prefix --since "$$since" api-php) || fail "could not read the api-php logs"; \
+	logged() { printf '%s\n' "$$workerlogs" | grep -F "\"message\":\"$$1\"" | grep -qF "\"key\":\"$$2\"" || fail "the worker logged no '$$1' line for the key $$2"; }; \
+	logged "receipt ready" "$$key"; logged "receipt ready" "$$readykey"; logged "receipt failed" "$$failedkey"; \
+	echo "make test-integration: worker receipt ready/failed log checks passed"; \
+	secret() { [ $${#2} -ge 10 ] || fail "the leak check for $$1 has a value shorter than 10 characters (vacuous)"; \
+		if printf '%s\n' "$$apilogs2" | grep -qF -e "$$2"; then fail "$$1 appears in the api-php logs (a signed upload secret leaked into a log)"; fi; \
+		if printf '%s\n' "$$workerlogs" | grep -qF -e "$$2"; then fail "$$1 appears in the worker logs (a signed upload secret leaked into a log)"; fi; }; \
+	secret "the upload POLICY value" "$$(cat $(PIPE_MARKERS)/policy-value.txt)"; secret "the upload X-Amz-Signature value" "$$(cat $(PIPE_MARKERS)/signature-value.txt)"; \
+	secret "the name X-Amz-Signature" "X-Amz-Signature"; \
+	echo "make test-integration: signed upload log hygiene checks passed"; \
 	if [ -z "$(FAST)" ]; then \
 		id=$$(cat $(PIPE_MARKERS)/poison-message-id.txt) || { echo "make test-integration: the dead-letter test left no message id marker" >&2; exit 1; }; \
 		$(COMPOSE) logs --no-log-prefix --since "$$since" worker-runner | grep -F '"message":"messages failed, left on the queue"' | grep -qF "\"failedMessageIds\":[\"$$id\"]" \

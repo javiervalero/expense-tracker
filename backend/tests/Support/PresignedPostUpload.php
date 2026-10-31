@@ -20,8 +20,10 @@ final class PresignedPostUpload
     /**
      * @return int the HTTP status of the POST (204 when the object was stored)
      */
-    public static function send(S3Client $s3, HttpClient $http, string $bucket, string $key): int
+    public static function send(S3Client $s3, HttpClient $http, string $bucket, string $key, ?string $file = null): int
     {
+        // With no file: 100 filler bytes and a loose size range. With a file: its exact size, as the API's policy does.
+        $range = $file === null ? [10, 1024] : [strlen($file), strlen($file)];
         $form = new PostObjectV4(
             $s3,
             $bucket,
@@ -30,7 +32,7 @@ final class PresignedPostUpload
                 ['bucket' => $bucket],
                 ['eq', '$key', $key],
                 ['eq', '$Content-Type', self::CONTENT_TYPE],
-                ['content-length-range', 10, 1024],
+                ['content-length-range', $range[0], $range[1]],
             ],
             '+10 minutes',
         );
@@ -40,7 +42,7 @@ final class PresignedPostUpload
         foreach ($form->getFormInputs() as $name => $value) {
             $multipart[] = ['name' => (string) $name, 'contents' => $value];
         }
-        $multipart[] = ['name' => 'file', 'contents' => str_repeat('x', 100), 'filename' => 'receipt.jpg'];
+        $multipart[] = ['name' => 'file', 'contents' => $file ?? str_repeat('x', 100), 'filename' => 'receipt.jpg'];
 
         return $http->post($action, ['multipart' => $multipart])->getStatusCode();
     }
