@@ -23,6 +23,8 @@ You do not need PHP, Composer or Node on the host: the PHP and Node tools run in
 ```bash
 make frontend-install   # once: front-end dependencies, in a Node container
 make php-install        # once: back-end dependencies, in a PHP container
+make contract-install   # once: OpenAPI contract tooling (lint, bundle, types), needed by the tests
+make local-aws-install  # once: dependencies of the local AWS stand-ins, needed by the tests
 make up                 # creates .env, starts the stack and waits until it is healthy
 ```
 

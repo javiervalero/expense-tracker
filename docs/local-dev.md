@@ -12,6 +12,8 @@ runs in a pinned container as your user, so no file ends up owned by root.
 ```bash
 make frontend-install   # once: front-end dependencies (`make up` refuses to start without them)
 make php-install        # once: back-end dependencies (the API mounts backend/vendor)
+make contract-install   # once: OpenAPI contract tooling (lint, bundle, types), needed by the tests
+make local-aws-install  # once: dependencies of the local AWS stand-ins, needed by the tests
 make up                 # creates .env from .env.example, starts everything, waits until healthy
 make down               # stop and remove the containers (see "Resetting state")
 ```
