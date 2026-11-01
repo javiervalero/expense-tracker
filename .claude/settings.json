@@ -1,4 +1,6 @@
 {
+  "model": "opusplan",
+  "includeCoAuthoredBy": true,
   "extraKnownMarketplaces": {
     "ecc": {
       "source": {
