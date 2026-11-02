@@ -275,6 +275,12 @@ jobs:
       - name: Pipeline integration tests (upload -> queue message -> worker; poison message -> DLQ)
         run: make test-integration
 
+      # Phase 6: every feature over HTTP through the Vite proxy, with a fresh throwaway user (scripts/smoke.sh). It prints
+      # only check names. It must run after the integration tests (never during them: they stop worker-runner) and also
+      # checks that the local dead-letter queue did not grow while it ran.
+      - name: Smoke test (curl) against the local stack
+        run: make smoke
+
       - name: Dump the service logs
         if: failure()
         run: docker compose -p expense-tracker logs --no-color

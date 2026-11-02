@@ -303,7 +303,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 # The whole test suite (Phase 0 definition of done). Run as a sequence (not as prerequisites) so that the order holds
 # with `make -j` too: the cheap suites first, then the stack (`make up` is idempotent) for the tests that need it.
 # Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
-test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
+test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration + smoke
 	$(MAKE) --no-print-directory test-unit
 	$(if $(FAST),,$(MAKE) --no-print-directory test-slow-unit)
 	$(MAKE) --no-print-directory contract-bundle
@@ -313,6 +313,7 @@ test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then 
 	$(MAKE) --no-print-directory up
 	$(MAKE) --no-print-directory test-conformance
 	$(MAKE) --no-print-directory test-integration
+	$(MAKE) --no-print-directory smoke
 
 test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s, and the production Argon2id hash)
 	$(MAKE) --no-print-directory test FAST=1
