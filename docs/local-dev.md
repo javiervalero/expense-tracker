@@ -237,13 +237,35 @@ On AWS a receipt upload goes S3 → event notification → SQS → worker Lambda
 3. The relay turns the event into an AWS-shaped SQS message and puts it on the `receipts` queue in ElasticMQ (`sqs`).
 4. `worker-runner` long-polls `receipts`, and posts each batch to the worker as an SQS event
    (`http://worker:8080/2015-03-31/functions/function/invocations`, the Runtime Interface Emulator).
-5. The worker processes the event. It logs what it receives in Phase 0. A message whose batch fails stays on the
-   queue; after 3 receives it moves to `receipts-dlq`.
+5. The worker processes the event: it checks the file, makes a thumbnail for images and marks the receipt `ready` or
+   `failed`. A message whose batch fails stays on the queue; after 3 receives it moves to `receipts-dlq`.
 
 The emulator keeps events in its own queue while the relay does not answer, and replays them when it does. Its health
 check only shows that the emulator itself is up.
 
-Phase 0 has no upload endpoint yet, so the pipeline is tested with the integration tests (see "Tests"), not by hand.
+The integration tests exercise the pipeline (see "Tests"). To try it by hand in the browser, follow the walkthrough below.
+
+### Receipt walkthrough
+
+The owner runs this walkthrough in Chrome and Firefox, not Safari (WebKit bug 281149). Run `make up` first. The results
+go into the pull request body (gate G3).
+
+1. Open the app on http://localhost:5173 exactly, not 127.0.0.1: the sign-in cookie and the S3 CORS rule only work for
+   that origin.
+2. Register or sign in.
+3. Open an existing expense's edit page. Receipts are attached on the edit page only; the new-expense form says to
+   attach a receipt after saving.
+4. Upload a JPEG. Expect progress, then "Processing", then a thumbnail.
+5. Upload a PDF. Expect a PDF icon, and "Open receipt" opens the file in the browser's PDF viewer.
+6. Choose a file over 10 MB. Expect it to be refused before anything is sent.
+7. Rename a `.txt` file to `.png` and upload it. Expect the failed message: "This file isn't a valid JPEG, PNG, WebP or PDF."
+8. Replace the receipt. Expect a confirmation first, and the old preview is gone afterwards.
+9. Delete the receipt. Expect a confirmation first. Delete it again from a second tab: expect "Already removed."
+10. Replace the receipt in two tabs at once. The second one expects a 409 and the message "Reload".
+11. In DevTools, set the network to "Slow 3G". Progress moves. Leaving the page during an upload aborts it silently.
+    If status polling reaches its 60-second cap, the panel shows "Still processing" and a "Check again" button.
+12. Use the keyboard only, then a screen reader (NVDA or VoiceOver). Expect the milestones to be announced: upload started,
+    processing, ready, failed.
 
 ## Environment variables (`.env`)
 

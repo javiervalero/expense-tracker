@@ -183,9 +183,20 @@ Decision A22 and risk R13 in [the Phase 2 plan](../plans/phase-2-authentication.
   read-only, non-root, `cap_drop: ALL`, holds only the fake keys and has no route out. `listen.allowed_clients` would
   need fixed subnets that could clash with a developer's network. Revisit if a non-AWS image ever joins `api-internal`.
 
-## Implemented in Phase 5 (in progress, branch `feat/phase-5-receipts`)
+## Implemented in Phase 5 (2026-11-02, branch `feat/phase-5-receipts`)
 
-Decisions 15(a) and 26 in [the Phase 5 plan](../plans/phase-5-receipts.md); completed in its WP13.
+Decisions 15(a) and 26 in [the Phase 5 plan](../plans/phase-5-receipts.md).
+
+- **Worker environment (WP8):** `worker` has no `env_file` and only these variables: `APP_ENV=local`, `DYNAMODB_ENDPOINT`,
+  `DYNAMODB_TABLE`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` (the worker does not use it, but the shared S3 settings need
+  it), the two bucket names (`receipts`, `receipt-thumbnails`), the region and the fake key pair. Its root filesystem is
+  read-only, with a 64 MB `tmpfs` on `/tmp`. Outside `APP_ENV=local`, any of the three endpoint variables is a
+  configuration error.
+- **Runner timing (WP11):** unchanged at an 8 s invocation timeout under the 10 s queue visibility timeout (decision 21).
+  Step 0 R2 measured a 40 MP JPEG or PNG at about 0.4 s from inspect to thumbnail, far below the threshold of about 4 s
+  that would have required a change.
+- **The API → S3 path is tested** by `make test-api-s3-path`, which `make test-integration` also runs. It checks that a
+  signed request through `api:9100` is answered by S3 and that `s3:9000` is not reachable from `api-php`.
 
 - **The API reaches the S3 emulator through nginx (WP3):** `api` gets a second `server` on port 9100, exposed on the
   Compose networks but not published to the host, whose only upstream is `s3:9000` (fixed in the config, nothing from
