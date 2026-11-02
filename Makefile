@@ -416,7 +416,7 @@ contract-audit: ## contract/: npm audit, high severity and above (needs contract
 contract: contract-lint contract-bundle contract-check-types ## Lint + bundle + check the committed types (needs contract-install)
 
 # The front-end (ADR 0008). `make frontend-install` first (once, and after a lockfile change). Lint = ESLint, Prettier
-# --check and vue-tsc (type check of the app, the tests and the Node-side config). Test = Vitest with the 80% bar on
+# --check and vue-tsc (type check of the app, the tests and the Node-side config). Test = Vitest with the 100% bar on
 # frontend/src and frontend/vite (see vite.config.ts for what is excluded and why). Scripts of dependencies never run.
 frontend-install: ## frontend/: install npm dependencies from package-lock.json (no install scripts)
 	$(NPM_FRONTEND) ci --ignore-scripts --no-audit --no-fund
@@ -429,7 +429,7 @@ frontend-lint: frontend-ready ## frontend/: ESLint, Prettier --check and vue-tsc
 	$(NPM_FRONTEND) run format:check
 	$(NPM_FRONTEND) run type-check
 
-frontend-test: frontend-ready ## frontend/: Vitest with coverage, 80% bar (needs frontend-install)
+frontend-test: frontend-ready ## frontend/: Vitest with coverage, 100% bar (needs frontend-install)
 	$(NPM_FRONTEND) run test:coverage
 
 # The build runs WITH the origin-verify value in its environment, so that `check-bundle-secrets` is a real check: if the

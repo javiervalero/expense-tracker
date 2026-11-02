@@ -75,7 +75,8 @@ export default defineConfig(({ mode }) => {
         // mounts the app and has no logic of its own; the spec files are the tests.
         exclude: ['src/api/schema.gen.ts', 'src/main.ts', 'vite/vitest.setup.ts', '**/*.spec.ts'],
         reporter: ['text', 'json-summary'],
-        thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },
+        // Owner decision (2026-11-01): the front end keeps 100% coverage, and the build now fails below it.
+        thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 },
       },
     },
   }
