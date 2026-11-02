@@ -1,4 +1,11 @@
-import { APP_CURRENCY, APP_LOCALE, MAX_CENTS, MIN_CENTS, UNKNOWN_VALUE } from '../config'
+import {
+  APP_CURRENCY,
+  APP_LOCALE,
+  MAX_CENTS,
+  MIN_CENTS,
+  REPORT_MAX_TOTAL_CENTS,
+  UNKNOWN_VALUE,
+} from '../config'
 
 export type AmountReason =
   'empty' | 'negative' | 'invalid' | 'too-many-decimals' | 'zero' | 'too-large'
@@ -66,6 +73,16 @@ const currencyFormatter = new Intl.NumberFormat(APP_LOCALE, {
  */
 export function formatCents(cents: number): string {
   return isValidCents(cents) ? currencyFormatter.format(decimalString(cents)) : UNKNOWN_VALUE
+}
+
+/**
+ * Display text for a month total (plan phase-6 D14): like formatCents, but an empty month (0) and sums above MAX_CENTS
+ * are valid, up to REPORT_MAX_TOTAL_CENTS. Anything else gives UNKNOWN_VALUE.
+ */
+export function formatTotalCents(cents: number): string {
+  return Number.isInteger(cents) && cents >= 0 && cents <= REPORT_MAX_TOTAL_CENTS
+    ? currencyFormatter.format(decimalString(cents))
+    : UNKNOWN_VALUE
 }
 
 /** The text to pre-fill an edit field with: 1250 gives "12.50". Invalid cents give "", so the field starts blank. */

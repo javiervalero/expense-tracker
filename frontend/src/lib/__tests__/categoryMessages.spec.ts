@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
 import type { ApiError } from '@/api/problem'
-import { describeCategoryError, nameProblem } from '../categoryMessages'
+import { UNCATEGORIZED, describeCategoryError, nameProblem } from '../categoryMessages'
+
+describe('UNCATEGORIZED', () => {
+  it('is the one label for expenses without a category', () => {
+    expect(UNCATEGORIZED).toBe('Uncategorized')
+  })
+})
 
 describe('nameProblem', () => {
   it('asks for a name when it is empty', () => {

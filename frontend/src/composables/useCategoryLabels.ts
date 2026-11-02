@@ -2,9 +2,9 @@ import { ref, watch } from 'vue'
 import type { Ref } from 'vue'
 
 import type { Expense } from '@/api/types'
+import { UNCATEGORIZED } from '@/lib/categoryMessages'
 import { useCategoriesStore } from '@/stores/categories'
 
-const UNCATEGORIZED = 'Uncategorized'
 // Shown for a category id that is not in the cached list yet, until the lookup has been tried.
 const LOOKING_UP = '…'
 // Shown when the lookup of a category failed (not the same as "no category").

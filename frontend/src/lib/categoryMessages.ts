@@ -11,6 +11,8 @@ export interface CategoryErrorView {
   conflict: boolean
 }
 
+/** The label of expenses with no category (or whose category was deleted), shared by the list and the summary. */
+export const UNCATEGORIZED = 'Uncategorized'
 export const MAY_BE_SAVED = 'It may have been saved; check the list before trying again.'
 const CONFLICT_FALLBACK = 'The category was changed or the name is taken. Reload and try again.'
 

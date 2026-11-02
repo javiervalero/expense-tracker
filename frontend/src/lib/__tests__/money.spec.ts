@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { MAX_CENTS, UNKNOWN_VALUE } from '../../config'
-import { centsToInput, formatCents, parseAmount } from '../money'
+import { MAX_CENTS, REPORT_MAX_TOTAL_CENTS, UNKNOWN_VALUE } from '../../config'
+import { centsToInput, formatCents, formatTotalCents, parseAmount } from '../money'
 
 describe('parseAmount accepts', () => {
   it.each([
@@ -68,6 +68,33 @@ describe('formatCents', () => {
     for (const bad of [0, -5, 1.5, MAX_CENTS + 1, Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(formatCents(bad)).toBe(UNKNOWN_VALUE)
     }
+  })
+})
+
+describe('formatTotalCents', () => {
+  it('shows an empty month as a zero amount in the app currency', () => {
+    expect(formatTotalCents(0)).toBe('€0.00')
+    expect(formatTotalCents(-0)).toBe('€0.00')
+  })
+
+  it('goes through the exact decimal path like formatCents', () => {
+    expect(formatTotalCents(1005)).toBe('€10.05')
+    expect(formatTotalCents(1)).toBe('€0.01')
+    expect(formatTotalCents(100000001)).toBe('€1,000,000.01')
+    expect(formatTotalCents(REPORT_MAX_TOTAL_CENTS)).toBe('€10,000,000,000.00')
+    expect(formatTotalCents(MAX_CENTS)).toBe(formatCents(MAX_CENTS))
+  })
+
+  it.each([REPORT_MAX_TOTAL_CENTS + 1, 1.5, Number.NaN, -1, -0.5, Infinity])(
+    'gives UNKNOWN_VALUE for %s',
+    (bad) => {
+      expect(formatTotalCents(bad)).toBe(UNKNOWN_VALUE)
+    },
+  )
+
+  it('leaves formatCents strict: 0 is still unknown there', () => {
+    expect(formatCents(0)).toBe(UNKNOWN_VALUE)
+    expect(formatCents(MAX_CENTS + 1)).toBe(UNKNOWN_VALUE)
   })
 })
 
