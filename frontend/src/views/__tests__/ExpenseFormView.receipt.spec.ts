@@ -38,7 +38,7 @@ vi.mock('@/components/ReceiptPanel.vue', async () => {
 
 const ID = '5a1c1f0e-5d3a-4c8e-9a41-2f6d8e7b1a91'
 const OTHER_ID = '7c2d1f0e-5d3a-4c8e-9a41-2f6d8e7b1a92'
-const HINT = 'You can attach a receipt after saving.'
+const HINT = 'To attach a receipt, use Save and add receipt.'
 
 function expense(id = ID): Expense {
   return {

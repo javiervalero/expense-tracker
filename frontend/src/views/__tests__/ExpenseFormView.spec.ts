@@ -321,7 +321,7 @@ describe('ExpenseFormView: new', () => {
   it('has no delete button', async () => {
     const { wrapper } = await render('/expenses/new')
 
-    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save'])
+    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save', 'Save and add receipt'])
   })
 
   it('renders text as text, never as markup', async () => {
@@ -720,7 +720,7 @@ describe('ExpenseFormView: late answers and a changed route', () => {
     expect(wrapper.get('h1').text()).toBe('New expense')
     expect((wrapper.get('#expense-description').element as HTMLInputElement).value).toBe('')
     expect(wrapper.find('button.danger, [role="group"]').exists()).toBe(false)
-    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save'])
+    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save', 'Save and add receipt'])
   })
 
   it('drops a Reload answer that arrives after the route changed', async () => {

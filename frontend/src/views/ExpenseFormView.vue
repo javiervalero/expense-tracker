@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import type { RouteLocationRaw } from 'vue-router'
 
 import { createExpense, deleteExpense, getExpense, updateExpense } from '@/api/expenses'
 import type { ApiResult } from '@/api/http'
@@ -188,8 +189,13 @@ watch(
 onBeforeUnmount(leaveForm)
 
 // Leaving: the message is announced once the list page is there.
-async function leave(message: string): Promise<void> {
-  await router.push('/expenses')
+// `replace` swaps the blank "New expense" form out of history, so Back from the edit page does not return to it.
+async function leave(
+  message: string,
+  to: RouteLocationRaw = '/expenses',
+  replace = false,
+): Promise<void> {
+  await (replace ? router.replace(to) : router.push(to))
   await setFlash(message)
 }
 
@@ -232,7 +238,8 @@ function readForm(): ExpenseValues | null {
   return checked.value
 }
 
-async function submit(): Promise<void> {
+// `thenReceipt`: on success open the new expense's edit page (where the receipt panel is) instead of the list.
+async function submit(thenReceipt = false): Promise<void> {
   if (busy.value) {
     return
   }
@@ -257,7 +264,10 @@ async function submit(): Promise<void> {
       return result.ok ? await setFlash('Expense saved') : undefined
     }
     if (result.ok) {
-      return await leave('Expense saved')
+      const to = thenReceipt
+        ? { name: 'expense-edit', params: { id: result.data.id } }
+        : '/expenses'
+      return await leave('Expense saved', to, thenReceipt)
     }
     const view = describeExpenseError(result.error, true)
     conflict.value = view.conflict
@@ -338,7 +348,7 @@ async function remove(): Promise<void> {
       <RouterLink v-if="loadGone" to="/expenses">Back to expenses</RouterLink>
       <button v-else type="button" @click="loadExpense">Retry</button>
     </div>
-    <form v-else novalidate @submit.prevent="submit">
+    <form v-else novalidate @submit.prevent="submit()">
       <FormAlert ref="formAlert" :message="errors.formMessage.value" />
       <p v-if="gone"><RouterLink to="/expenses">Back to expenses</RouterLink></p>
       <div v-if="conflict" class="conflict">
@@ -412,6 +422,14 @@ async function remove(): Promise<void> {
         <button type="submit" class="primary" :aria-disabled="busy ? 'true' : undefined">
           {{ pending ? 'Saving…' : 'Save' }}
         </button>
+        <button
+          v-if="!isEdit"
+          type="button"
+          :aria-disabled="busy ? 'true' : undefined"
+          @click="submit(true)"
+        >
+          Save and add receipt
+        </button>
         <RouterLink to="/expenses">Cancel</RouterLink>
         <ConfirmDeleteButton
           v-if="isEdit"
@@ -427,7 +445,7 @@ async function remove(): Promise<void> {
     </form>
 
     <!-- A receipt needs an existing expense id; the key remounts the panel for another expense. -->
-    <p v-if="!isEdit" class="hint">You can attach a receipt after saving.</p>
+    <p v-if="!isEdit" class="hint">To attach a receipt, use Save and add receipt.</p>
     <ReceiptPanel v-else-if="status === 'ready' && !gone" :key="id" :expense-id="id" />
   </section>
 </template>
