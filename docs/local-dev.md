@@ -267,6 +267,40 @@ go into the pull request body (gate G3).
 12. Use the keyboard only, then a screen reader (NVDA or VoiceOver). Expect the milestones to be announced: upload started,
     processing, ready, failed.
 
+### Looking at the uploaded files in the S3 emulator
+
+The emulator (`s3`, port 9000, only on `127.0.0.1`) has two buckets: `receipts` (the originals) and
+`receipt-thumbnails`. Its web console is off, so use the AWS CLI with the fake key pair from `.env`
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`; the values below are the `.env.example` ones). Install it
+with `brew install awscli`, or run it in a container as shown. Do this with `make up` running.
+
+```bash
+export AWS_ACCESS_KEY_ID=localdev AWS_SECRET_ACCESS_KEY=localdevsecret AWS_DEFAULT_REGION=eu-west-1
+aws --endpoint-url http://localhost:9000 s3 ls s3://receipts/ --recursive
+aws --endpoint-url http://localhost:9000 s3 ls s3://receipt-thumbnails/ --recursive
+aws --endpoint-url http://localhost:9000 s3 cp s3://receipts/<key> ./receipt-copy   # download one object
+```
+
+Without installing anything (run it from a folder outside the repository if you download files). On Docker Desktop
+(macOS, Windows) a container reaches the host as `host.docker.internal`; on Linux add `--add-host
+host.docker.internal:host-gateway` to the command:
+
+```bash
+docker run --rm -e AWS_ACCESS_KEY_ID=localdev -e AWS_SECRET_ACCESS_KEY=localdevsecret \
+  -e AWS_DEFAULT_REGION=eu-west-1 amazon/aws-cli --endpoint-url http://host.docker.internal:9000 s3 ls s3://receipts/ --recursive
+```
+
+What to expect:
+
+- A key looks like `receipts/<user-id>/<expense-id>/<receipt-id>`. There is no file name or extension; the type is the
+  object's Content-Type.
+- The original appears as soon as the upload ends. The thumbnail appears in `receipt-thumbnails` after the worker has
+  processed an image. A PDF has no thumbnail.
+- Replacing or deleting a receipt removes the old objects from both buckets. A file the worker rejects (a `.txt` renamed
+  to `.png`) is deleted from `receipts` after it is marked failed.
+- The worker's log: `docker compose logs -f worker`.
+- Everything is in memory: `make down` or a restart empties the buckets.
+
 ## Environment variables (`.env`)
 
 `make up` creates `.env` from `.env.example` when it is missing; after that, `.env` is yours and is never
