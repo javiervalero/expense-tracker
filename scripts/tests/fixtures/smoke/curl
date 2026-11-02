@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+# Stub `curl` for scripts/tests/smoke.test.sh. It never touches the network: it answers from fixtures/smoke/routes.txt.
+#
+# Two logs, both set by the test:
+#   FAKE_ARGV_LOG  every call's argv, one line each. This is what `ps` would show, so the test greps it for secrets.
+#   FAKE_WIRE_LOG  what a server would see: method, URL, body file content, form fields, answer. It DOES hold the markers
+#                  (that is how the test proves a marker flows through the stub and the leak check is not vacuous).
+# Answers come from routes.txt (first matching line wins; the n-th call of a line gets its n-th status, the last one
+# repeats). Like the real API, a POST/PATCH/PUT/DELETE without `X-Requested-With` gets 403. FAKE_FORCE="<method> <path glob>=<status>"
+# forces a status. A form upload whose file is named oversize.png gets 400 (the bucket refuses size + 1).
+set +x
+: "${FAKE_DIR:?}" "${FAKE_ARGV_LOG:?}" "${FAKE_WIRE_LOG:?}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+printf '%s\n' "$*" >>"$FAKE_ARGV_LOG"
+
+case " $* " in
+  *" --version "*)
+    echo "curl 8.5.0 (stub)"
+    exit 0 ;;
+esac
+
+method=GET
+out=''
+fmt=''
+jar_out=''
+config=''
+data_file=''
+url=''
+xrw=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -X) method=$2; shift 2 ;;
+    -o) out=$2; shift 2 ;;
+    -w) fmt=$2; shift 2 ;;
+    -c) jar_out=$2; shift 2 ;;
+    -K) config=$2; shift 2 ;;
+    --data-binary) data_file=${2#@}; shift 2 ;;
+    --max-time | --max-redirs | --proto | --noproxy | -b | --data-urlencode) shift 2 ;;
+    -q) shift ;;
+    -H)
+      [ "$2" != 'X-Requested-With: XMLHttpRequest' ] || xrw=1
+      shift 2 ;;
+    -sS | --get) shift ;;
+    http*) url=$1; shift ;;
+    *) echo "stub curl: unexpected argument" >&2; exit 99 ;;
+  esac
+done
+
+forms=()
+if [ -n "$config" ]; then
+  while IFS= read -r line; do
+    case "$line" in
+      'url = "'*) url=${line#url = \"}; url=${url%\"} ;;
+      'form-string = "'*) value=${line#form-string = \"}; forms+=("${value%\"}") ;;
+      'form = "'*) value=${line#form = \"}; forms+=("FILE:${value%\"}") ;;
+    esac
+  done <"$config"
+  if [ "${#forms[@]}" -gt 0 ]; then method=POST; fi
+fi
+
+route_status() { # <"METHOD /path"> -> prints the status of its n-th call
+  local want=$1 number=0 line pattern statuses count_file count last
+  while IFS= read -r line; do
+    number=$((number + 1))
+    [ -n "$line" ] || continue
+    read -r -a statuses <<<"$line"
+    pattern="${statuses[0]} ${statuses[1]}"
+    # shellcheck disable=SC2053
+    if [[ $want == $pattern ]]; then
+      statuses=("${statuses[@]:2}")
+      count_file="$FAKE_DIR/count.$number"
+      count=0
+      if [ -f "$count_file" ]; then count=$(<"$count_file"); fi
+      printf '%s' "$((count + 1))" >"$count_file"
+      last=$((${#statuses[@]} - 1))
+      if [ "$count" -gt "$last" ]; then count=$last; fi
+      printf '%s' "${statuses[$count]}"
+      return 0
+    fi
+  done <"$HERE/routes.txt"
+  printf '404'
+}
+
+# every JSON answer carries this marker: the script must never echo a body (the test greps for it)
+BODY_JSON='{"title":"stub","debug":"BODYMARKER_0123456789"}'
+status=''
+content_type=''
+path=''
+case "$url" in
+  */api/v1/*)
+    path="/${url#*/api/v1/}"
+    path=${path%%\?*}
+    case "$method" in
+      POST | PATCH | PUT | DELETE) if [ "$xrw" -ne 1 ]; then status=403; fi ;;
+    esac
+    if [ -z "$status" ] && [ -n "${FAKE_FORCE:-}" ]; then
+      # shellcheck disable=SC2053
+      if [[ "$method $path" == ${FAKE_FORCE%=*} ]]; then status=${FAKE_FORCE##*=}; fi
+    fi
+    if [ -z "$status" ] && [ "$method $path" = "GET /reports/monthly" ]; then
+      # like the real endpoint: a missing or impossible month is 400, anything else is a report
+      case "$url" in
+        *'month=2001-13'* | */reports/monthly) status=400 ;;
+        *) status=200 ;;
+      esac
+    fi
+    if [ -z "$status" ] && [ "$method $path" = "GET /auth/me" ]; then
+      if [ -f "$FAKE_DIR/signed-in" ]; then status=200; else status=401; fi
+    fi
+    if [ -z "$status" ]; then status=$(route_status "$method $path"); fi
+    case "$method $path $status" in
+      'POST /auth/register 201' | 'POST /auth/login 200')
+        : >"$FAKE_DIR/signed-in"
+        marker=${FAKE_COOKIE_VALUE:-COOKIEVALUEMARKER_0123456789}
+        if [ -n "$jar_out" ]; then
+          printf '#HttpOnly_localhost\tFALSE\t/\tTRUE\t0\t__Host-session\t%s\n' "$marker" >"$jar_out"
+          printf 'JAR __Host-session=%s\n' "$marker" >>"$FAKE_WIRE_LOG"
+        fi ;;
+      'POST /auth/logout 204' | 'POST /auth/logout 401') rm -f "$FAKE_DIR/signed-in" ;;
+    esac ;;
+  *)
+    if [ "${#forms[@]}" -gt 0 ]; then
+      status=204
+      for field in "${forms[@]}"; do
+        case "$field" in *oversize.png*) status=400 ;; esac
+      done
+    else
+      status=200
+      content_type=image/png
+    fi ;;
+esac
+
+{
+  printf '%s %s\n' "$method" "$url"
+  if [ -n "$data_file" ]; then printf 'BODY %s\n' "$(<"$data_file")"; fi
+  for field in "${forms[@]}"; do printf 'FORM %s\n' "$field"; done
+  printf '  -> %s\n' "$status"
+  if [ "$status" != 204 ]; then printf '  BODYOUT %s\n' "$BODY_JSON"; fi
+} >>"$FAKE_WIRE_LOG"
+
+if [ -n "$out" ]; then
+  if [ "$status" = 204 ]; then : >"$out"; else printf '%s' "$BODY_JSON" >"$out"; fi
+fi
+if [ -n "$fmt" ]; then
+  fmt=${fmt//'%{http_code}'/$status}
+  fmt=${fmt//'%{content_type}'/$content_type}
+  printf '%s' "$fmt"
+fi
+exit 0
