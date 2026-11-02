@@ -19,6 +19,7 @@ final class InvalidQuery extends RuntimeException
     public const string Q = 'q';
     public const string LIMIT = 'limit';
     public const string CURSOR = 'cursor';
+    public const string MONTH = 'month';
 
     /**
      * @param string $parameter one of the constants above, or '' when no parameter can be named
