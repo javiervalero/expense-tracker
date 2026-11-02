@@ -5,10 +5,11 @@ production application would be. Users sign in, record expenses with categories,
 summaries. The front end is a Vue single-page app, the API is a JSON API in vanilla PHP (no framework), and the
 target is a fully serverless AWS deployment. The whole system also runs locally with Docker and no AWS account.
 
-Phases 0 (foundations) and 1 (back-end core) are done: the repository, the local stack, the checks and CI, and the
-API's core: router, middleware (origin check, trusted client IP, request logging), problem-details errors, the DynamoDB
-access layer and the OpenAPI contract tests. The API serves only a health endpoint so far; the features arrive in later
-phases.
+Phases 0 to 5 are done: the repository, the local stack, the checks and CI; the API core (router, middleware,
+problem-details errors, the DynamoDB access layer and the OpenAPI contract tests); sign-up, sign-in and cookie sessions;
+categories and expenses; the Vue front end; and receipts (a direct-to-S3 upload, a worker that checks the file and makes
+a thumbnail, and a preview on the expense page). The monthly summary, the Terraform infrastructure and the first AWS
+deployment are still to come; see [PLAN.md](docs/PLAN.md) for the phases and their status.
 
 ## Prerequisites
 
@@ -69,4 +70,4 @@ The full local guide, with the service table, the make targets, how to run one t
 - [PLAN.md](docs/PLAN.md): the approved plan: summary, decisions, architecture, phases and status
 - [docs/adr/](docs/adr/): architecture decision records (start with the [index](docs/adr/README.md))
 - [docs/local-dev.md](docs/local-dev.md): local development: services and ports, the make targets, tests, troubleshooting
-- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md), Phase 2: [phase-2-authentication.md](docs/plans/phase-2-authentication.md), Phase 3: [phase-3-categories-expenses.md](docs/plans/phase-3-categories-expenses.md), Phase 4: [phase-4-frontend.md](docs/plans/phase-4-frontend.md))
+- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md), Phase 2: [phase-2-authentication.md](docs/plans/phase-2-authentication.md), Phase 3: [phase-3-categories-expenses.md](docs/plans/phase-3-categories-expenses.md), Phase 4: [phase-4-frontend.md](docs/plans/phase-4-frontend.md), Phase 5: [phase-5-receipts.md](docs/plans/phase-5-receipts.md))
