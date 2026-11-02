@@ -8,6 +8,7 @@ import type { Expense } from '@/api/types'
 import ConfirmDeleteButton from '@/components/ConfirmDeleteButton.vue'
 import FormAlert from '@/components/FormAlert.vue'
 import FormField from '@/components/FormField.vue'
+import ReceiptPanel from '@/components/ReceiptPanel.vue'
 import { useFormErrors } from '@/composables/useFormErrors'
 import { APP_CURRENCY, DATE_MAX, DATE_MIN } from '@/config'
 import { todayLocal } from '@/lib/dates'
@@ -424,6 +425,10 @@ async function remove(): Promise<void> {
         <p v-if="notice" class="notice">{{ notice }}</p>
       </div>
     </form>
+
+    <!-- A receipt needs an existing expense id; the key remounts the panel for another expense. -->
+    <p v-if="!isEdit" class="hint">You can attach a receipt after saving.</p>
+    <ReceiptPanel v-else-if="status === 'ready' && !gone" :key="id" :expense-id="id" />
   </section>
 </template>
 

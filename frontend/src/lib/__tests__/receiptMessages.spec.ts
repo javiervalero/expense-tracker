@@ -4,13 +4,25 @@ import type { ApiError } from '@/api/problem'
 import type { UploadError } from '@/api/upload'
 import { describeExpenseError } from '../expenseMessages'
 import {
+  CANCEL_LABEL,
+  CHECK_AGAIN_LABEL,
+  DELETE_RECEIPT_LABEL,
+  LOADING_TEXT,
   LOAD_FIRST_TEXT,
+  PROCESSING_TEXT,
+  REPLACE_RECEIPT_LABEL,
+  RETRY_LABEL,
   STILL_PROCESSING_MESSAGE,
+  TRY_AGAIN_LABEL,
+  UPLOADING_TEXT,
+  UPLOAD_RUNNING_TEXT,
   deleteErrorMessage,
   failureMessage,
   policyErrorMessage,
   preCheckMessage,
   uploadErrorMessage,
+  RECEIPT_UNAVAILABLE_TEXT,
+  RULES_TEXT,
 } from '../receiptMessages'
 
 const SIZE_TEXT = 'Choose a JPEG, PNG, WebP or PDF file up to 10 MB.'
@@ -151,5 +163,39 @@ describe('STILL_PROCESSING_MESSAGE', () => {
 describe('LOAD_FIRST_TEXT', () => {
   it('is the text shown when a file is picked before the current receipt is known', () => {
     expect(LOAD_FIRST_TEXT).toBe('Could not check the current receipt. Try again.')
+  })
+})
+
+describe('UPLOAD_RUNNING_TEXT', () => {
+  it('is the text shown when a file is picked or dropped while an upload runs', () => {
+    expect(UPLOAD_RUNNING_TEXT).toBe('An upload is already running.')
+  })
+})
+
+describe('RULES_TEXT', () => {
+  it('is the rule line the file input is described by', () => {
+    expect(RULES_TEXT).toBe('JPEG, PNG, WebP or PDF, up to 10 MB.')
+  })
+})
+
+describe('the panel labels and progress texts', () => {
+  it.each([
+    [LOADING_TEXT, 'Loading receipt…'],
+    [UPLOADING_TEXT, 'Uploading…'],
+    [PROCESSING_TEXT, 'Processing…'],
+    [TRY_AGAIN_LABEL, 'Try again'],
+    [CHECK_AGAIN_LABEL, 'Check again'],
+    [DELETE_RECEIPT_LABEL, 'Delete receipt'],
+    [REPLACE_RECEIPT_LABEL, 'Replace receipt'],
+    [CANCEL_LABEL, 'Cancel'],
+    [RETRY_LABEL, 'Retry'],
+  ])('%j is exactly %j', (actual, expected) => {
+    expect(actual).toBe(expected)
+  })
+})
+
+describe('RECEIPT_UNAVAILABLE_TEXT', () => {
+  it('is the text shown instead of a link that failed the address check', () => {
+    expect(RECEIPT_UNAVAILABLE_TEXT).toBe('Receipt cannot be opened.')
   })
 })

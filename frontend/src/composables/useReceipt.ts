@@ -67,7 +67,10 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
   let generation = 0
   let controller = new AbortController()
   // The file of the last upload, kept so that Retry can ask for a NEW policy (an expired one is useless).
-  let held: ChosenFile | null = null
+  // Cleared by `start`, a successful remove and `stop`; `canRetry` reads it.
+  const held = shallowRef<ChosenFile | null>(null)
+  // True while Retry would act: the last upload failed after its policy was issued, so the phase is back to none.
+  const canRetry = computed(() => phase.value === 'none' && held.value !== null)
   // Set by `stop` and cleared by `start`: while it is set, no action sends a request or arms a timer or listener.
   let stopped = false
   // Set ONLY when the owning scope is disposed (never cleared): a later `start()` is then a no-op.
@@ -176,6 +179,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
       return
     }
     stopped = false
+    held.value = null
     const { mine, signal } = newRequest()
     phase.value = 'loading'
     loadFailed.value = false
@@ -230,7 +234,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
     if (stopped || uploading.value || removing !== -1) {
       return
     }
-    held = chosen
+    held.value = chosen
     const before = snapshot()
     const { mine, signal } = newRequest()
     message.value = ''
@@ -243,7 +247,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
       return
     }
     if (outcome.kind === 'done') {
-      held = null
+      held.value = null
       receipt.value = null
       progress.value = PERCENT_DONE
       phase.value = 'processing'
@@ -258,6 +262,8 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
       message.value = uploadErrorMessage(outcome.error) ?? ''
       return
     }
+    // A refused file is not offered again: no Retry beside "Choose another file".
+    held.value = null
     restore(before)
     if (outcome.error.kind === 'validation') {
       fileMessage.value = policyErrorMessage(outcome.error)
@@ -320,8 +326,8 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
 
   /** Asks for a new policy and uploads the same file again (after an expired or interrupted upload). */
   function retry(): Promise<void> {
-    if (!stopped && held !== null) {
-      void upload(held)
+    if (!stopped && held.value !== null) {
+      void upload(held.value)
     }
     return Promise.resolve()
   }
@@ -350,6 +356,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
     }
     removing = -1
     if (result.ok || result.error.kind === 'not-found') {
+      held.value = null
       enter(null)
       message.value = result.ok ? '' : deleteErrorMessage(result.error)
       return
@@ -411,6 +418,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
    */
   function stop(): void {
     stopped = true
+    held.value = null
     cancelInFlight()
   }
 
@@ -432,6 +440,7 @@ export function useReceipt(expenseId: MaybeRefOrGetter<string>): ReceiptState {
     stalled,
     loadFailed,
     pendingReplacement,
+    canRetry,
     start,
     choose,
     confirmReplace,

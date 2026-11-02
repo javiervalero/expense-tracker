@@ -19,6 +19,8 @@ const expensesApi = vi.hoisted(() => ({
 const categoriesApi = vi.hoisted(() => ({ listCategories: vi.fn() }))
 vi.mock('@/api/expenses', () => expensesApi)
 vi.mock('@/api/categories', () => categoriesApi)
+// The receipt panel has its own specs; here it must not reach the network.
+vi.mock('@/components/ReceiptPanel.vue', () => ({ default: { render: () => null } }))
 
 const ID = '5a1c1f0e-5d3a-4c8e-9a41-2f6d8e7b1a91'
 const FOOD = '0b7c1f0e-5d3a-4c8e-9a41-2f6d8e7b1a90'

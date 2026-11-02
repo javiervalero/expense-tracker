@@ -38,6 +38,8 @@ export interface ReceiptState {
   /** True when the first read failed (not a 404): no file can be picked until `start()` succeeds. */
   loadFailed: ReadonlyRef<boolean>
   pendingReplacement: ComputedRef<File | null>
+  /** True while Retry would act (a failed upload left its file held): the page shows its Retry button. */
+  canRetry: ComputedRef<boolean>
   start: () => Promise<void>
   choose: (file: File) => Promise<ChooseOutcome>
   confirmReplace: () => Promise<void>

@@ -13,10 +13,30 @@ const INTERRUPTED = 'Upload interrupted. Try again.'
 const POLICY_FALLBACK = 'The receipt was not accepted. Choose another file.'
 const CONFLICT_TEXT = 'The receipt changed in another tab. Reload.'
 
+/** The rule line the file input is described by (same limits as ACCEPTED_FILES_TEXT). */
+export const RULES_TEXT = 'JPEG, PNG, WebP or PDF, up to 10 MB.'
+
+// Texts and button names of the receipt panel.
+export const LOADING_TEXT = 'Loading receipt…'
+export const UPLOADING_TEXT = 'Uploading…'
+export const PROCESSING_TEXT = 'Processing…'
+export const TRY_AGAIN_LABEL = 'Try again'
+export const CHECK_AGAIN_LABEL = 'Check again'
+export const DELETE_RECEIPT_LABEL = 'Delete receipt'
+export const REPLACE_RECEIPT_LABEL = 'Replace receipt'
+export const CANCEL_LABEL = 'Cancel'
+export const RETRY_LABEL = 'Retry'
+
+/** Shown instead of the link when the view address failed the shape check. */
+export const RECEIPT_UNAVAILABLE_TEXT = 'Receipt cannot be opened.'
+
 export const STILL_PROCESSING_MESSAGE = 'Still processing. Check again in a moment.'
 
 /** Shown under the file input when a file is picked before the current receipt could be read. */
 export const LOAD_FIRST_TEXT = 'Could not check the current receipt. Try again.'
+
+/** Shown under the file input when a file is picked or dropped while an upload is running. */
+export const UPLOAD_RUNNING_TEXT = 'An upload is already running.'
 
 /** The text for a file the browser pre-check refused: every reason (type, empty, too large) gets the same advice. */
 export function preCheckMessage(reason: ReceiptFileProblem): string {
