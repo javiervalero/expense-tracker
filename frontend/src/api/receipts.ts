@@ -46,9 +46,12 @@ export function getReceipt(expenseId: string, signal?: AbortSignal): Promise<Api
 }
 
 /** `DELETE /expenses/{id}/receipt`: 204. A second delete is a 404. */
-export function deleteReceipt(expenseId: string): Promise<ApiResult<void>> {
+export function deleteReceipt(expenseId: string, signal?: AbortSignal): Promise<ApiResult<void>> {
   const path = receiptPath(expenseId, RECEIPT_SUFFIX)
   return path === null
     ? Promise.resolve(INVALID_ID)
-    : request<void>('DELETE', path, { auth: 'session' })
+    : request<void>('DELETE', path, {
+        auth: 'session',
+        ...(signal === undefined ? {} : { signal }),
+      })
 }

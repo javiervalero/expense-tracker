@@ -72,6 +72,27 @@ const heading = useTemplateRef<HTMLElement>('heading')
 // request remembers the value it started with; an answer that finds a different one belongs to a form that is gone, so
 // it changes nothing on screen and never navigates.
 let generation = 0
+// Aborts the two reads (load and Reload) of the form that is leaving. Saves and deletes are never aborted: their
+// outcome is still announced.
+let reads = new AbortController()
+
+// The form starts showing something else: the old form's read is aborted and its answers dropped.
+function leaveForm(): void {
+  generation += 1
+  reads.abort()
+}
+
+// Each read gets its own signal; a read still on its way is superseded by it.
+function newReadSignal(): AbortSignal {
+  reads.abort()
+  reads = new AbortController()
+  return reads.signal
+}
+
+// True when a read's answer must change nothing: the form moved on, or the read was aborted.
+function isDropped(mine: number, result: ApiResult<Expense>): boolean {
+  return mine !== generation || (!result.ok && result.error.kind === 'aborted')
+}
 
 function knownCategory(candidate: string): boolean {
   return categories.items.some((category) => category.id === candidate)
@@ -100,11 +121,13 @@ async function loadExpense(): Promise<void> {
   const mine = generation
   status.value = 'loading'
   const waiting = categories.load()
-  const result = await getExpense(id.value)
+  const result = await getExpense(id.value, newReadSignal())
   await waiting
   if (mine !== generation) {
     return
   }
+  // An aborted answer while the form is still the current one should not happen (a read is aborted only when the form
+  // moves on); it is then an ordinary failure, so that the form never stays on "Loading".
   if (!result.ok) {
     const view = describeExpenseError(result.error, false)
     loadMessage.value = view.form
@@ -119,7 +142,7 @@ async function loadExpense(): Promise<void> {
 
 // Starts from a blank form for whatever the route shows now.
 function resetForm(): void {
-  generation += 1
+  leaveForm()
   date.value = todayLocal()
   amount.value = ''
   description.value = ''
@@ -139,7 +162,7 @@ watch(
   routeId,
   (current) => {
     if (current === null) {
-      generation += 1
+      leaveForm()
       return
     }
     resetForm()
@@ -161,9 +184,7 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => {
-  generation += 1
-})
+onBeforeUnmount(leaveForm)
 
 // Leaving: the message is announced once the list page is there.
 async function leave(message: string): Promise<void> {
@@ -255,8 +276,8 @@ async function reload(): Promise<void> {
   const mine = generation
   reloading.value = true
   try {
-    const result = await getExpense(id.value)
-    if (mine !== generation) {
+    const result = await getExpense(id.value, newReadSignal())
+    if (isDropped(mine, result)) {
       return
     }
     errors.clear()

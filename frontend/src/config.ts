@@ -58,3 +58,6 @@ export const UPLOAD_TIMEOUT_MS = 120_000
 
 // Plan phase-5 C19: the only plain-http origin an upload or view address may use (the local object store in development).
 export const DEV_UPLOAD_ORIGIN = 'http://localhost:9000'
+
+// Plan decision 6: a signed view address is fetched again when it expires within 60 seconds.
+export const URL_REFRESH_MARGIN_MS = 60_000

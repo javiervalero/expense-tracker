@@ -98,6 +98,18 @@ describe('receipts api', () => {
     })
   })
 
+  it('deleteReceipt() passes the signal when given', async () => {
+    requestMock.mockResolvedValue({ ok: false, error: { kind: 'aborted' } })
+    const signal = new AbortController().signal
+
+    await deleteReceipt(ID, signal)
+
+    expect(requestMock).toHaveBeenCalledWith('DELETE', `/expenses/${ID}/receipt`, {
+      auth: 'session',
+      signal,
+    })
+  })
+
   it.each(BAD_IDS)('refuses the id %j without calling request', async (id) => {
     const results = await Promise.all([
       createReceiptUpload(id, body),

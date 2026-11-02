@@ -4,6 +4,7 @@ import type { ApiError } from '@/api/problem'
 import type { UploadError } from '@/api/upload'
 import { describeExpenseError } from '../expenseMessages'
 import {
+  LOAD_FIRST_TEXT,
   STILL_PROCESSING_MESSAGE,
   deleteErrorMessage,
   failureMessage,
@@ -144,5 +145,11 @@ describe('deleteErrorMessage', () => {
 describe('STILL_PROCESSING_MESSAGE', () => {
   it('is the polling-cap text', () => {
     expect(STILL_PROCESSING_MESSAGE).toBe('Still processing. Check again in a moment.')
+  })
+})
+
+describe('LOAD_FIRST_TEXT', () => {
+  it('is the text shown when a file is picked before the current receipt is known', () => {
+    expect(LOAD_FIRST_TEXT).toBe('Could not check the current receipt. Try again.')
   })
 })

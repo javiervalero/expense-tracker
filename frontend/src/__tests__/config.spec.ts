@@ -19,3 +19,9 @@ describe('receipt config constants', () => {
     expect(config.DEV_UPLOAD_ORIGIN).toBe('http://localhost:9000')
   })
 })
+
+describe('receipt view address refresh', () => {
+  it('refreshes a signed address when it expires within 60 seconds', () => {
+    expect(config.URL_REFRESH_MARGIN_MS).toBe(60_000)
+  })
+})

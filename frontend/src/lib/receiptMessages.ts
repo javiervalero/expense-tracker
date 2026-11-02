@@ -15,6 +15,9 @@ const CONFLICT_TEXT = 'The receipt changed in another tab. Reload.'
 
 export const STILL_PROCESSING_MESSAGE = 'Still processing. Check again in a moment.'
 
+/** Shown under the file input when a file is picked before the current receipt could be read. */
+export const LOAD_FIRST_TEXT = 'Could not check the current receipt. Try again.'
+
 /** The text for a file the browser pre-check refused: every reason (type, empty, too large) gets the same advice. */
 export function preCheckMessage(reason: ReceiptFileProblem): string {
   switch (reason) {

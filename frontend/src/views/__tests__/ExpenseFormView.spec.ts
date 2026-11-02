@@ -342,7 +342,7 @@ describe('ExpenseFormView: edit', () => {
     expensesApi.getExpense.mockResolvedValue(ok(expense()))
     const { wrapper } = await render(path)
 
-    expect(expensesApi.getExpense).toHaveBeenCalledWith(ID)
+    expect(expensesApi.getExpense).toHaveBeenCalledWith(ID, expect.any(AbortSignal))
     expect(wrapper.get('h1').text()).toBe('Edit expense')
     expect((wrapper.get('#expense-date').element as HTMLInputElement).value).toBe('2026-10-01')
     expect((wrapper.get('#expense-amount').element as HTMLInputElement).value).toBe('12.50')
