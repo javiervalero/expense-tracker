@@ -34,6 +34,7 @@ async function signOut(): Promise<void> {
       <nav aria-label="Main">
         <RouterLink to="/expenses">Expenses</RouterLink>
         <RouterLink to="/categories">Categories</RouterLink>
+        <RouterLink to="/summary">Summary</RouterLink>
       </nav>
       <div class="account">
         <!-- bdi: a right-to-left address must not reorder the text around it. Interpolation only, never v-html. -->

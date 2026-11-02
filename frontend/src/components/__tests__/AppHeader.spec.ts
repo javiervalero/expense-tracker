@@ -42,7 +42,7 @@ const signedIn = (email: string): ApiResult<User> => ({
 const signedOut: ApiResult<User> = { ok: false, error: { kind: 'unauthorized', status: 401 } }
 
 describe('AppHeader: signed in', () => {
-  it('shows the email and links to Expenses and Categories', async () => {
+  it('shows the email and links to Expenses, Categories and Summary', async () => {
     const wrapper = await mountHeader(signedIn('ana@example.com'))
 
     expect(wrapper.text()).toContain('ana@example.com')
@@ -50,7 +50,22 @@ describe('AppHeader: signed in', () => {
     expect(links).toEqual([
       ['Expenses', '/expenses'],
       ['Categories', '/categories'],
+      ['Summary', '/summary'],
     ])
+  })
+
+  it('marks Summary with aria-current on /summary, and only it', async () => {
+    api.me.mockResolvedValue(signedIn('ana@example.com'))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const router = createAppRouter(createMemoryHistory())
+    await router.push('/summary?month=2026-10')
+    await useSessionStore().ensureLoaded()
+    const wrapper = mount(AppHeader, { global: { plugins: [pinia, router] } })
+    await flushPromises()
+
+    const current = wrapper.findAll('nav a').filter((a) => a.attributes('aria-current') === 'page')
+    expect(current.map((a) => a.text())).toEqual(['Summary'])
   })
 
   it('renders an email-like string with markup as text, never as elements', async () => {
