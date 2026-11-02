@@ -253,8 +253,9 @@ go into the pull request body (gate G3).
 1. Open the app on http://localhost:5173 exactly, not 127.0.0.1: the sign-in cookie and the S3 CORS rule only work for
    that origin.
 2. Register or sign in.
-3. Open an existing expense's edit page. Receipts are attached on the edit page only; the new-expense form says to
-   attach a receipt after saving.
+3. Create a new expense with "Save and add receipt": it saves and opens that expense's page, ready for a receipt (plain
+   "Save" still returns to the list; Back from the page skips the blank form). You can also open an existing expense.
+   Receipts are attached on an existing expense only.
 4. Upload a JPEG. Expect progress, then "Processing", then a thumbnail.
 5. Upload a PDF. Expect a PDF icon, and "Open receipt" opens the file in the browser's PDF viewer.
 6. Choose a file over 10 MB. Expect it to be refused before anything is sent.
