@@ -5,11 +5,11 @@ production application would be. Users sign in, record expenses with categories,
 summaries. The front end is a Vue single-page app, the API is a JSON API in vanilla PHP (no framework), and the
 target is a fully serverless AWS deployment. The whole system also runs locally with Docker and no AWS account.
 
-Phases 0 to 5 are done: the repository, the local stack, the checks and CI; the API core (router, middleware,
+Phases 0 to 6 are done: the repository, the local stack, the checks and CI; the API core (router, middleware,
 problem-details errors, the DynamoDB access layer and the OpenAPI contract tests); sign-up, sign-in and cookie sessions;
-categories and expenses; the Vue front end; and receipts (a direct-to-S3 upload, a worker that checks the file and makes
-a thumbnail, and a preview on the expense page). The monthly summary, the Terraform infrastructure and the first AWS
-deployment are still to come; see [PLAN.md](docs/PLAN.md) for the phases and their status.
+categories and expenses; the Vue front end; receipts (a direct-to-S3 upload, a worker that checks the file and makes
+a thumbnail, and a preview on the expense page); and the monthly summary (a report endpoint, a summary page, and a curl
+smoke test of every feature). The Terraform infrastructure and the first AWS deployment are still to come; see [PLAN.md](docs/PLAN.md) for the phases and their status.
 
 ## Prerequisites
 
@@ -31,6 +31,7 @@ make php-install        # once: back-end dependencies, in a PHP container
 make contract-install   # once: OpenAPI contract tooling (lint, bundle, types), needed by the tests
 make local-aws-install  # once: dependencies of the local AWS stand-ins, needed by the tests
 make up                 # creates .env, starts the stack and waits until it is healthy
+make smoke              # after make up: curl smoke test of every feature (see docs/local-dev.md)
 ```
 
 To use the app in a browser, open http://localhost:5173 in Chrome or Firefox (not Safari); see [Using the app in a browser](docs/local-dev.md#using-the-app-in-a-browser).
@@ -70,4 +71,4 @@ The full local guide, with the service table, the make targets, how to run one t
 - [PLAN.md](docs/PLAN.md): the approved plan: summary, decisions, architecture, phases and status
 - [docs/adr/](docs/adr/): architecture decision records (start with the [index](docs/adr/README.md))
 - [docs/local-dev.md](docs/local-dev.md): local development: services and ports, the make targets, tests, troubleshooting
-- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md), Phase 2: [phase-2-authentication.md](docs/plans/phase-2-authentication.md), Phase 3: [phase-3-categories-expenses.md](docs/plans/phase-3-categories-expenses.md), Phase 4: [phase-4-frontend.md](docs/plans/phase-4-frontend.md), Phase 5: [phase-5-receipts.md](docs/plans/phase-5-receipts.md))
+- [docs/plans/](docs/plans/): the work-package plans for each phase (Phase 0: [phase-0-foundations.md](docs/plans/phase-0-foundations.md), Phase 1: [phase-1-backend-core.md](docs/plans/phase-1-backend-core.md), Phase 2: [phase-2-authentication.md](docs/plans/phase-2-authentication.md), Phase 3: [phase-3-categories-expenses.md](docs/plans/phase-3-categories-expenses.md), Phase 4: [phase-4-frontend.md](docs/plans/phase-4-frontend.md), Phase 5: [phase-5-receipts.md](docs/plans/phase-5-receipts.md), Phase 6: [phase-6-monthly-summary.md](docs/plans/phase-6-monthly-summary.md))

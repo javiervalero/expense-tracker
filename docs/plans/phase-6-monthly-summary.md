@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-11-02**: the owner approved this plan with every section 10 default. **G2 done 2026-11-02** (Step 0 R1–R5 recorded, no change to any decision; R6–R7 run in WP6). Next: WP2. Drafted by `ecc:planner` (opus/high); the main session checked the headline claims against the code (contract version, `formatCents` range, `MAX_QUERY_LIMIT`, register throttle, `JQ_IMAGE`) |
+| Status | **G1 approved 2026-11-02**: the owner approved this plan with every section 10 default. **G2 done 2026-11-02** (Step 0 R1–R5 recorded, no change to any decision; R6–R7 run in WP6). WP2 done 2026-11-02 (563c750), WP3 done 2026-11-02 (1e06511), WP4 done 2026-11-02 (5772ee7), WP5 done 2026-11-02 (ba66390), WP6 done 2026-11-02 (a602135), CI step (266dddf). Still open: G3 walkthrough by the owner, the live `--cross-user` smoke run (needs 2 registrations, the throttle window had to reset), and the PR (G6). Drafted by `ecc:planner` (opus/high); the main session checked the headline claims against the code (contract version, `formatCents` range, `MAX_QUERY_LIMIT`, register throttle, `JQ_IMAGE`) |
 | Phase | 6 (PLAN §12, essential track), size S (the smoke script makes it closer to S–M) |
 | Branch | `feat/phase-6-monthly-summary`, from `main` at 4735725 (Phase 5 merged in PR #8) |
 | Inputs | BRIEF; PLAN §2, §5 (Reports row), §6 ("Monthly summary" access pattern), §8, §9, §10, §12 rows 6–8, §13; ADR 0002 (+ Phase 3 note), 0005, 0011, 0012 (§4.1 forwarded headers; Bref query normalisation); Phase 3 plan B1, B3, B8, B16–B19, B24, §7.2, R13; Phase 2 plan §7 ("Phase 6: smoke.sh sends Origin and X-Requested-With and keeps a cookie jar"); Phase 4 plan C4, C8, C9, C11, C15, decision 13, line ~490; Phase 5 plan (structure, §3.1 rules) |
@@ -314,9 +314,18 @@ TDD throughout: red run recorded per WP. 80% minimum on `backend/src` (target �
   - add the two ADR 0012 checks (direct API Gateway URL refused; forged `CloudFront-Viewer-Address` ignored) as an optional `--api-gateway-url` mode or a separate step;
   - AWS DLQ depth before and after, with the owner's SSO credentials, in `make deploy`'s smoke step;
   - decide leftover smoke users (contradiction 6);
-  - record report latency on Lambda.
+  - record report latency on Lambda;
+  - run `scripts/smoke.sh --cross-user` live (not yet run live in Phase 6);
+  - tighten the size+1 check to `EntityTooLarge`;
+  - pin the S3 host in the allow-list;
+  - check the upload-field value pattern against real AWS session tokens.
 - **Carried out, later:** L1 a Playwright summary journey; L2 `deploy.yml` calls the smoke script; L5 chart, colours, `make seed`.
-- **§7.3 Review notes:** filled per WP (red run, findings, fixes, round 2).
+- **§7.3 Review notes:**
+  - **WP2:** red runs 4 of 3198 (guard refactor) and 46 of 3244 (builder). php-reviewer: no CRITICAL, HIGH or MEDIUM. 3 LOW skipped (no runtime guard on the cap, which only tests set; a resolve/all mismatch that cannot happen; one optional boundary test).
+  - **WP3:** red: `CrossUserCoverageTest`, `RoutesMatchContractTest`, `ProtectedRoutesMatchContractTest`, then "class not found" in unit. Results: lint clean, unit 3274, contract 32, integration 532 + 10. php-reviewer: LOW only; two tests added (wrong key case, trailing newline), the rest skipped. security-reviewer (opus/high, WP2+WP3): no CRITICAL, HIGH or MEDIUM. LOW 1: per-route throttle, carried to Phase 7. LOW 2: D5 cost numbers corrected. LOW 3: contract text on a repeated month corrected. The lowered-cap cases run against the builder directly (`MonthlyReportCapTest`), not through nginx, because no test-only wiring exists.
+  - **WP4:** red: 3 suites and 9 tests. typescript-reviewer: 1 MEDIUM (the two `currentMonthLocal` tests passed for a UTC-based bug), fixed with Kiritimati and Pago_Pago cases. LOWs fixed: clamp of the local month to 2000-01..2099-12, a `-0` case, a relative import. frontend-audit passes at `--audit-level=high` and reports 18 moderate findings in dev-only packages (glob, minimatch via @vue/test-utils and eslint), unchanged by this phase. Process: the implementing agent used shell heredocs to create files despite the brief. The result was checked and clean, and the brief wording was tightened afterwards.
+  - **WP5:** red: 4 suites and 3 tests. vue-reviewer: 1 MEDIUM (Show on the already-shown month did nothing, so Retry via Show was impossible in the error state), fixed. LOWs fixed: `aria-labelledby` on the table region, caption whitespace, a comment on dropped query parameters. Skipped: focus moves twice after a failed retry; genitive month names in some locales.
+  - **WP6:** shell test red: 52 FAIL lines. `SmokeFixturesTest` has no recorded red run. The first live run failed at check 7 (jq operator precedence); fixed, and later runs were green with the DLQ unchanged. A deliberate wrong expected total (4900 to 4901) failed with `not ok` and exit 1, and was reverted. code-reviewer: 3 MEDIUM fixed (a jq-failure path test, the DLQ re-read three times over ~10 s, secret markers inside stub response bodies), plus LOWs. security-reviewer (opus/high): 1 MEDIUM fixed (`curl -q` first on every call, so `~/.curlrc` cannot weaken TLS; `--noproxy localhost`) and LOWs fixed (upload and view allow-list tied to the mode; jq container `--log-driver none`; temp dir removed on a second Ctrl-C). Not done: a test for the second-Ctrl-C trap; a check that the size+1 refusal is `EntityTooLarge` (any 400 passes; tighten in Phase 8); filters through a local jq (no host jq); the allow-list for https hosts still accepts any host (pin the S3 host in Phase 8). Documented: SMOKE_PASSWORD exposure in local-dev.md.
 
 ## 8. Risks
 

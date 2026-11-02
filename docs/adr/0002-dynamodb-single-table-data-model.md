@@ -188,3 +188,19 @@ clarifications of this ADR, not changes to it. Keys are built in `App\Categories
   which every create is refused.
 - **Isolation** is pinned end to end by `CrossUserIsolationApiTest`, and `CrossUserCoverageTest` fails CI when a
   secured operation is not covered by it.
+
+## Implemented in Phase 6 (2026-11-02, PR pending)
+
+The monthly summary (`GET /reports/monthly`) is built on this model. The decisions are D1, D5 and D7 in
+[the Phase 6 plan](../plans/phase-6-monthly-summary.md).
+
+- **Month.** A month is the calendar month of the expense's `date`: a calendar day with no time and no zone. The
+  months run from 2000-01 to 2099-12.
+- **"All pages" means up to 10,000.** The monthly summary row above reads one month "all pages". In Phase 6 the
+  report reads the month with the existing date query, in batches of 1,000, up to 10,000 expenses. Then one probe
+  query decides whether more exist. If more do, the response has `complete: false`, and its totals cover the newest
+  10,000 expenses.
+- **Uncategorized.** An expense whose category is missing, deleted or not the user's counts under one Uncategorized
+  row.
+- **Read cost.** The worst case is about 11 to 12 queries and 2,500 to 3,000 strongly consistent read units per
+  request. Descriptions of up to 800 bytes make each query stop at DynamoDB's 1 MB page limit, before 1,000 items.
