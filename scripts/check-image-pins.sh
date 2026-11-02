@@ -533,7 +533,7 @@ compose_service() { # <file> <service> <image> <has_build> <pull_policy> <contex
       report "$file" "$where" "image '$image' uses a variable; variables are not allowed, write the pinned image literally"
     elif ! [[ "$image" =~ $PIN_RE ]]; then
       if [ "$has_build" = 1 ] && { [ "$pull" = build ] ||
-        { [[ "$image" =~ $LOCAL_IMAGE_RE ]] && [[ "$pull" =~ ^(|missing|never)$ ]]; }; }; then
+        { [[ "$image" =~ $LOCAL_IMAGE_RE ]] && [[ "$pull" =~ ^(missing|never)?$ ]]; }; }; then
         :
       elif [ "$has_build" = 1 ]; then
         report "$file" "$where" "image '$image' is built here, but Compose may pull it instead (pull_policy '${pull:-unset}'): a built image is exempt from the pin only with pull_policy: build, or when it is named expense-tracker-<name>[:tag] with pull_policy unset, missing or never. Rename it, set pull_policy: build, or pin it by digest"

@@ -330,6 +330,17 @@ print-JQ_IMAGE:
 print-YQ_IMAGE:
 	@printf '%s\n' $(call shell_quote,$(YQ_IMAGE))
 
+# macOS ships BSD tools, but check-image-pins.sh, lint-workflows.sh and check-php-platform.sh use GNU `realpath -m` and
+# `base64 -d`. On a Mac with Homebrew's coreutils (`brew install coreutils`) its GNU tools are put first on PATH for the
+# three targets that run them and for nothing else. On Linux (CI included) `uname -s` is not Darwin, so nothing here
+# applies.
+ifeq ($(shell uname -s),Darwin)
+GNU_TOOLS_DIR := $(firstword $(wildcard /opt/homebrew/opt/coreutils/libexec/gnubin /usr/local/opt/coreutils/libexec/gnubin))
+endif
+ifneq ($(GNU_TOOLS_DIR),)
+check-image-pins lint-workflows check-platform: export PATH := $(GNU_TOOLS_DIR):$(PATH)
+endif
+
 check-image-pins: ## Every Dockerfile FROM/COPY --from/--mount from=, and Compose image (as Compose resolves it), is pinned by digest
 	@scripts/check-image-pins.sh
 

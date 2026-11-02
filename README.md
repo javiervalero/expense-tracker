@@ -18,6 +18,10 @@ phases.
 
 You do not need PHP, Composer or Node on the host: the PHP and Node tools run in pinned containers.
 
+On macOS, `make lint` also needs `brew install bash coreutils`: two guard scripts (`make check-image-pins` and
+`make lint-workflows`) need bash 4 or later and GNU `realpath` and `base64`, while macOS ships bash 3.2 and BSD tools.
+The Makefile finds Homebrew's coreutils by itself and adds nothing to your `PATH`. Linux needs nothing extra.
+
 ## Quick start
 
 ```bash

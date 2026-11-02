@@ -9,6 +9,12 @@ are emulators, so some behaviour differs from AWS; the differences that matter a
 You need Docker with Compose v2, `make` and `git`. PHP and Node are not needed on the host: every PHP and Node tool
 runs in a pinned container as your user, so no file ends up owned by root.
 
+On macOS, `make lint` also needs `brew install bash coreutils`. Two guard scripts (`make check-image-pins` and
+`make lint-workflows`) need bash 4 or later and GNU `realpath` and `base64`, but macOS ships bash 3.2 and BSD tools.
+Homebrew's `bin` directory must come before `/bin` on your `PATH` (Homebrew's installer sets that up), so that
+`#!/usr/bin/env bash` finds the new bash. The Makefile finds Homebrew's coreutils itself for those two targets and adds
+nothing to your `PATH`; Linux needs nothing extra.
+
 ```bash
 make frontend-install   # once: front-end dependencies (`make up` refuses to start without them)
 make php-install        # once: back-end dependencies (the API mounts backend/vendor)
