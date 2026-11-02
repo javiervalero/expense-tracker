@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **G1 approved 2026-11-02**: the owner approved this plan with every section 10 default. Next: Step 0 (G2), then WP2. Drafted by `ecc:planner` (opus/high); the main session checked the headline claims against the code (contract version, `formatCents` range, `MAX_QUERY_LIMIT`, register throttle, `JQ_IMAGE`) |
+| Status | **G1 approved 2026-11-02**: the owner approved this plan with every section 10 default. **G2 done 2026-11-02** (Step 0 R1–R5 recorded, no change to any decision; R6–R7 run in WP6). Next: WP2. Drafted by `ecc:planner` (opus/high); the main session checked the headline claims against the code (contract version, `formatCents` range, `MAX_QUERY_LIMIT`, register throttle, `JQ_IMAGE`) |
 | Phase | 6 (PLAN §12, essential track), size S (the smoke script makes it closer to S–M) |
 | Branch | `feat/phase-6-monthly-summary`, from `main` at 4735725 (Phase 5 merged in PR #8) |
 | Inputs | BRIEF; PLAN §2, §5 (Reports row), §6 ("Monthly summary" access pattern), §8, §9, §10, §12 rows 6–8, §13; ADR 0002 (+ Phase 3 note), 0005, 0011, 0012 (§4.1 forwarded headers; Bref query normalisation); Phase 3 plan B1, B3, B8, B16–B19, B24, §7.2, R13; Phase 2 plan §7 ("Phase 6: smoke.sh sends Origin and X-Requested-With and keeps a cookie jar"); Phase 4 plan C4, C8, C9, C11, C15, decision 13, line ~490; Phase 5 plan (structure, §3.1 rules) |
@@ -125,6 +125,16 @@ Docs questions go to `general-purpose` (sonnet/medium, a URL per claim). Ran che
 | R5 | **Ran:** `docker run --rm -i --network none $JQ_IMAGE` reads stdin and prints ordered `to_entries` of an object | WP6 |
 | R6 | Read-only GitHub code search for curl smoke-test patterns (cookie jar plus CSRF header, `-K` config to keep secrets out of argv) to adopt rather than invent | WP6 |
 | R7 | **Ran:** 1×1 PNG from GD in the php tools image passes `FileInspector` and reaches `ready` through the local pipeline | WP6 |
+
+**Step 0 results (2026-11-02).** G2 done for R1–R5: no decision and no ADR changes. R6 and R7 run in WP6, where they are used.
+
+| # | Result |
+|---|---|
+| R1 | Desktop Firefox and Safari do not support `<input type="month">` (they show a text box; Firefox bug 888320 open; web-features data: Baseline "No"). Source: web-platform-dx.github.io/web-features-explorer (input-date-time-month). The MDN compatibility table did not load for the agent, so that row is unverified. **D12 stands** |
+| R2 | Host curl 8.5.0 (≥ 7.79). Through `http://localhost:5173` (the Vite proxy): register 201, `/auth/me` 200, `__Host-session` kept in the jar, logout 204. CI runner curl version is still to be read in WP7 |
+| R3 | ElasticMQ answers an unsigned `GetQueueAttributes` at `http://127.0.0.1:9324/000000000000/receipts-dlq` (path form, not `/?QueueUrl=`). `ApproximateNumberOfMessages` = 0 on a fresh stack |
+| R4 | Reading 10,000 expenses of one month with `pageByDate` on DynamoDB Local: median 484 ms (570, 484, 464), 11 queries (the 10th batch of exactly 1,000 still returns a `lastKey`, so the probe query runs). **Keep `MAX_EXPENSES` = 10,000** (decision 3 unchanged) |
+| R5 | `docker run --rm -i --network none $JQ_IMAGE` works offline and keeps key order |
 
 ### WP1: Plan (S)
 - **Files:** this plan; PLAN §12 row 6 link. **Agent:** main session. **Commit:** `docs: add phase 6 implementation plan`.
