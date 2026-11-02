@@ -43,8 +43,9 @@ use ErrorException;
  *    minutes and can be used again, so a `failed` record deletes whatever is at the key, and a `ready` one compares the
  *    ETag of the object stored now with the one inspected. Other bytes there were never inspected: the record is failed
  *    and both files are deleted. A run whose own update lost to another run (`AlreadyProcessed`) may have read other
- *    bytes than that run settled with, so it re-reads the record and decides the same way (this also removes a thumbnail
- *    it wrote over the other run's).
+ *    bytes than that run settled with, so it re-reads the record and decides the same way, and also compares the ETag of
+ *    the bytes it inspected with the record's: when they differ, the thumbnail it wrote over the other run's is of other
+ *    bytes than the stored original, so the record is failed and both files are deleted.
  *
  * Any S3 or DynamoDB exception is thrown, so the batch processor reports this message for redelivery and, after the
  * queue's limit, the dead-letter queue. An invalid file is never an error. Logs carry message id, bucket, key, status,
@@ -170,6 +171,8 @@ final readonly class ReceiptProcessor implements RecordProcessor
             fn(): SettleResult => $this->receipts->markReady($key, $type, $this->clock->now(), $etag),
             'receipt ready',
             $context + ['status' => ReceiptStatus::Ready->value, 'contentType' => $type->value, 'width' => $inspection->width, 'height' => $inspection->height] + self::timing($started),
+            null,
+            $etag,
         );
     }
 
@@ -186,6 +189,7 @@ final readonly class ReceiptProcessor implements RecordProcessor
             'receipt failed',
             $context + ['status' => ReceiptStatus::Failed->value, 'failureReason' => $reason->value] + self::timing($started),
             fn() => $this->originals->delete($key),
+            $etag,
         );
     }
 
@@ -194,7 +198,7 @@ final readonly class ReceiptProcessor implements RecordProcessor
      * @param array<string, mixed> $context
      * @param (\Closure(): void)|null $afterApplied runs once this call has moved the record, before it is logged
      */
-    private function settle(ReceiptObjectKey $key, \Closure $update, string $message, array $context, ?\Closure $afterApplied = null): void
+    private function settle(ReceiptObjectKey $key, \Closure $update, string $message, array $context, ?\Closure $afterApplied = null, ?string $ownEtag = null): void
     {
         try {
             $result = $update();
@@ -206,7 +210,7 @@ final readonly class ReceiptProcessor implements RecordProcessor
         if ($result === SettleResult::AlreadyProcessed) {
             // Another run settled this record first, perhaps for other bytes than the ones this run read (the upload
             // policy can be used twice). Decide from the record as it is now, with the ETag check.
-            $this->settledElsewhere($key, $this->receipts->findByKey($key), $context);
+            $this->settledElsewhere($key, $this->receipts->findByKey($key), $context, $ownEtag);
 
             return;
         }
@@ -238,10 +242,10 @@ final readonly class ReceiptProcessor implements RecordProcessor
      *
      * @param array<string, mixed> $context
      */
-    private function settledElsewhere(ReceiptObjectKey $key, ?Receipt $current, array $context): void
+    private function settledElsewhere(ReceiptObjectKey $key, ?Receipt $current, array $context, ?string $ownEtag = null): void
     {
         $settled = $this->settledOrClean($key, $current, $context);
-        if ($settled === null || ($settled->status === ReceiptStatus::Ready && $this->verifySettled($key, $settled, $context))) {
+        if ($settled === null || ($settled->status === ReceiptStatus::Ready && $this->verifySettled($key, $settled, $context, $ownEtag))) {
             return;
         }
         $this->logAlreadyProcessed($settled, $context);
@@ -294,17 +298,22 @@ final readonly class ReceiptProcessor implements RecordProcessor
     /**
      * A `ready` record holds the ETag of the bytes that were inspected. The ETag of the object stored now (a HEAD, not
      * the event's, which can arrive out of order) must be the same: the upload policy can be used again for 5 minutes, and
-     * other bytes were never inspected. Then the record is failed (first, like step 6) and both files are deleted.
+     * other bytes were never inspected. Then the record is failed (first, like step 6) and both files are deleted. The
+     * same when the calling run lost its own update and inspected (and thumbnailed) other bytes than the record holds:
+     * the stored object can match the record while the thumbnail is of the run's older bytes.
      *
      * @param array<string, mixed> $context
+     * @param string|null $ownEtag the ETag of the bytes the calling run inspected, null when it inspected none
      *
      * @return bool true when the record was failed and the files deleted (the caller has nothing left to log)
      */
-    private function verifySettled(ReceiptObjectKey $key, Receipt $current, array $context): bool
+    private function verifySettled(ReceiptObjectKey $key, Receipt $current, array $context, ?string $ownEtag = null): bool
     {
         $inspected = $current->objectEtag;
         $stored = $inspected === null ? null : $this->originals->etag($key); // no ETag recorded: nothing to compare
-        if ($inspected === null || $stored === null || $stored === $inspected) {
+        $storedDiffers = $stored !== null && $stored !== $inspected;
+        $ownDiffers = $ownEtag !== null && $ownEtag !== $inspected;
+        if ($inspected === null || (!$storedDiffers && !$ownDiffers)) {
             return false;
         }
         try {

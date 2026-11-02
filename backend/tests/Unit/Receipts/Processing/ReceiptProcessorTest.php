@@ -727,6 +727,56 @@ final class ReceiptProcessorTest extends TestCase
         self::assertStringContainsString('"message":"receipt already processed"', $this->logged());
     }
 
+    /**
+     * Security finding L1: run 1 reads v1, the owner POSTs v2 with the same policy, run 2 settles the record with v2's
+     * ETag, then run 1 (which wrote the v1 thumbnail over run 2's) loses its update. The stored object is v2's, equal to
+     * the record's, so only the run's own ETag shows that the thumbnail is v1's.
+     */
+    public function testALosingRunWhoseThumbnailIsOfOlderBytesThanTheStoredAndSettledOnesFailsTheRecordAndDeletesBothFiles(): void
+    {
+        $v1 = ReceiptFixtures::png(10, 10);
+        $v2 = ReceiptFixtures::png(40, 30);
+        $this->upload($v1);
+        $store = $this->store;
+        $renderer = new class ($store, $v2) implements ThumbnailRenderer {
+            public function __construct(private InMemoryObjectStore $store, private string $newer) {}
+
+            public function make(string $bytes): string
+            {
+                // The owner uploads v2 while this run is working on v1.
+                $this->store->objects['receipts'][StoredReceipt::key()->originalKey()] = $this->newer;
+
+                return "\xFF\xD8\xFFjpeg of v1";
+            }
+        };
+        $this->mock->append(StoredReceipt::found(), self::conditionFailed(), self::readyWithEtagOf($v2), self::readyWithEtagOf($v2), new Result([]));
+
+        $this->processor($renderer)->process(self::ourRecord());
+
+        self::assertSame(['S' => InMemoryObjectStore::etagOf($v2)], $this->updated(':stored', 4), 'the replacement is conditional on the ETag the record holds');
+        self::assertSame(['S' => 'failed'], $this->updated(':failed', 4));
+        self::assertSame([], $this->store->keys(self::RECEIPTS));
+        self::assertSame([], $this->store->keys(self::THUMBNAILS), 'the v1 thumbnail written over the other run\'s is gone');
+        self::assertStringContainsString('"message":"receipt replaced after check"', $this->logged());
+    }
+
+    public function testADuplicateDeliveryOfTheSameBytesWhoseUpdateLostLeavesTheReadyRecordAndItsThumbnailUntouched(): void
+    {
+        $png = ReceiptFixtures::png(40, 30);
+        $this->upload($png);
+        $this->mock->append(StoredReceipt::found(), self::conditionFailed(), self::readyWithEtagOf($png), self::readyWithEtagOf($png));
+
+        $this->processor()->process(self::ourRecord());
+
+        $updates = array_filter($this->events(), static fn(string $event): bool => $event === 'dynamodb UpdateItem');
+        self::assertCount(1, $updates, 'only the update that lost');
+        self::assertCount(1, $this->store->keys(self::RECEIPTS));
+        self::assertCount(1, $this->store->keys(self::THUMBNAILS));
+        self::assertStringStartsWith("\xFF\xD8\xFF", $this->store->objects[self::THUMBNAILS][StoredReceipt::key()->thumbnailKey()] ?? '');
+        self::assertStringContainsString('"message":"receipt already processed"', $this->logged());
+        self::assertStringNotContainsString('replaced after check', $this->logged());
+    }
+
     public function testAnInvalidFileThatLostToAFailedRecordStillGetsItsOriginalDeleted(): void
     {
         $this->upload('<svg/>');
