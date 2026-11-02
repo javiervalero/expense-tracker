@@ -1,3 +1,5 @@
+import type { Receipt } from './api/types'
+
 // App-wide constants. Each one names the contract (contract/openapi.yaml) or plan decision it comes from; change them
 // only together with the contract.
 
@@ -35,3 +37,27 @@ export const REQUEST_TIMEOUT_MS = 10_000
 
 // Shown where a stored amount or date cannot be displayed (never expected: the server validates both).
 export const UNKNOWN_VALUE = '—'
+
+// Plan phase-5 C17 and the contract: a receipt is a JPEG, PNG, WebP or PDF of 1 byte to 10 MiB.
+export const RECEIPT_MAX_BYTES = 10_485_760
+export const RECEIPT_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'application/pdf',
+] as const satisfies readonly Receipt['contentType'][]
+
+// Plan phase-5 C18: polling a pending receipt starts at 1 s, grows by 1.5x up to 5 s a try, and gives up after 60 s.
+export const POLL_INITIAL_MS = 1_000
+export const POLL_FACTOR = 1.5
+export const POLL_MAX_MS = 5_000
+export const POLL_TOTAL_CAP_MS = 60_000
+
+// Plan phase-5 C17: a browser upload to the bucket with no answer after 2 minutes is aborted.
+export const UPLOAD_TIMEOUT_MS = 120_000
+
+// Plan phase-5 C19: the only plain-http origin an upload or view address may use (the local object store in development).
+export const DEV_UPLOAD_ORIGIN = 'http://localhost:9000'
+
+// Plan decision 6: a signed view address is fetched again when it expires within 60 seconds.
+export const URL_REFRESH_MARGIN_MS = 60_000

@@ -185,6 +185,29 @@ export default defineConfig(
   },
 
   {
+    // The only place that may use XMLHttpRequest: fetch cannot report upload progress (plan phase-5 C17). Same
+    // list as everywhere else, minus XMLHttpRequest; fetch, location, storage and the rest stay banned here.
+    name: 'app/allow-upload',
+    files: ['src/api/upload.ts'],
+    rules: {
+      'no-restricted-properties': [
+        'error',
+        ...COOKIE_AND_HTML_PROPERTIES,
+        ...FETCH_PROPERTIES,
+        ...LOCATION_PROPERTIES,
+        ...OTHER_PROPERTIES,
+      ],
+      'no-restricted-globals': [
+        'error',
+        ...STORAGE_GLOBALS,
+        FETCH_GLOBAL,
+        LOCATION_GLOBAL,
+        ...OTHER_GLOBALS.filter((restricted) => restricted.name !== 'XMLHttpRequest'),
+      ],
+    },
+  },
+
+  {
     // Specs stub fetch, location and the like; the cookie, storage and HTML rules still apply to them.
     name: 'app/spec-stubs',
     files: ['src/**/*.spec.ts'],

@@ -1,0 +1,571 @@
+# Phase 5: Receipts. Implementation plan
+
+| | |
+|---|---|
+| Status | **G1 approved 2026-10-29**: the owner approved this plan with every section 10 default. **G2 done 2026-10-29**: Step 0 results recorded; no ADR amendment needed (decision 15 is (a), decision 21 keeps the timings). **WP2 done 2026-10-29.** **WP3 done 2026-10-29.** **WP4 done 2026-10-30.** **WP5 done 2026-10-30** (exact-size policy: owner decision, C5). **WP6 done 2026-10-30.** **WP7 done 2026-10-30.** **WP8 done 2026-10-30** (PNG compressed chunks refused, not measured: owner option (b); ETag re-POST check: owner decision). **WP9 done 2026-10-31.** **WP10 done 2026-11-01** (upload URL and view URL get separate checks: C17's "no query" fits only the upload URL). **WP11 done 2026-11-01** (L6 aborts only the form's two reads; the composable's `stop()` is terminal). **WP12 done 2026-11-02** (the receipt panel; the form grew by 5 lines). Next: G3 walkthrough, then ready for review. **WP13 done 2026-11-02** (security pass, docs, walkthrough). **G3 accepted by the owner 2026-11-02 with the partial walkthrough listed under section 6.** Phase 5 done; PR #8 ready for the owner to merge (G6). |
+| Phase | 5 (PLAN §12, essential track), size L |
+| Branch | `feat/phase-5-receipts`, from `main` at ec1b8e0 (Phase 4 merged in PR #7) |
+| Inputs | BRIEF; PLAN §5 (Receipts API row), §6 (Receipt row, cleanup rules), §7, §9 (Receipts), §10, §12–13; ADR 0002, 0005, 0006 (key), 0007 (incl. the Phase 0 spike result, the "Presigned GET and the Host header" note and R13), 0008 ("Implemented in Phase 4"), 0011, 0012 §2–3 and the GD results; Phase 3 plan (back-end WP style, cross-user suite); Phase 4 plan (C2–C4, C16, whole-PR notes L6/L16) |
+| Drafted by | `ecc:planner` (opus/high). The main session still has to check it against the code |
+| AWS | **None.** No AWS calls, no credentials, $0. Everything runs against the Compose emulators. IAM, bucket encryption, the real notification and CSP headers belong to Phase 7 |
+| Back end + front end | Both. Contract 0.11.0 → 0.12.0 (additive) |
+
+**Scope (PLAN §12 row 5):** signed uploads; emulator → relay → ElasticMQ → worker; thumbnails bucket; conditional status updates and cleanup; TTL on pending; status polling; preview (image thumbnail, PDF icon). Front end: upload in the expense form, with progress, status and preview.
+
+**Not in scope:** PDF thumbnails (PLAN §7, ADR 0006), OCR, a receipt marker in the expense list (decision 11), Terraform/IAM/CSP headers (Phase 7), smoke script (Phase 6), Playwright (L1).
+
+## Contradictions found while planning
+
+Each item ends with where it is resolved. "Decision N" means §10 (you choose); a C-row in §2 or a WP means the plan fixes it with no real alternative.
+
+- (1) ADR 0008's target CSP (`connect-src 'self'; img-src 'self'`) and ADR 0005's "one origin, no CORS" do not fit ADR 0006's direct browser→S3 POST and signed previews, so the S3 hosts have to be added. **→ Resolved by C20** (Phase 7 CSP target with the two bucket hosts, recorded in the ADR 0008 note in WP13; nothing changes locally). Not a §10 decision: direct upload to S3 needs it.
+- (2) ADR 0006 has the API delete S3 objects, but `api-php` sits only on `api-internal`, which cannot reach `s3`; ADR 0007 R13 says to revisit if a non-AWS image joins that network. **→ Decision 15** (recommended: (a) an unpublished nginx listener; (b)/(c) need an ADR 0007 amendment at G2).
+- (3) ADR 0006 says "delete expense + receipt in one transaction, then the objects", but `ExpenseRepository::delete` uses TransactWriteItems, which cannot return the old `objectKey`. **→ Resolved by C8, decision 16** (prefix cleanup of both buckets after the transaction).
+- (4) ADR 0006's replace uses `PutItem ReturnValues=ALL_OLD`, but that cannot also check that the expense still exists, so a replace racing an expense delete leaves an orphan record. **→ Resolved by C4** (one transaction: `ConditionCheck` on the expense + conditional `Put` of the receipt; 404 / 409). Not a §10 decision: it is a correctness fix; decision 18 covers only the status code.
+- (5) The Phase 4 lint bans `XMLHttpRequest` everywhere, yet upload progress needs it (fetch has no upload progress). **→ Resolved by C17, decisions 13 and 14** (an owner-added ESLint override for `src/api/upload.ts` only).
+- (6) The bootstrap CORS rule allows only `http://localhost:5173`, while `APP_ORIGINS` also allows `http://127.0.0.1:5173`. **→ No change needed.** Signing in already works only on `http://localhost:5173` (the `__Host-` `Secure` cookie, `docs/local-dev.md` sign-in note), and an upload needs a signed-in user, so `127.0.0.1` can never reach the S3 POST. WP13 repeats the "use localhost" note in the receipt walkthrough; Phase 7 sets the real CORS origin (§7 carry list).
+- (7) `ReceiptPipeTest` and the Makefile check for the Phase 0 "receipt received" log line, using a non-UUID key and junk bytes that the real worker will ignore. **→ Resolved in WP9**: the test seeds a pending receipt record and uploads under its valid key, so it checks the real worker path (`receipt ready` / `receipt failed`), not a log line for ignored keys.
+- (8) PLAN §8 puts receipt upload in "the expense form", but the API needs an existing expense id, so the new-expense form cannot upload. **→ Resolved by C16, decision 10** (upload on the edit page only).
+
+## 0. What exists vs what Phase 5 builds
+
+| Area | Exists (read from the code) | Phase 5 builds |
+|---|---|---|
+| Worker plumbing | `Queue/SqsBatchProcessor` (partial batch failures, whole-batch validation, error logging without foreign messages); `Receipts/S3EventParser` (TestEvent → `[]`, `urldecode`, ignores `eventSource`); `S3ObjectRef`; `InvalidS3Event`; `Worker/WorkerFactory` (the one swap point); `entrypoints/lambda/worker.php` | `ReceiptProcessor` replaces the placeholder `ReceivedReceiptLogger` (deleted at G5); file inspection, GD thumbnail, conditional updates, cleanup |
+| Local pipeline | silo (presigned POST enforced, 8/8 cases), `receipts` + `receipt-thumbnails` buckets, CORS (POST/GET/HEAD from `S3_CORS_ALLOWED_ORIGIN`), notification `receipts/` → relay → ElasticMQ (redrive 3, visibility 10 s) → `worker-runner` (8 s timeout) → `worker` (Bref php-85 + GD, RIE, no env, no credentials) | Worker env (DynamoDB, S3, buckets, fake keys); API → S3 path (decision 15) |
+| Data | `ExpenseKeys::receipt()` (`RCPT#<expenseId>`); `ExpenseRepository::delete` deletes `EXP#` + `RCPT#` in one transaction (no object cleanup); `TableLayout::EXPIRES_AT`; TTL on `expiresAt` (`infra/dynamodb/table.json`) | `ReceiptRepository`; `ItemStore` gains a delete that returns the old item (`ReturnValues=ALL_OLD`) |
+| S3 in `src/` | **None.** No S3 client in `backend/src/Infrastructure` (only in `docker/local-aws/src/Bootstrap` and test support). `aws/aws-sdk-php` is already a dependency (`PostObjectV4`, presigners) | `Infrastructure/S3/*` |
+| API | No receipt routes. `CrossUserCoverageTest` already says "Phase 5's receipt routes are caught here" | 3 routes, contract, cross-user rows |
+| Tests | `ReceiptPipeTest` (junk upload consumed; poison message → DLQ in 3 receives), `S3ToQueueTest`, `RelayHttpTest`, `RieInvocationTest`, `PresignedPostUpload` support, Makefile log-marker checks | Lifecycle, race, cleanup and cross-user integration tests; updated pipe markers |
+| Front end | `http.ts` (same-origin, `redirect:'error'`, safe-path allow-list, CSRF header); `problem.ts`; `ExpenseFormView.vue` (~420 lines, no AbortSignal: L6/L16); lint bans `fetch` outside `http.ts`/`health.ts` and `XMLHttpRequest` everywhere | `api/receipts.ts`, `api/upload.ts` (XHR, the only place allowed), `useReceipt` composable, `ReceiptPanel` |
+
+## 1. Goal and definition of done
+
+**Goal:** on the edit page of their own expense, a user attaches a JPEG, PNG, WebP or PDF of up to 10 MiB. The file goes straight to S3 with visible progress. The page shows "Processing", then a thumbnail (images) or a PDF icon, and opens the original through a short-lived link. Replace and delete work. Invalid, oversized and disguised files are rejected and nothing is left behind. No user can reach another user's receipt.
+
+**Done means:**
+- **Back end:** the 3 endpoints match contract 0.12.0 (every integration response is validated against it). The worker handles every case in ADR 0007's list "How the SQS path is tested", unit-tested with both AWS and silo fixtures.
+- **Integration (Compose, real relay + runner + worker):**
+  - a valid image becomes `ready` with a thumbnail;
+  - a valid PDF becomes `ready` with no thumbnail;
+  - a disguised file becomes `failed` and its object is deleted;
+  - an upload whose record was deleted, replaced or expired gets its objects removed;
+  - redelivery is a no-op;
+  - a malformed message goes to the DLQ after 3 receives;
+  - expense delete removes the objects;
+  - cross-user calls get 404.
+- **Front end:** `make frontend-lint frontend-test frontend-build check-bundle-csp check-bundle-secrets frontend-audit` all pass, with **100% coverage kept**.
+- **Back end checks:** `make lint test-unit test-contract test-local-aws`, then `make test-conformance` and `make test-integration` (one at a time), all pass. 80% bar on `src/`; target ≥ 95% on `src/Receipts`.
+- **G3 walkthrough** by the owner (§6).
+- **Docs:**
+  - ADR 0006/0007/0008 get "Implemented in Phase 5" notes (CSP target with S3 hosts, the network change, the runner timing if changed);
+  - `docs/local-dev.md` gets the receipt walkthrough;
+  - PLAN §12 row 5 → Done.
+- **Safety:** no new Composer/npm dependency (decision 20); CI keeps the same 7 required jobs.
+
+## 2. Design decisions (recommended defaults)
+
+| # | Topic | Recommendation | Source / ADR impact |
+|---|---|---|---|
+| C1 | Object keys | Original: `receipts/<userId>/<expenseId>/<receiptId>`. Thumbnail: `<userId>/<expenseId>/<receiptId>.jpg`. The user id comes from the session `Principal`; the expense id is a validated route UUID; the receipt id is a fresh server UUID v4. **The client's filename is never used or stored.** `ReceiptObjectKey::parse()` accepts only `^receipts/<uuid>/<uuid>/<uuid>$` (lower-case canonical, `Uuid::isValid`), after `urldecode` | ADR 0006 Storage; PLAN §6 |
+| C2 | Record | `PK USER#<u>`, `SK RCPT#<e>`. Fields: `receiptId`, `objectKey`, `status` (`pending`/`ready`/`failed`), `contentType` (declared), `size` (declared), `createdAt`, `expiresAt` (pending: +24 h; failed: +7 d; removed on ready), `failureReason` (failed only), `processedAt`. Hydrated field by field like `ExpenseRepository` (a corrupt item is a `StorageFailure`) | ADR 0002, 0006 |
+| C3 | TTL is not correctness | Reads treat `pending`/`failed` with `expiresAt ≤ now` as "no receipt" (`ReceiptRepository::find` returns null), so behaviour never depends on when DynamoDB actually deletes (up to days late; DynamoDB Local was never shown to expire, ADR 0007 Phase 1 note). The worker's conditional update also compares `expiresAt > :now`, so an expired pending record cannot become ready | ADR 0006 Lifecycle row 1 |
+| C4 | `POST /expenses/{id}/receipt/upload` | Body `{contentType, size}`: `contentType` ∈ the 4 types, `size` an integer from 1 to `MAX_BYTES`. Otherwise 422 at `/contentType` or `/size`. Steps: (1) `GetItem` the current receipt; (2) one `TransactWriteItems`: `ConditionCheck EXP#<e> attribute_exists(PK)` plus `Put RCPT#<e>` with condition "unchanged since step 1" (`attribute_not_exists(PK)` or `receiptId = :old`); (3) only after it commits, delete the old original and thumbnail if there was one; (4) return the policy. The expense condition fails → 404. The receipt condition fails → 409 "changed elsewhere, reload" (one retry is not worth it). Answer: **201** with `Location: /api/v1/expenses/{id}/receipt` and `{receiptId, url, fields, expiresAt, maxBytes}`. `Cache-Control: no-store` | ADR 0006 Flow 1 and replace row; fixes contradiction 4. Decision 18 |
+| C5 | Upload policy | `PostObjectV4`, signed against the **public** endpoint (locally `S3_PUBLIC_ENDPOINT=http://localhost:9000`, path style; ADR 0007 Host-header note). No network call. Conditions: `bucket` eq, `key` eq, `Content-Type` eq the declared type, `content-length-range [size, size]` (exactly the declared size, 1 ≤ size ≤ `MAX_BYTES`; owner decision 2026-10-30, WP5 security review), 5-minute expiry. No `acl`, no `success_action_redirect`; S3 rejects unsigned extra fields (spike case 6) | ADR 0006; spike table |
+| C6 | `GET /expenses/{id}/receipt` | 404 when the expense is not the caller's, or there is no live receipt (C3). 200 `{receiptId, status, contentType, size, createdAt, failureReason, viewUrl, thumbnailUrl, urlsExpireAt}`. The URLs are set **only when `ready`**: `viewUrl` = presigned GET of the original with `ResponseContentType` = the type the worker verified and `ResponseContentDisposition: inline; filename="receipt.<ext>"`; `thumbnailUrl` for images only. Lifetime 5 min (decision 6). `Cache-Control: no-store` | ADR 0006 Flow 5; PLAN §9 |
+| C7 | `DELETE /expenses/{id}/receipt` | `DeleteItem RCPT#<e>` with `ReturnValues=ALL_OLD`, then `DeleteObjects` of that original and thumbnail. 204; 404 when nothing was there (decision 25) | ADR 0006 delete row |
+| C8 | Expense delete cleanup | Keep the existing transaction. Afterwards, list and delete the prefixes `receipts/<u>/<e>/` (receipts bucket) and `<u>/<e>/` (thumbnails), using `ListObjectsV2` + `DeleteObjects`. That needs no old key, and it also catches strays. Safe because no receipt can be created once the expense is gone (C4 ConditionCheck), and the ids are never reused | ADR 0006 expense row; fixes contradiction 3. Decision 16 |
+| C9 | S3 failure after the record is gone | SDK retries (default 3), then an `ERROR` log line `receipt cleanup failed` with bucket and keys (never URLs or signatures). The HTTP answer is still the success code: the user's intent (record gone) is done. Phase 7 adds a metric filter and an alarm on that message | ADR 0006 last row |
+| C10 | Worker algorithm per S3 record | (1) the bucket must equal `RECEIPTS_BUCKET` and the key must parse (C1); otherwise `info` log and skip (success). (2) `GetItem RCPT#<e>` (strongly consistent); if it is missing, has another `objectKey`, or is not `pending`, go to (7). (3) `GetObject`: `NoSuchKey` → re-read; if the record is still pending with this key, throw (retry/DLQ), else (7). Also refuse `ContentLength > MAX_BYTES`. (4) Inspect (C11). (5) Images: write the thumbnail (C12). (6) `UpdateItem` `SET status=ready, contentType=:detected, processedAt REMOVE expiresAt, failureReason`, condition `objectKey = :key AND #status = :pending AND expiresAt > :now`. `ready` also stores `objectEtag`, the ETag of the object that was read in (3). Invalid file, or a thumbnail that cannot be made (`unreadable`): `status=failed, failureReason, expiresAt=now+7d` with the same condition, **then** delete the original (amended in WP8 review: record first, so a storage error never leaves a pending record without its file). (7) Condition failed or not ours: re-read. Same key and already `failed` → delete the original and thumbnail (idempotent), no write. Same key and `ready` → duplicate, no write, **unless** the object stored now has another ETag than `objectEtag` (a HEAD; amended in WP8 review): then update `ready`→`failed` (condition: key, `ready`, `objectEtag`), delete both files, and if that condition fails re-read and decide again once. Missing, different key, or expired → delete the original and the thumbnail (idempotent deletes). Any S3 or DynamoDB exception is thrown, so the record lands in `batchItemFailures` (retry, then DLQ after 3). **An invalid file is never a failure** (no DLQ) | ADR 0006 Flow 4.1–4.6 |
+| C11 | File inspection | Magic bytes at offset 0: JPEG `FF D8 FF`; PNG the 8-byte signature; WebP `RIFF????WEBP`; PDF `%PDF-`. The detected type must **equal the declared** `Content-Type`, else `unsupported-type`. Images: `getimagesizefromstring` (reads the header, does not decode) must agree on the type; width and height between 1 and 12,000, and width × height ≤ 40,000,000 (else `too-large`); only then `imagecreatefromstring` inside an error handler that turns GD warnings into `unreadable`. Anything else (SVG, HTML, GIF, HEIC, ZIP, text) is `unsupported-type`. PDFs are not parsed (magic check only); they are served with a forced type from the S3 origin (C14) | PLAN §7, §13 risk; ADR 0006 4.2 |
+| C12 | Thumbnail | GD: fit inside 480×480 (never upscale), `imagecopyresampled` onto a white truecolor canvas (flattens transparency), JPEG quality 80, `ContentType: image/jpeg`. Metadata is dropped by the re-encode. EXIF orientation is applied only if the `exif` extension is in the worker image (Step 0 R2). Memory is freed (`unset`) before the next record | ADR 0006 thumbnails row. Decisions 4, 5 |
+| C13 | Least privilege in code | The worker gets two narrow ports. `OriginalObjects` can only `get` and `delete` in `receipts`; `ThumbnailObjects` can only `put` and `delete` in `receipt-thumbnails`. An architecture test pins that nothing under `src/Receipts/Processing` or `src/Worker` can reach a `putObject` on the receipts bucket. On AWS, IAM enforces it (Phase 7). Locally, silo's root keys are used (decision 26) | ADR 0006 Storage; PLAN §9 |
+| C14 | Cross-user isolation | Every API read and write uses `PK = USER#<principal>` (key built from the session). Another user's expense gives the same 404 as an unknown one, on all 3 routes. A policy covers exactly one key, under the caller's prefix. View URLs cover one object for 5 min. Receipt ids are random v4, so keys cannot be guessed, and even a guessed key gives nothing without a signature. Originals are served from the **S3 origin, not the app origin**, with a forced `Content-Type`, so a hostile PDF or polyglot cannot run script with the app's cookie | ADR 0002, PLAN §5 ("always 404") |
+| C15 | Logging | Log message ids, bucket, key, status, failure reason and timings. **Never** policies, signatures, presigned URLs or file bytes. A log-hygiene marker test (WP9) covers it | Phase 3 log-hygiene pattern |
+| C16 | Front end: where uploads live | The receipt panel appears **on the edit page only** (the API needs an expense id). The new-expense form shows "You can attach a receipt after saving." | Contradiction 8. Decision 10 |
+| C17 | Front end: upload transport | `src/api/upload.ts` is the **only** file allowed to use `XMLHttpRequest` (owner-made ESLint override, WP10). It posts a `FormData` built from `fields`, in the order received, with the file appended **last**. `withCredentials = false`. **No custom headers** (a simple CORS request, no preflight, and never the `X-Requested-With` header: that header is for the API only). Timeout 120 s; aborted by an `AbortSignal`. Progress comes from `xhr.upload.onprogress`. It never throws and returns `UploadResult`. Before sending it checks the URL: `https:`, or exactly `http://localhost:9000` in dev; no userinfo or fragment, and no query for the upload URL. The view-URL check (C19) allows a query, because presigned GETs carry the signature there (WP10 correction). Field names must come from an allow-list (`key`, `Content-Type`, `Policy`, `X-Amz-*`). All other API calls stay in `http.ts` | Phase 4 C2, C3, C16; contradiction 5. Decisions 13, 14 |
+| C18 | Polling | After the upload's 204: `GET …/receipt` at 1 s, then ×1.5 up to 5 s. Stops on `ready`, `failed`, 404, unmount (abort), or a 60 s total cap; after the cap it shows "Still processing" with a "Check again" button. Pauses while `document.visibilityState === 'hidden'`. A generation counter drops stale answers (Phase 4 R7 pattern) | Decision 8 |
+| C19 | Preview | Ready image: `<img :src="thumbnailUrl" alt="Receipt thumbnail" width height loading="lazy">`. Ready PDF: an inline-SVG `PdfIcon` component (template markup, so no resource and no CSP impact) plus "PDF, 1.2 MB". Both get an "Open receipt" link: a same-tab `<a :href="viewUrl" rel="noreferrer">`, no `target="_blank"` (C16 lint). If the URLs are within 60 s of `urlsExpireAt`, the click first refetches the status (decision 6). URLs go into `src`/`href` only after passing the same shape check as C17. Never `v-html` | PLAN §7; Phase 4 C16 |
+| C20 | CSP | No bundle change: the S3 hosts reach the app only at runtime, so `check-bundle-csp.sh` needs no change. Uploads use XHR, which falls under `connect-src`, **not** `form-action` (that stays `'self'`). Target for Phase 7, written into the ADR 0008 note: `connect-src 'self' https://<receipts-bucket-host>`, `img-src 'self' https://<thumbnails-bucket-host>`. Opening the original is a top-level navigation, which CSP does not limit. Locally Vite sends no CSP. ADR 0006 CORS stays: `receipts` allows POST/GET/HEAD from the app origin only; thumbnails need none (a plain `<img>`) | ADR 0005, 0006, 0008; contradiction 1 |
+| C21 | Accessibility | Labelled `<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf">` with its rules in `aria-describedby`. A `<progress max="100">` with a visible "Uploading… 45%" text. The always-present polite live region (ADR 0008 note) announces only the milestones (upload started, uploaded/processing, ready, failed), never every percent. Errors go to `FormAlert`, with focus moved to it. Status is shown in text, never colour alone. Replace and delete use `ConfirmDeleteButton`; replace asks "Replace the current receipt? It is deleted at once." | Phase 4 C15 |
+| C22 | Phase 4 follow-ups | **L6:** `ExpenseFormView`'s requests get an `AbortSignal`, aborted on unmount and route change (WP11). **L16:** all receipt logic lives in `useReceipt` + `ReceiptPanel`; the view gains about 15 lines at most. The full refactor of the existing form logic stays a follow-up | Phase 4 whole-PR notes |
+
+**Error mapping (front end, `src/lib/receiptMessages.ts`)**
+
+| Where / failure | UI |
+|---|---|
+| Client pre-check: wrong type, empty file, > 10 MiB | "Choose a JPEG, PNG, WebP or PDF file up to 10 MB." No request is sent |
+| Policy 404 | "This expense no longer exists." |
+| Policy 409 | "The receipt changed in another tab. Reload." |
+| Policy 422 | The field message under the file input |
+| Policy 401/403/429/503/5xx/network | Phase 4 C4 texts |
+| S3 400 (`EntityTooLarge`/`TooSmall`) | the size message |
+| S3 403 (policy expired or refused) | "The upload link expired. Try again." (a Retry button asks for a new policy) |
+| S3 network, timeout, abort | "Upload interrupted. Try again." (abort on unmount is silent) |
+| `failed` + `unsupported-type` | "This file isn't a valid JPEG, PNG, WebP or PDF." |
+| `failed` + `too-large` | "The image is too large (max 40 megapixels)." |
+| `failed` + `unreadable` | "The file could not be read." |
+| Polling cap reached | "Still processing. Check again in a moment." with a button |
+| Delete 404 | "Already removed." |
+
+## 3. Work packages
+
+**One commit per WP, tests first. The red run is recorded in §7 review notes.** Order: WP1 → Step 0 → WP2 … WP13, one after another on one branch.
+
+### 3.1 Rules every agent brief repeats verbatim
+- **Make targets only, in pinned containers.** Never `npm`, `node`, `npx`, `php`, `composer` or `python` on the host. One spec at a time via `make -n …`, as in `docs/local-dev.md`.
+- **One make target at a time, in the foreground.** No background jobs, no `&`, no hand-written polling or `pgrep` loops, never two test runs at once (above all, never two `make test-integration`).
+- **No new dependency** (Composer, npm, apt, PHP extension, image) without an owner decision. Proposed ones are listed in section 10.
+- **Shared Docker host:** only the repo's make targets, `docker compose -p expense-tracker` (`up`, `stop`, `start`, `run --rm`, `logs`, `ps`, `down` **without** `-v`), and `docker run --rm`. Never `prune`, `down -v`, `volume rm`, or `rm $(docker ps -aq)`. Remove only what you created, by name; otherwise stop and ask.
+- **Endpoint security:** never download, vendor or generate payload/fuzzing corpora, malware samples, wordlists or offensive tools, and never scan ports (localhost included). Test files are **hand-written**:
+  - tiny images generated **inside the test** with GD (`imagecreatetruecolor` + `imagejpeg`/`imagepng`/`imagewebp` into a string);
+  - header-only "huge dimension" PNG/JPEG/WebP built byte by byte in the test (PNG IHDR with its `crc32`);
+  - a 1-page PDF written as a literal string;
+  - text like `<svg …>`/`<html>` saved under an image content type.
+  Nothing is fetched from the internet.
+- **No AWS calls** and no real credentials. Only the fake `.env` pair.
+- **Protected config:** never edit `frontend/eslint.config.ts` (or other protected config) by any route, including `sed` or shell. Lint-config changes are owner steps (WP10).
+- **Ask before every push.** After a push, watch CI by run id and check `headSha` (`gh run watch`, or `gh … --jq`; no host `jq`).
+
+### 3.2 Model routing (`.claude/rules/project/model-routing.md`)
+- **Implementation:** `ecc:tdd-guide`, sonnet/medium, one brief per WP (file paths, named tests, make targets).
+- **Review, one language reviewer per diff:**
+  - `ecc:php-reviewer` for PHP;
+  - `ecc:vue-reviewer` for `.vue` diffs;
+  - `ecc:typescript-reviewer` for pure-TS diffs;
+  - `ecc:code-reviewer` only for cross-cutting Compose/Makefile/CI diffs over ~30 lines.
+  All sonnet/medium.
+- **Security:** `ecc:security-reviewer`, **opus/high**, on WP2, WP3, WP4, WP5, WP6, WP7, WP8, WP10, WP12 and the WP13 whole-feature pass (uploads, signed URLs, file parsing, DB conditions and IAM-like splits all trigger `code-review.md`). Round 2 on the fix hunks, also opus/high. WP9 and WP11 rely on the language reviewer, plus WP13 (decision 22).
+- **Other agents:**
+  - docs: `ecc:doc-updater` haiku/low, checked line by line by the main session;
+  - test-run summaries: `general-purpose` haiku/low;
+  - build errors: `ecc:build-error-resolver` sonnet/low, then opus/high.
+- **Pipeline per WP:** tdd-guide → main session re-runs the WP's make targets → reviewer(s) → one fix list → round 2 → notes → commit.
+
+### Step 0: Research & Reuse (before WP2)
+Docs questions go to a `general-purpose` agent (sonnet/medium, WebFetch, a URL for every claim). The **ran** checks are run by the main session with `docker run --rm` of the pinned images, or through make. GitHub search is read-only. Results go into a "Step 0 results" table before WP2.
+
+| # | Question | Needed by |
+|---|---|---|
+| R1 | aws-sdk-php `PostObjectV4`: conditions format, `X-Amz-Security-Token` with session credentials (Lambda), expiry. `createPresignedRequest(GetObject)` with `ResponseContentType`/`ResponseContentDisposition`. One client signs for the public endpoint while another calls the internal one (path style) | WP3 |
+| R2 | **Ran** in the worker image: `php -m` (gd, exif?), `gd_info()`, Bref function-runtime `memory_limit`, and the wall time and peak memory to inspect and thumbnail a 40 MP JPEG and PNG **generated in-container**. Compare with the runner's 8 s timeout | WP7, decision 21 |
+| R3 | **Ran:** does the `php` dev tools image (`docker/php/Dockerfile` target `dev`) have GD with JPEG/PNG/WebP? (needed for unit tests) | WP7, decision 19 |
+| R4 | `getimagesizefromstring` on truncated input, a huge IHDR, WebP VP8/VP8L/VP8X, CMYK JPEG. Is there any GD pixel cap in PHP 8.5? | WP7 |
+| R5 | **Ran** against silo: presigned GET with response overrides; `ListObjectsV2` + `DeleteObjects`; the CORS answer to a multipart POST from `http://localhost:5173` (status readable; ACAO present) | WP3, WP10 |
+| R6 | **Ran** against DynamoDB Local: `TransactWriteItems` ConditionCheck + conditional Put, and the cancellation reasons by position; `DeleteItem ALL_OLD`; `UpdateItem … REMOVE expiresAt` with a condition | WP4 |
+| R7 | jsdom 30: `File`, `Blob`, `FormData`, and how far a stubbed `XMLHttpRequest` (fake class through `vi.stubGlobal`) can fire `upload.onprogress` | WP10 |
+| R8 | CSP: confirm `form-action` does not govern XHR; the S3 virtual-hosted host form per bucket; Chrome/Firefox open a presigned PDF with `inline` in the built-in viewer | WP12, WP13 |
+
+#### Step 0 results (2026-10-29, G2)
+
+Docs answers came from a `general-purpose` agent (sonnet/medium) reading the aws-sdk-php, php-src, libgd and jsdom sources and the CSP3 spec/MDN. "Ran" rows were run by the main session: the worker and php images with `--network none` and the worker's hardening flags, and the php tools container against `make up`. Throwaway data only, all deleted afterwards.
+
+| # | Result | Effect on the plan |
+|---|---|---|
+| R1 | `PostObjectV4($client, $bucket, $formInputs, $conditions, $expiry)`: the conditions are copied as given. It adds **no** `bucket`/`key` condition by itself. With session credentials it adds `X-Amz-Security-Token` to both the inputs and the policy. A presigned GET signs `response-content-type`/`-disposition` into the query. The signed host is the signing client's endpoint host (virtual-hosted unless `use_path_style_endpoint`) | C5 already lists every condition explicitly; WP3 unit tests assert each one is present. Two clients (public for signing, internal for calls) as planned |
+| R2 | **Ran.** The worker image has GD (JPEG, PNG, WebP; no AVIF) and `exif`. Bref's default `memory_limit` is 10240M (the Lambda memory size is the real bound). A 40 MP (8000×5000) source: JPEG 0.41 s, PNG 0.41 s, from inspect to a 480×300 thumbnail at q80 (~49 KB). PHP's peak counter rose by 157 MB (JPEG) and 271 MB (PNG), so GD's pixel buffers **do** count against `memory_limit` | **Decision 21: keep 8 s / 10 s.** EXIF rotation is on (C12). Phase 7 worker memory ≥ 2 × 271 MB, so 1024 MB |
+| R3 | **Ran.** The `php` dev tools image has **no** GD and no `exif` | **Decision 19 applies:** add `gd` (JPEG, PNG, WebP) and `exif` to the `dev` stage of `docker/php/Dockerfile` in WP7 |
+| R4 | `getimagesizefromstring` reads headers only and reports a huge PNG IHDR as is; truncated input → `false`. **`imagecreatefromstring` allocates width × height × 4 up front**, before decoding. WebP VP8/VP8L/VP8X sizes are read (since PHP 7.1). CMYK JPEG: `channels = 4`, and libgd loads it with a basic CMYK→RGB conversion. No GD pixel cap; `gd.jpeg_ignore_warning` only controls warnings | C11's "check size before decoding" is required, not optional (a decompression bomb otherwise). CMYK JPEGs are accepted; WP7 adds a CMYK fixture case |
+| R5 | **Ran.** A presigned GET with overrides returns `application/pdf` + `inline; filename="receipt.pdf"`; a tampered override → 403. `ListObjectsV2` by prefix + `DeleteObjects` removes exactly that prefix (`e1/` does not touch `e10/`). **`DeleteObjects` with an empty list → `MalformedXML`.** A multipart POST from `http://localhost:5173` → 204 with `Access-Control-Allow-Origin` and `Expose-Headers: ETag`; from another origin → 204 too, with no ACAO header (CORS only hides the answer; the policy is what protects the bucket) | C8 cleanup: prefixes end with `/`; **skip `DeleteObjects` when the listing is empty**, and page through the listing (1000 keys per page). WP6 test for an expense with no receipt |
+| R6 | **Ran.** The C4 transaction commits when there is no receipt; a stale read → `TransactionCanceledException` with reasons `[None, ConditionalCheckFailed]` (→ 409); the expense gone → `[ConditionalCheckFailed, None]` (→ 404). The C10 conditional update with `REMOVE expiresAt` works; a stale key or a duplicate → `ConditionalCheckFailedException`. `DeleteItem ALL_OLD` returns the old item, or no `Attributes` when there was none | C4/C10 as planned: map the reasons **by position** (0 = expense, 1 = receipt) |
+| R7 | jsdom 30 has `File`, `Blob`, `FormData` (append keeps order), `XMLHttpRequestUpload` and `ProgressEvent` | WP10 fakes XHR with `vi.stubGlobal`; the fake must dispatch `ProgressEvent`s itself |
+| R8 | CSP3: `form-action` covers only form submissions; `connect-src` covers XHR/fetch (MDN). Virtual-hosted host: `<bucket>.s3.<region>.amazonaws.com`. Firefox opens `application/pdf` + `inline` in its viewer; **Chrome is not documented** | C20 as planned. The G3 walkthrough checks the PDF in both browsers (already listed) |
+
+### Part A: Back-end building blocks
+
+#### WP1: Plan (S)
+- **Files:** this plan; a PLAN §12 row 5 link. **Agent:** main session. **Commit:** `docs: add phase 5 implementation plan`.
+
+#### WP2: Receipt values (S), security-critical
+- **Files:** `backend/src/Receipts/{ReceiptObjectKey,ReceiptContentType,ReceiptStatus,FailureReason,Receipt,ReceiptLimits}.php` (`MAX_BYTES`, `MAX_PIXELS`, `MAX_SIDE`, `POLICY_TTL_SECONDS`, `VIEW_URL_TTL_SECONDS`, `PENDING_TTL_SECONDS`, `FAILED_TTL_SECONDS`); unit tests under `tests/Unit/Receipts/`.
+- **Decided in review:** the key is URL-decoded in **one place only**, `S3EventParser`. `ReceiptObjectKey::parse()` takes an already-decoded key (`S3ObjectRef::$key` or a stored `objectKey`), refuses any `%`, and a key that parses equals its `originalKey()`. `Receipt` derives `receiptId()` from its key.
+- **Tests first:**
+  - `ReceiptObjectKey`:
+    - build → parse round-trips;
+    - `thumbnailKey()`;
+    - `parse` refuses upper-case UUIDs, extra segments, `..`, `%2F` left after decode, a trailing `/`, a missing prefix, the `pipe+` test keys, an empty string and NUL.
+  - `ReceiptContentType`:
+    - the 4 MIME strings only;
+    - `detect()` on hand-built byte prefixes (each signature, a 2-byte file, `RIFF…WAVE`, `<svg`, `<!DOCTYPE html`, `GIF89a`, a UTF-8 BOM before `%PDF`);
+    - `extension()`.
+  - `Receipt`: `isLive(now)` for pending/failed before and after `expiresAt`, and ready.
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt key, content type and status values`.
+
+#### WP3: S3 infrastructure and the API → S3 path (S–M), security-critical
+- **Files:**
+  - `backend/src/Infrastructure/S3/{S3Settings,S3ClientFactory,UploadPolicySigner,ViewUrlSigner,ObjectStore,S3ObjectStore}.php`;
+  - `Receipts/{OriginalObjects,ThumbnailObjects,ReceiptObjectCleaner}.php` (the narrow ports of C13; the cleaner does the C9 logging);
+  - `ApiConfig` gains S3 settings (`S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT`, `RECEIPTS_BUCKET`, `THUMBNAILS_BUCKET`; local endpoints checked by `LocalEndpoint`, required when `APP_ENV=local`);
+  - `docker-compose.yml` + `docker/api/nginx.conf` (decision 15);
+  - `.env.example`;
+  - `Makefile check-env`.
+- **Tests first:**
+  - unit:
+    - the signer's policy holds exactly the C5 conditions and expiry (`FrozenClock`);
+    - the view URL carries the overrides and the 5-minute expiry;
+    - the cleaner logs `receipt cleanup failed` with keys only (no URL or signature) when deletion throws;
+    - config errors name variables, never values.
+  - integration (`tests/Integration/S3/`), sent to `http://s3:9000` with the `Host: localhost:9000` header (ADR 0007 note):
+    - the policy accepts the exact key and type;
+    - it refuses another key, another type, 10 MiB + 1 and an extra field;
+    - the view URL returns the bytes with the forced type;
+    - prefix delete removes both buckets' objects;
+    - `api-php` reaches S3 only through the chosen path.
+- **From the WP2 security review:** on AWS the signer must produce **virtual-hosted** URLs (`<bucket>.s3.<region>.amazonaws.com`), so each bucket is its own browser origin; path style (`s3.<region>.amazonaws.com/<bucket>`) would put every bucket on one shared origin. Path style stays only for the local endpoint. A unit test pins the style per endpoint.
+- **Review:** php-reviewer; code-reviewer for the Compose/nginx part if over 30 lines; **security-reviewer**. **Commit:** `feat: add s3 policy and url signing and the api's object store`.
+
+#### WP4: Receipt repository (S–M), security-critical
+- **Files:** `backend/src/Receipts/ReceiptRepository.php` (`find`, `startUpload`, `remove`, and for the worker `findByKey`, `markReady`, `markFailed`); `Infrastructure/DynamoDb/ItemStore.php` (a `deleteItem` variant returning the old item); tests in `tests/Unit/Receipts/` and `tests/Integration/Receipts/ReceiptRepositoryTest.php` (`TemporaryTable`).
+- **Tests first:**
+  - `find` hides expired pending/failed records (C3);
+  - `startUpload` on a missing expense → `ExpenseNotFound`;
+  - a concurrent change between read and transaction → `ReceiptChanged`;
+  - replace returns the old key;
+  - `remove` returns the old item or null;
+  - `markReady`/`markFailed` succeed once, a second time report "already processed", fail for another key, and fail for an expired pending record;
+  - a corrupt item is a `StorageFailure`;
+  - **cross-user:** user B's principal never reads or changes A's `RCPT#`.
+- **From the WP2 reviews (hydration checks, each a `StorageFailure` with a unit test):**
+  - the stored `objectKey` must parse and round-trip: `ReceiptObjectKey::parse($stored)?->originalKey() === $stored`;
+  - the key's user id and expense id must equal the item's `PK USER#<u>` and `SK RCPT#<e>` (C14: otherwise a corrupt item could get user A a view URL for user B's file);
+  - `:now` for the conditions comes from the same clock as `Receipt::isLive()`, as `getTimestamp()`.
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt repository with conditional writes`.
+- **Outcome (2026-10-30):**
+  - Red run: 53 errors and 18 failures (class and method not found).
+  - Round 1: no critical or high findings. Medium items: `receiptOwnerPartition` was not guarded, and `remove()` deleted before checking and ignored expiry. Fixed with:
+    - two new architecture tests (`ReceiptOwnerPartitionCallTest`, `ReceiptWorkerCallTest`; string-literal references are flagged too) and a public-surface test;
+    - the `UserPartitionCallTest` left unchanged (owner decision: a dedicated `AuthKeys::receiptOwnerPartition` instead of an allow-list entry);
+    - `remove()` semantics pinned by tests and passed to WP6;
+    - a same-id replace refused.
+  - Round 2: the `remove()` docblock overstated "deleted". Fixed so that only `CORRUPT_ITEM` means deleted (`ItemStore::deleteItemReturningOld` now reports an unreadable old item as `CORRUPT_ITEM`).
+  - Separate commit: `scripts/check-stack-up.sh` now guards `make test-integration`, which used to half-start a stopped stack through `compose run` dependencies.
+
+### Part B: Endpoints (contract and code in one commit each)
+
+#### WP5: Contract + `POST /expenses/{id}/receipt/upload` (S–M), security-critical
+- **Files:**
+  - `contract/openapi.yaml` 0.12.0: paths `/expenses/{id}/receipt/upload` (`createReceiptUpload`) and `/expenses/{id}/receipt` (`getReceipt`, `deleteReceipt`, documented now); schemas `ReceiptUploadRequest`, `ReceiptUpload`, `Receipt`; errors 400/401/403/404/405/409/413/415/422/500/503 as in Phase 3; `X-Requested-With` on POST/DELETE;
+  - `frontend/src/api/schema.gen.ts` (`make contract-gen`);
+  - `Receipts/Http/{CreateReceiptUploadHandler,ReceiptUploadInput,ReceiptFieldMessages}.php`;
+  - `Api/Routes.php`;
+  - `ApiServices` (lazy S3 pieces);
+  - `tests/Integration/Isolation/CrossUserIsolationApiTest.php` (`SECURED_CALLS` + 3 rows; the GET/DELETE rows are skipped until WP6 only if the suite allows; otherwise the routes land together).
+- **Tests first:** `RoutesMatchContractTest`, `ProtectedRoutesMatchContractTest` and `CrossUserCoverageTest` are red. Then:
+  - input: type outside the list, `size` 0 / 10 MiB + 1 / float / string / missing, unknown member;
+  - handler order: principal → route id → body → store;
+  - a replace deletes the old objects **after** the commit (a spy shows the order);
+  - integration over nginx: 201 + `Location`, `no-store`, contract-valid; another user's expense → 404 with no record written; missing CSRF header → 403.
+- **From the WP4 reviews:** a `TransactionConflict` cancellation (two concurrent starts on the same `RCPT#`) is rethrown as `TransactionCancelled`. Map it to 503, as the other repositories' callers do. `startUpload` refuses a pending receipt whose id equals the current one, so the handler must always mint a fresh v4 id.
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt upload policy endpoint`.
+- **Outcome (2026-10-30):**
+  - **Contract split:** only `createReceiptUpload` (path `/expenses/{id}/receipt/upload`, schemas `ReceiptUploadRequest` and `ReceiptUpload`) is in 0.12.0. The parity tests (`RoutesMatchContractTest`, `ProtectedRoutesMatchContractTest`, `CrossUserCoverageTest`) require a route and a cross-user row for every documented operation, and redocly refuses an unused `Receipt` schema. So `getReceipt`, `deleteReceipt` and `Receipt` move to WP6.
+  - **503:** the handler does not catch `TransactionCancelled`. The existing `StorageUnavailableMiddleware` maps a `TransactionConflict`-only cancellation and throttling to 503 with `Retry-After: 1`, and other cancellations to 500, as for the expense routes.
+  - **Exact size (owner decision):** the policy pins `content-length-range [size, size]`; `maxBytes` in the answer stays the 10 MiB cap. The silo refuses one byte less (`EntityTooSmall`) and one byte more (`EntityTooLarge`).
+  - **Order:** commit, then sign (local, no network), then clean up the old objects, then 201. The cleanup sits in a `finally`: once the commit points the record at the new key, the old files are unreferenced, so they are deleted even if signing throws (500). This avoids orphaned personal data (round-2 security review).
+  - **Missing RED runs:** the integration tests and the new silo size cases were written before the code but were first run green.
+
+#### WP6: `GET` and `DELETE` receipt, expense-delete cleanup (S–M), security-critical
+- **Files:** `Receipts/Http/{GetReceiptHandler,DeleteReceiptHandler,ReceiptResponse}.php`; `Expenses/Http/DeleteExpenseHandler.php` (+ cleaner); `Routes.php`; tests.
+- **From WP5:** the contract goes to 0.13.0 with path `/expenses/{id}/receipt` (`getReceipt`, `deleteReceipt`) and the `Receipt` schema, then `make contract-gen`. Add both operations to `CrossUserIsolationApiTest` `SECURED_CALLS`/`ID_ATTEMPTS`, and make its `assertUnchanged` also compare `RCPT#` records.
+- **Tests first:**
+  - GET: 404 with no receipt, an expired pending one, or another user's; `pending` has null URLs; `ready` image has both URLs; `ready` PDF has `viewUrl` only; `failed` carries `failureReason`; `no-store`.
+  - DELETE: 204, then 404; record gone before objects (spy order); S3 failure → still 204 plus the ERROR log.
+  - Expense delete: objects under both prefixes removed; S3 failure → 204 plus the log.
+  - The cross-user rows pass.
+- **From the WP3 reviews:**
+  - `ViewUrlSigner` gets the type **the worker verified** (the stored `contentType` after `ready`), never the declared one;
+  - prefix cleanup on expense delete: bound the work per request (pages or a total deadline) so 20 s × 3 attempts × N pages cannot outlast the Lambda timeout; whatever is left is logged by the cleaner (C9);
+  - the cross-user guarantee of the cleanup rests on passing the **session's** user id, never one from the request; a test pins it.
+- **From the WP4 reviews (`ReceiptRepository::remove`):**
+  - The delete is unconditional and returns the old record, even an expired one. The handler answers 404 when `isLive($now)` is false (C3, matching GET) and still deletes that record's objects.
+  - `StorageFailure` with code `CORRUPT_ITEM` means the record IS deleted but unreadable. Clean up only **this expense's** two prefixes, built from the Principal (`ReceiptObjectKey::originalPrefix($owner->userId, $expenseId)` and the thumbnail prefix), never the user's whole prefix. Log it.
+  - Any other `StorageFailure` means the outcome is unknown and the record may still exist. Do **not** clean up; answer 5xx (a retry is safe). A test pins that this path never deletes objects.
+  - The worker-only methods (`findByKey`, `markReady`, `markFailed`) may be called only from `src/Worker/` (`ReceiptWorkerCallTest`), and the repository's public methods are pinned (`ReceiptRepositoryPublicSurfaceTest`). The API handlers use `find`, `startUpload` and `remove` only.
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt status, view links and delete, and clean up on expense delete`.
+- **Outcome (2026-10-30):**
+  - **Contract 0.13.0:** `getReceipt`, `deleteReceipt` and the `Receipt` schema. Both operations are in `CrossUserIsolationApiTest`; user A owns a pending receipt, and `assertUnchanged` compares `GET …/receipt`.
+  - **CORRUPT_ITEM on DELETE → 204:** the unconditional `DeleteItem` has already removed the record. A warning is logged, and only this expense's two prefixes are swept, built from the Principal. Accepted: that sweep can also remove a file the same user uploads at the same moment (own data only, and it needs a corrupt record first).
+  - **Cleanup is bounded in time (round-1 security review):**
+    - `ReceiptObjectCleaner` gets an 8 s budget per call (`Deadline`, from the injected clock). The deadline is checked before each S3 call and before each `deletePrefix` page. When it passes, the cleaner logs `receipt cleanup failed` with `DeadlineReached` and the key or prefix that is left.
+    - The cleanup S3 client (`S3ClientFactory::forCleanup`) uses a 2 s connect timeout, a 5 s timeout and 2 attempts, and the 3-page cap per prefix stays.
+    - Combined failure codes are reported, e.g. `AccessDenied,PageLimitReached`.
+  - **Expense DELETE builds an S3 client** when its route matches, so a bad S3 setting gives a 500 before the transaction runs, and nothing is deleted.
+  - **The implementing agent broke two rules:** it ran a bare `python3` on the host (nothing ran), and a `sed` with an empty line number damaged two files, which it repaired. The reviewer confirmed the final diffs are clean. Briefs now say: edit with the Edit tool only.
+
+### Part C: Worker
+
+#### WP7: File inspection and thumbnails (S–M), security-critical
+- **Files:** `backend/src/Receipts/Processing/{FileInspector,Inspection,ThumbnailMaker}.php`; tests (images generated in the test, §3.1).
+- **Tests first:**
+  - each valid type passes and reports its dimensions;
+  - declared PNG with JPEG bytes → `unsupported-type`;
+  - SVG/HTML text as `image/png` → `unsupported-type`;
+  - a PNG IHDR of 50,000 × 50,000, and of 12,001 × 1 → `too-large` **without decoding** (peak memory stays under a small bound; `memory_get_peak_usage` delta asserted);
+  - a truncated JPEG → `unreadable`, and no warning escapes;
+  - a PDF with `%PDF-` passes; a PDF magic under `image/jpeg` fails;
+  - the thumbnail of a 2000×1000 PNG with alpha is a JPEG ≤ 480 wide on white; an image of 100×50 is not upscaled;
+  - the output has no EXIF (APP1 marker absent).
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: add receipt file inspection and gd thumbnails`.
+- **Outcome (2026-10-30):**
+  - **Dev image:** the `dev` stage of `docker/php/Dockerfile` now has `gd` (JPEG, PNG, WebP) and `exif` (decision 19). CI builds it through the same `make php-image`.
+  - **Header desyncs (security review, blocking twice):** PHP's `getimagesizefromstring` and the decoders could be shown different sizes, so a small reported size let GD allocate a huge one.
+    - **JPEG:** RST, TEM, `FF00` or fill bytes before SOS hid a second SOF. Fixed by `JpegStructure`, a strict walker run first:
+      - before SOS, only length-prefixed APPn, COM, DQT, DHT, DRI and exactly one SOF0, SOF1 or SOF2;
+      - its size must equal PHP's;
+      - at most 100 scans (closes the progressive "scan bomb");
+      - an EOI must follow the last scan, and trailers after it (Motion Photo, SEFT) are ignored.
+    - **PNG:** an ancillary chunk before IHDR held decoy dimensions. Fixed by requiring IHDR as the first chunk.
+    - **WebP:** checked by the reviewer; libwebp refuses a canvas and frame mismatch.
+  - **Truncated JPEG:** not a security issue (memory is fixed by the header). Caught by the walker's EOI-after-last-scan rule. The first "file must end with FFD9" rule was dropped because it refused real phone photos. `gd.jpeg_ignore_warning` is not read by `imagecreatefromstring` (R4 correction).
+  - **Error handler:** wraps all of `inspect()`. Any notice or warning is `unreadable`, except a `libpng warning` on a PNG that still decodes (benign iCCP-style warnings).
+  - **Thumbnails:** fit to 480, then orient. All 8 EXIF orientations are tested.
+  - **Not tested:** CMYK JPEG (GD cannot produce one).
+
+#### WP8: Receipt processor and worker wiring (S–M), security-critical
+- **Files:**
+  - `Receipts/Processing/ReceiptProcessor.php` (implements `RecordProcessor`, C10);
+  - `Worker/{WorkerFactory,WorkerConfig}.php`;
+  - `docker-compose.yml` `worker` env (DynamoDB/S3 endpoints, table, buckets, fake keys, `AWS_EC2_METADATA_DISABLED`);
+  - delete `Receipts/ReceivedReceiptLogger.php` and its test (G5);
+  - architecture test for C13.
+- **Tests first** (unit, with fakes for the repository and the ports; fixtures `docs/spikes/fixtures/silo-object-created-post.json` and an AWS-shaped event):
+  - valid → thumbnail then ready;
+  - invalid → original deleted then failed;
+  - TestEvent → nothing;
+  - foreign bucket or bad key → logged and skipped;
+  - duplicate after ready/failed → no write;
+  - record deleted, replaced or expired → both objects deleted;
+  - `NoSuchKey` with a pending record → throws; without one → no-op;
+  - a batch with one throwing record → exactly that `itemIdentifier`;
+  - `WorkerFactory::create()` builds the real processor from env, and refuses missing or non-local endpoints.
+- **From the WP2 reviews:** a processor test feeds a real `S3EventParser` result into the key check: an event key `receipts/<u>/<e>%252F<r>` must be skipped (logged, success), never normalised into another object's key.
+- **From the WP7 reviews:**
+  - Set the worker's `memory_limit` explicitly (about 768M for a 1024 MB Lambda) rather than Bref's 10240M default. A future size-check bypass then ends as a logged PHP fatal instead of a kill by the operating system. (Corrected in the WP8 review: that fatal is not contained to one record, see the outcome below.)
+  - The worker's error handler must respect `error_reporting()` for `@`-silenced calls, as `FrontController::handleError` does. `ThumbnailMaker` uses `@`.
+  - Call `ThumbnailMaker::make()` only after `FileInspector` accepted the file; a test pins it. `make()` itself does no size check.
+  - Consider an SQS batch size of 1 for the worker: one hostile file can then never delay or DLQ other users' receipts.
+  - **Resolved by the owner's option (b): `PngStructure` refuses them; not measured.** (WP7 round-2 security review, MEDIUM if confirmed): libpng 1.6 decompresses and keeps compressed text chunks (`zTXt`, `iTXt`) that come before IDAT: up to 1000 chunks of about 8 MB each, outside PHP's `memory_limit`. An input of about 8 MB could cost gigabytes. No decompression-bomb measurement is made; the strict chunk walker below removes the cause instead.
+- **From the WP5 reviews:** an upload policy stays valid for 5 minutes after a replace or an expense delete, so a file can land at an old key after the cleanup ran. A processor test pins that an original whose key does not match the current record (or has no record) is deleted along with its thumbnail (C10 step 7).
+- **Review:** php-reviewer; **security-reviewer**. **Commit:** `feat: process receipts in the worker with conditional updates and cleanup`.
+- **Outcome (2026-10-30):**
+  - **`ReceiptProcessor`** (`Receipts/Processing`) follows C10 step by step:
+    - the existing repository (`findByKey`, `markReady`, `markFailed`) and the two narrow ports do all the work; a `ReceiptNotPending` from a settle, or a record that is gone, replaced or expired, deletes the original and then the thumbnail of THIS key;
+    - an invalid file has its original deleted, then `failed`;
+    - an original over `MAX_BYTES` (the port throws `ObjectStoreFailure::TOO_LARGE`) is also a `failed`/`too-large` receipt, not a retry;
+    - a missing file with a record that is still this live pending upload throws `ReceiptObjectMissing` (retry, then DLQ); with any other record it is step 7.
+  - **Round-1 review fixes (2026-10-30):**
+    - **F2, order of the invalid-file path (amends C10):** `markFailed` first, then the delete. A storage error on the update leaves the original and the retry fails the record; an error on the delete is retried, and the retry finds a live `failed` record and deletes the orphan, writing nothing. In the settled-duplicate branch a live `failed` record deletes the original and the thumbnail.
+    - **F1, ETag (owner decision, security M1):** `ObjectStore::getObject` returns the body with the ETag of the same response, `ObjectStore::etag` is a HEAD, and `OriginalObjects` gains `fetch` and `etag` (and loses `get`; still no way to write). ETags are stored without quotes. `Receipt::$objectEtag` is set by `markReady`/`markFailed` and read back; a `ready` duplicate compares it with the HEAD (no stored ETag means nothing to compare and no HEAD; an object that is gone means nothing to do), and `markReplaced` is the conditional `ready`→`failed`. The failure reason is the existing `unreadable`: a new `replaced-after-check` would change the contract enum and the front-end messages for a case only an attacker causes. The record is failed BEFORE the files are deleted (same reasoning as F2), so a failed delete is finished by the `failed` branch on retry. `markReplaced` is worker-only (`ReceiptWorkerCallTest`, public-surface pin).
+    - **F3:** a `RuntimeException` or `ErrorException` from the thumbnail step (`ThumbnailRenderer`, implemented by `ThumbnailMaker`) after an accepted inspection fails the receipt as `unreadable`; one `error` line `thumbnail failed` carries the exception class only. A storage error while writing the thumbnail is still a retry.
+    - **F5, F6:** outside `APP_ENV=local` any of `DYNAMODB_ENDPOINT`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` set is a configuration error, for the API and the worker; the endpoint names and both rules live once in `LocalEnvironment`, and `InvalidConfiguration::collect` replaces the two copies of the settings try/catch. Compose sets `APP_ENV: local` for both `api-php` and `worker` (the only services that read these settings through `ApiConfig`/`WorkerConfig`); `.env.example` has no `APP_ENV`, and the `php` tools container does not build either config.
+    - **F7:** `FileInspector::inspectImage` has one `match` arm per image type, each returning, so a new type cannot skip its walker. **F8:** `ReceiptsBucketWriteTest` also flags string literals `'put'`, raw store or client class names (also fully qualified) and `s3://`.
+  - **Round-2 fixes (2026-10-30):**
+    - **G1, M1 closed (security R2-1):** two runs can read different bytes while the record is still pending; the loser's `markReady`/`markFailed` returned `AlreadyProcessed` and the record kept the winner's ETag over the loser's object. Now `AlreadyProcessed` makes the run re-read the record and decide as in step 7, with the ETag check (`ready` → HEAD compare → `markReplaced` and delete both on a mismatch; `failed` → delete original and thumbnail). After a lost `markReplaced` it decides once more without checking again, so there is no loop. This also cleans the thumbnail a losing run wrote over the winner's (the php reviewer's overwrite note). Tests script the interleaving: the DynamoDB answers of both runs in order, since the in-memory store and the mock repository are not stateful across processors.
+    - **G2:** `settledElsewhere` (verifies) and `settledWithoutVerifying` replace the `bool` flag; both share `settledOrClean`.
+    - **G3:** `S3ObjectStore::getObject` throws `UnexpectedResponse` when the GET answer has no ETag (retry), like HEAD; plain `get` still needs none.
+    - **G4:** `markReady` and `markFailed` take `?string $objectEtag` with no default; one expression each, with `, #objectEtag = :etag` appended only when there is an ETag; `markReplaced` shares `settleNames` and the failed `SET` with `markFailed`.
+    - **G5:** DynamoDB Local tests for the ETag round trip and for `markReplaced` (matching ETag wins; a different ETag, a ready record without ETag, a pending and a failed record lose). Written but not run by the implementing agent.
+  - **Accepted (G6):** `etag()` treats any HEAD 404 as "gone" (a missing bucket is a configuration error caught at deployment); the ETag is the MD5 of the bytes for single-part unencrypted POSTs (see §4).
+  - **Not changed, noted:** the `WorkerRuntimeTest` source-order pin of `configure()` before `create()` is accepted as it is. Confirming libpng's `PNG_USER_CHUNK_MALLOC_MAX` in the Bref layer (read-only) is a Phase 7 carry item (I1), and so is putting the worker on an internal network (I3).
+  - **Log messages (C15: message id, bucket, key, status, reason, `durationMs`; never bytes):** `receipt ready`, `receipt failed`, `receipt already processed`, `receipt obsolete, objects removed`, and `receipt event skipped` for step 1 (foreign bucket or a key that does not parse), which carries the decoded key. `make test-integration` and `ReceiptPipeTest` look for that last line until WP9 moves them to a real upload.
+  - **`WorkerConfig`** reads the table, both buckets, both endpoints and the region with the API's own settings classes; the new `LocalEnvironment` holds the `APP_ENV=local` rule both configs share. Compose gives the worker `S3_PUBLIC_ENDPOINT` too: the shared S3 settings need the two endpoints together, the worker does not use it. `WorkerFactory::create(array $env, ...)` is the only place besides `ApiFactory` that builds a DynamoDB client (`DynamoDbClientFactoryCallTest` lists both).
+  - **`memory_limit` 768M** is set by `WorkerRuntime::configure()`, called from the Lambda handler file before the worker is built. It is worker-only code (the API and the shared `backend/php/conf.d/app.ini` are untouched), needs no extra file in the worker zip or image, and is unit-tested. Because it is set when the handler file loads, `php -r` in the container (which does not load it) still shows Bref's 10240M; check it from inside an invocation. A memory-limit fatal cannot be caught: it ends the whole invocation and the whole batch is redelivered, so the limit gives a logged fatal, not isolation of one record. Isolation needs SQS batch size 1, a hard Phase 7 item.
+  - **Error handler:** `ReceiptProcessor::handleError` wraps only the thumbnail step and, like `FrontController::handleError`, leaves an `@`-silenced or unreported error to PHP. `ThumbnailMaker::make()` runs only after an accepted inspection (a refused file that GD cannot decode ends as `failed`, not an error).
+  - **`PngStructure`** (owner's option b, no decompression-bomb measurement), run by `FileInspector` for PNGs before `getimagesizefromstring`:
+    - IHDR first, once, 13 bytes, non-zero size, equal to PHP's; length-prefixed chunks with four-letter types walked to IEND; any bad length or truncation is `unreadable`;
+    - refuses `zTXt`, an `iTXt` whose compression flag is not 0 (or cannot be read), and a second `iCCP`;
+    - at most `MAX_CHUNKS` (1000) chunks, **IDAT not counted**: a real 10 MB PNG from an encoder that writes 8 KiB IDAT chunks has more than 1,000 of them, and IDAT is one stream bounded by the file size;
+    - everything else passes (PLTE, IDAT, IEND, ordinary and unknown ancillary chunks); checksums are left to libpng.
+    - `ReceiptFixtures::pngHeaderOnly` now ends with IEND (it must pass the walker to reach the "too large" check). The fixtures build only chunks that inflate to a few bytes.
+  - **Architecture:** `ReceiptsBucketWriteTest` (C13) flags, under `src/Receipts/Processing` and `src/Worker`, any write-capable SDK or store operation name, any raw store or client class outside `WorkerFactory`, and a `put` call on anything but the thumbnails port; it also pins the two port interfaces. `ReceiptWorkerCallTest` now allows `Receipts/Processing/` next to `Worker/`, because the processor lives there.
+  - **Deleted (G5):** `ReceivedReceiptLogger` and its test.
+  - **Not done:** SQS batch size 1 (Phase 7 carry list). The live checks (`make test-integration`, the worker restart) are the main session's.
+
+#### WP9: End-to-end pipeline, isolation and log hygiene (M)
+- **Files:**
+  - `tests/Integration/Pipeline/ReceiptPipeTest.php` (seed a pending receipt record and upload a valid file under its parseable key, so the test follows the real worker path; the poison-message → DLQ case stays as it is; contradiction 7);
+  - new `tests/Integration/Receipts/ReceiptLifecycleTest.php` (API policy → multipart POST to `s3:9000` with the public `Host` → poll the record for at most 15 s with the existing helper style);
+  - `Makefile` `test-integration` markers (the worker's `receipt ready` / `receipt failed` lines for a run-unique key; no `X-Amz-Signature`/`Policy` value in the `api-php` or `worker` logs).
+- **Cases:**
+  - JPEG → ready plus thumbnail;
+  - PDF → ready, no thumbnail;
+  - an HTML file as `image/png` → failed, original gone;
+  - policy issued, record deleted, then upload → both objects gone;
+  - replace during processing → the old objects gone, the new one ready;
+  - re-sending the same S3 event to the queue → no change;
+  - poison message → DLQ (existing slow test kept);
+  - expense delete after ready → prefixes empty;
+  - B's GET/DELETE/POST on A's expense → 404, and A's objects untouched.
+- **Acceptance:** `make test-integration` green twice in a row (never concurrently). Each new Makefile check shown to fail once through a temporary mutation.
+- **Review:** php-reviewer; code-reviewer for the Makefile. **Commit:** `test: run the receipt pipeline end to end with cleanup races and isolation`.
+
+### Part D: Front end
+
+#### WP10: Upload client and receipt API (S–M), security-critical
+- **Owner step first (protected file):** the owner adds to `frontend/eslint.config.ts` an `app/allow-upload` block for `src/api/upload.ts` that drops only `XMLHttpRequest` from `OTHER_GLOBALS` (the main session drafts the exact lines; the owner pastes and commits them). Then the main session confirms that a fixture file outside `upload.ts` using `XMLHttpRequest` still fails `make frontend-lint`.
+- **Files:**
+  - `frontend/src/api/{receipts,upload}.ts`;
+  - `src/lib/{receiptFile,receiptMessages,backoff,receiptUrl}.ts`;
+  - `src/api/types.ts` (aliases);
+  - `src/config.ts` (`RECEIPT_MAX_BYTES`, `RECEIPT_TYPES`, `POLL_*`, `UPLOAD_TIMEOUT_MS`, `DEV_UPLOAD_ORIGIN`).
+- **Tests first** (stubbed `fetch` and a fake `XMLHttpRequest`):
+  - API calls go through `request` with `resourcePath`; the receipt paths pass `isSafePath`;
+  - upload: fields in order with the file last; `withCredentials` false; no headers set; progress values; 204 → ok; 400/403 → kinds; timeout and abort; a URL with userinfo, query, fragment, `javascript:`, `http://evil.example` or an unknown field name is refused **before** `open()`;
+  - `receiptFile`: type and size pre-checks (0 bytes, 10 MiB, 10 MiB + 1, `image/svg+xml`, empty type);
+  - `backoff` sequence and cap;
+  - `receiptUrl` accepts only `https:` or the dev origin;
+  - the policy request declares `size` = `file.size` exactly (WP5: the policy pins the exact size, so any other number makes S3 answer 400).
+- **Review:** typescript-reviewer; **security-reviewer**. **Commit:** `feat: add the receipt api and the direct-to-s3 upload client`.
+
+#### WP11: `useReceipt` composable and form abort signals (S–M)
+- **Files:** `frontend/src/composables/useReceipt.ts`; `src/views/ExpenseFormView.vue` (L6 AbortSignal only); specs.
+- **Tests first:**
+  - state machine idle → requesting → uploading(progress) → processing → ready/failed;
+  - polling backoff, cap with "Check again", pause when hidden, abort on unmount, stale-answer drop after replace;
+  - the replace flow asks for confirmation when a receipt exists;
+  - 404 while polling → none;
+  - URL refresh when near `urlsExpireAt`;
+  - form requests are aborted on route change and unmount, and an aborted answer changes nothing.
+- **Review:** typescript-reviewer for the composable, vue-reviewer for the view hunk (one per language). **Commit:** `feat: add the receipt state composable and abort form requests on leave`.
+
+#### WP12: Receipt panel, preview and accessibility (S–M), security-critical
+- **Files:** `frontend/src/components/{ReceiptPanel,ReceiptPreview,PdfIcon}.vue`; `ExpenseFormView.vue` (mount on edit, hint on new); specs.
+- **Tests first:**
+  - the file input's label and `accept`;
+  - the `progress` value and text;
+  - the live region gets the milestones only;
+  - focus on `FormAlert` after errors;
+  - the thumbnail `img` uses only a validated URL; a hostile URL renders no `img`/`a`;
+  - the PDF icon plus size; the "Open receipt" link has no `target`;
+  - replace and delete through `ConfirmDeleteButton`;
+  - every message in the §2 mapping table;
+  - the new form shows the hint and no input;
+  - the view grows by ≤ ~15 lines.
+- **Review:** vue-reviewer; **security-reviewer**. **Commit:** `feat: add receipt upload, status and preview to the expense form`.
+
+#### WP13: Whole-feature security pass, docs, walkthrough (S)
+- **Security pass:** `ecc:security-reviewer` (opus/high) over `backend/src/Receipts`, `Infrastructure/S3`, the touched handlers and `frontend/src/{api,composables,components}` receipt files, against the §4 threat list. Fixes go back to tdd-guide; round 2 on the fix hunks.
+- **Docs (doc-updater haiku/low):**
+  - "Implemented in Phase 5" notes: ADR 0006 (C4, C8, C10, C11), ADR 0007 (worker env, the API → S3 path, runner timing), ADR 0008 (C17, C20 CSP target with S3 hosts);
+  - `docs/local-dev.md` receipt walkthrough (§6 G3 list), repeating that the app must be opened on `http://localhost:5173` (sign-in cookie, and the S3 CORS origin; contradiction 6);
+  - Phase 7 carry list: the API Lambda env must set `RECEIPTS_BUCKET` and `THUMBNAILS_BUCKET` (the API refuses to start without them, WP3) and no `S3_ENDPOINT`/`S3_PUBLIC_ENDPOINT`; IAM per C13; `s3:ListBucket` with a prefix condition for the API; the API role needs `s3:PutObject` on `receipts/*` to sign policies, and no wider (a presigned POST is only as narrow as its signing role; on Lambda `fields` carries `X-Amz-Security-Token`, fine because `no-store` and never logged); an API Gateway per-route throttle on `createReceiptUpload` (WP5 review L2); an API Lambda timeout above the request worst case and below API Gateway's 30 s. The worst case (WP6 round-2 security review) is: the DynamoDB calls before cleanup (session lookup plus the write, each up to about 15 s when degraded) + the 8 s cleanup budget + one in-flight cleanup S3 call (about 12 s). The cleanup budget runs from the start of the cleanup, not the start of the request. When DynamoDB and S3 are degraded together, the request can still pass 30 s. Accepted for now. Phase 7 should take the deadline from the Lambda context's remaining time minus a margin, or tighten the DynamoDB client timeouts; SSE; CORS origin; the CSP hosts; the `receipt cleanup failed` metric filter; worker memory ≥ R2 peak × 2 (WP7 security review: R2 measured a baseline 4:2:0 JPEG. A progressive 4:4:4 or CMYK JPEG, or a WebP, can need about 500 MB plus the runtime, so 1024 MB still holds. Re-measure with a progressive 4:4:4 JPEG with orientation 6 before sizing); timeout; visibility ≥ 6×; **SQS batch size 1 for the worker's event source mapping: a HARD requirement, not a nicety** (WP7 review, strengthened in WP8 round 1: a memory-limit fatal cannot be caught and ends the whole invocation, so with a larger batch every record in it is redelivered together with the hostile one; the local runner has no batch size and WP8 does not add one); the worker Lambda's `memory_limit` stays at `WorkerRuntime::MEMORY_LIMIT` (768M for a 1024 MB function): change both together; confirm libpng's `PNG_USER_CHUNK_MALLOC_MAX` in the Bref layer (read-only, I1); put the worker on an internal network with only the endpoints it needs (I3); grant the worker role `s3:ListBucket` on the receipts bucket (condition: prefix `receipts/`) so a missing key answers 404/NoSuchKey and not 403 (the HEAD and GET paths treat only 404 as "gone"); from the WP13 security pass: M1 (per-user throttle on `createReceiptUpload`), L2 (build-time exact bucket origins for view, upload and thumbnail URLs), L4 (worker concurrency cap), and a bundle check that `localhost:9000` is absent from the production build (details in section 7.3);
+  - PLAN §12 row 5 → Done.
+- **Before ready:** `/update-docs`, `/code-review`, `/verification-loop`, `/ecc:cost-report` (compare with Phase 4, about $87).
+- **Commit:** `docs: phase 5 receipts walkthrough and adr notes`.
+
+**Dependencies:** WP2 → WP3 → WP4 → WP5 → WP6 → (WP7 → WP8) → WP9; WP5 (contract types) → WP10 → WP11 → WP12; everything → WP13. Run strictly one after another.
+
+## 4. Threats and how each is handled
+
+| Threat | Control | Test |
+|---|---|---|
+| Content-type spoofing | Policy fixes `Content-Type`; worker magic bytes must equal the declared type; view URL forces the verified type | WP3 policy refusal; WP7; WP9 HTML-as-PNG |
+| Oversized file | Client pre-check; `content-length-range`; worker refuses `ContentLength > MAX` | WP3 (10 MiB + 1 refused by silo); WP8 |
+| Decompression bomb / huge dimensions | `getimagesizefromstring` header check (≤ 12,000 px a side, ≤ 40 MP) **before** any decode; GD warnings → `unreadable`; memory per record freed | WP7 header-only fixtures with memory bound |
+| SVG/HTML disguised as image | Not in the allow-list; magic mismatch → failed and deleted; originals served from the S3 origin with a forced type | WP7, WP9 |
+| Key / path injection | Server-built keys from session + UUIDs; no filename; strict `parse()` in the worker; `eq $key` in the policy | WP2, WP3 |
+| Cross-user key guessing / access | `PK` from session; 404 for foreign; v4 receipt ids; one-key policy; signed GETs only | WP4, WP6, WP9 isolation rows |
+| Signed URL leakage / lifetime | Policy 5 min; view 5 min; `no-store`; URLs only for `ready`; never logged; `rel="noreferrer"`; no third-party resources | WP3, WP6, WP9 log markers |
+| Replace / delete vs worker race | Record first, then files; worker condition on key + status + expiry; re-read and clean up on condition failure | WP4, WP8, WP9 |
+| Expense delete vs upload policy race | ConditionCheck on the expense in the policy transaction; prefix cleanup after delete | WP4, WP6 |
+| Redelivery / partial batches | Idempotent outcomes; deletes idempotent; per-record failures only for transient errors | WP8, WP9 |
+| Worker writing to originals (loop) | Narrow ports + architecture test; IAM in Phase 7; thumbnails bucket has no events | WP8 |
+| Same upload policy used again within its 5 minutes, after the receipt was settled (new, never inspected bytes at the key) | The record keeps the ETag of the bytes the worker inspected. A duplicate event for a `ready` record compares it with the ETag of the object stored now (a HEAD, not the event's); a different one fails the record (`unreadable`, conditional on the stored ETag) and deletes both files; for a `failed` record whatever is at the key is deleted. The policy's exact `content-length-range` already bounds the size | WP8 review (owner decision: ETag) |
+| ETag compare weaker than a hash (R2-3) | For single-part, unencrypted POSTs the ETag is the MD5 of the bytes, so a chosen-prefix collision could pass the compare. Accepted: only the owner can write to their own key, the type is forced and originals are served from the S3 origin. With SSE-KMS in Phase 7 the ETag is no longer an MD5 and the compare is only an identity check | Accepted (WP8 review) |
+| Compressed PNG chunks libpng inflates outside `memory_limit` | `PngStructure` refuses `zTXt`, compressed `iTXt`, a second `iCCP` and more than 1,000 non-IDAT chunks before any decode; not measured (owner option b) | WP8 |
+| Out-of-memory fatal in the worker | Explicit `memory_limit` 768M turns a kill into a PHP fatal; the fatal is uncatchable and ends the whole invocation, so SQS batch size 1 is a hard Phase 7 requirement | WP8; Phase 7 |
+| CSRF on new routes | Existing middleware (`X-Requested-With` + `Origin`); the S3 POST carries no credentials | WP5 |
+| Hostile URL from a compromised API reaching `src`/`href`/XHR | `receiptUrl` shape check; CSP `connect-src`/`img-src` hosts in Phase 7 | WP10, WP12 |
+
+## 5. Test plan
+
+| Layer | What | Where | Run by |
+|---|---|---|---|
+| PHP unit | Values, signer, cleaner, repository logic with fakes, inspector, thumbnailer, processor, config, architecture split | `backend/tests/Unit/{Receipts,Infrastructure/S3,Worker}` | `make test-unit` |
+| Contract | Route parity, protected routes, documented errors, cross-user coverage | `backend/tests/Contract` | `make test-contract` |
+| Integration (storage, S3) | Repository on `TemporaryTable`; S3 policy/URL/prefix delete against silo | `tests/Integration/{Receipts,S3}` | `make test-integration` |
+| Integration (pipeline) | Real relay + runner + worker: ready/failed/cleanup/races/redelivery/DLQ; isolation; log hygiene | `tests/Integration/{Pipeline,Receipts,Isolation}` + Makefile markers | `make test-integration` (one run at a time) |
+| Front end | API, upload, libs, composable, components; 100% coverage kept | `frontend/src/**/__tests__` | `make frontend-test` |
+| Static | Lint (with the owner's override), `vue-tsc`, CSP bundle check, secrets | — | `make frontend-lint check-bundle-csp check-bundle-secrets` |
+| Manual | G3 walkthrough | `docs/local-dev.md` | owner |
+
+## 6. Branch, PR, CI and gates
+- **One PR**, draft after WP6, ready after WP13, squash-merged. **Ask before every push**; then watch CI by run id and check `headSha`. The 7 required CI jobs stay unchanged; the worker env and the S3 path live in Compose, which CI already starts.
+- **G1:** the owner approves this plan, including section 10.
+- **G2:** the Step 0 results are recorded in this file. Any decision that changes an ADR (decision 15 option b/c is an ADR 0007 amendment; decision 21 if timings change) gets its note accepted before the WP that needs it.
+- **G3 (accepted 2026-11-02, partial walkthrough):** the owner ran, in Chrome: upload and delete of a JPEG, a PNG and a PDF (thumbnails for the JPEG and PNG, none for the PDF); a `.txt` renamed `.png` (failed message, original removed from the bucket); replace; delete, including "Already removed" from a second tab. **Not run, by the owner's choice:** the over-10-MB refusal, replacing in two tabs at once (409 "Reload"), Slow 3G and the polling cap, the keyboard-only and screen-reader pass, Firefox, the "Save and add receipt" button, and a near-expiry "Open receipt" click. These are automated-test-covered only, not verified by hand. The full list that was proposed:
+  - upload a JPEG (progress, then Processing, then thumbnail);
+  - upload a PDF (icon; opens in the viewer);
+  - an 11 MB file (refused before sending);
+  - a `.txt` renamed `.png` (failed message);
+  - replace (confirmation, old preview gone);
+  - delete (confirmation, "Already removed" in a second tab);
+  - two tabs replacing at once (409 "Reload");
+  - DevTools "Slow 3G" (progress moves, leaving the page aborts silently, polling cap shows "Check again");
+  - keyboard only and screen-reader milestones.
+- **G4:** only if a CI job is added or renamed.
+- **G5:** deletions: `backend/src/Receipts/ReceivedReceiptLogger.php` and `tests/Unit/Receipts/ReceivedReceiptLoggerTest.php`.
+- **G6:** the owner merges.
+- **AWS:** none.
+
+## 7. Carried items and review notes
+- **Carried in:** Phase 4 L6 (WP11), L16 (C22); Phase 4 §7.2 "connect-src/img-src for S3 hosts" (C20); ADR 0007 Host-header note (WP3, WP9); `CrossUserCoverageTest` note (WP5).
+- **Carried out (Phase 7):** the list in WP13; the real CORS origin on the receipts bucket (contradiction 6: locally only `localhost` can sign in, so the single-origin bootstrap rule is enough).
+- **§7.3 Review notes:** filled per WP (red run, findings, fixes, round 2).
+  - **WP9 (2026-10-31).** Red run: with the new `ReceiptPipeTest` (real receipt key), all PHPUnit tests passed because the worker already existed, and `make test-integration` failed at the old Makefile marker (`receipt event skipped` no longer logged). That is the intended red. Review round 1 (php-reviewer; the 24-line Makefile diff was reviewed inline): no CRITICAL/HIGH. Fixed: the replace test now makes the old upload arrive after the replace, so only the worker's C10 step 7 can remove it, and checks the record is not resurrected; old-object checks poll (`eventually`); the duplicate-event test also requires an empty DLQ and compares status, `objectEtag` and `processedAt`; duplicate `pdf()` helper removed; policy/signature markers fail fast when empty; the cross-user test compares the foreign 404 body with the unknown-id body. Skipped on purpose: leftover local DynamoDB rows (ids are unique per test; the store is in memory) and pipe-test timing. Round 2 (fix hunks only): no CRITICAL/HIGH; one MEDIUM (a racy "old file exists" assertion in the replace test), fixed by removing it (the 204 proves the store, the eventual-gone check proves the cleanup). Evidence: `make lint-php` clean and `make test-integration` green twice in a row on the final code, plus two earlier green runs by the implementer. Mutation checks for the new Makefile markers (`receipt failed` text changed; a policy value replaced by a string that is in the log) both failed the target, then were reverted. **Do not run `make -n test-integration`**: its recipe is one line containing `$(MAKE)`, so make runs the whole suite despite `-n`. Not covered: a Makefile check for the worker's `receipt already processed` log line (the duplicate-event test proves "no change" from record and object state and an empty DLQ).
+  - **WP10 (2026-11-01).** Owner step first: the `app/allow-upload` ESLint block (commit `dfdfd25`). Checked with throwaway probe files: `XMLHttpRequest` fails in any other file and passes in `src/api/upload.ts`; `fetch` and `WebSocket` still fail inside `upload.ts`. Red run: the six new specs (`receipts`, `upload`, `receiptFile`, `receiptMessages`, `backoff`, `receiptUrl`) all failed at import ("Failed to resolve import" for each missing module), so no test ran. **Plan correction:** C17's "no userinfo, query or fragment" fits only the upload URL; presigned view and thumbnail URLs carry their signature in the query, so `receiptUrl` has two checks (`isSafeUploadUrl` refuses a query, `isSafeViewUrl` allows one). Review round 1: typescript-reviewer (sonnet), no CRITICAL/HIGH; fixed: "refused before open" assertions that passed on an empty list, missing abort / settle-once / progress tests, `RECEIPT_TYPES` typed with `isReceiptType` (`checkReceiptFile` returns the `contentType`), `SIZE_TEXT` renamed, a `failureMessage` fallback, URL checks that accept `null`, `UploadTarget` as a `Pick` of the generated type. security-reviewer (opus/high), APPROVE with no CRITICAL/HIGH; **MEDIUM fixed:** a same-origin upload URL would carry the session cookie (`withCredentials = false` only affects cross-origin requests), so both URL checks now refuse the app's own origin (`appOrigin()` in `lib/navigation.ts`, the one file that may read `location`). LOW fixed: malformed `fields` (null, array, non-string values, more than 16) give `invalid-request` instead of throwing; the dev origin `http://localhost:9000` is accepted only when `import.meta.env.DEV`; `deleteErrorMessage` shows fixed client text for conflict and validation (no server text); the URL checks refuse non-ASCII, whitespace, control characters and odd scheme forms before parsing. Round 2 (fix hunks only): APPROVE; fixed: one test that passed even without the same-origin check was removed. **Left on purpose:** any `https` host is accepted (Phase 7's CSP pins the bucket hosts, C20); the `X-Amz-.+` field-name rule is broad (S3 rejects fields outside the signed policy; `X-Amz-[A-Za-z0-9-]+` is an optional tightening); `INVALID_ID` is still duplicated in three api files; a 403 from S3 shows "The upload link expired" (the plan's wording, though S3 also uses 403 for a condition mismatch). **Carried to WP13 / Phase 7:** a bundle check that `localhost:9000` is absent from the production build (next to `check-bundle-secrets`); read `url` and `fields` once in `uploadReceipt` (only reachable from code already running in the page). **Carried to WP11 / WP12:** send `contentType` and `size` to `createReceiptUpload` from the same `File` that is uploaded; never store or log a `ReceiptUpload` or a view URL (router state included); `rel="noreferrer"` on "Open receipt"; cookies ignore ports, so an `<img>` or link on another port of the app host would carry the session (no such host exists in production). Evidence: `make frontend-lint`, `frontend-test` (59 files, 1410 tests, 100% coverage), `frontend-build`, `check-bundle-csp` and `check-bundle-secrets` all pass, re-run by the main session on the final code. The implementer reported lint clean while Prettier still flagged three files; they were formatted and lint re-run.
+  - **WP11 (2026-11-01).** Red run: the `useReceipt` specs failed at import ("Failed to resolve import ../useReceipt"); `ExpenseFormView.abort.spec.ts` failed 10 of 12 and the 45 existing form tests stayed green; `config.spec.ts` failed on `URL_REFRESH_MARGIN_MS`. The red run also exposed two real bugs in the form: an aborted initial load showed an error alert, and an aborted Reload replaced the conflict alert with the generic text. **Design decisions made here:** (1) L6 aborts only the form's two reads (`getExpense` on load and on Reload); saves and deletes are not aborted, so "Expense saved" and "Expense deleted" are still announced after the user left. (2) While the tab is hidden polling pauses, hidden time does not count toward the 60 s cap, and the first visible moment polls once at once. The cap is checked after each "still pending" answer, so "Still processing" appears after about 63 s of visible waiting (request time is not counted). (3) `choose`, `confirmReplace` and `retry` resolve when the upload starts, not when it ends; progress and failures are in the refs. (4) `stop()` is terminal until `start()` is called again, and `start()` is the retry for a failed first read (`loadFailed`; `choose` is refused while loading or after a failed load, so an upload can never skip the replace confirmation). (5) Server fact (C4): issuing the policy replaces the receipt record in one transaction and deletes the old files after it commits, so after a refused policy the previous receipt is restored, but after a failed S3 upload it is not (phase `none`, the held file kept for `retry()`). Review round 1: typescript-reviewer, one HIGH (`checkAgain()` after `stop()` re-added the visibility listener and polled) plus MEDIUM: `freshView` shared its generation with polling, a wrong phase after a failed remove, writable refs in `ReceiptState`, tests that hid leaks behind an `afterEach`; vue-reviewer, no CRITICAL/HIGH, one MEDIUM (a test that used an unreachable state). All fixed. Round 2 (fix hunks): WARN, three MEDIUM: restore after a failed S3 upload (see 5), a failed `freshView` read left a pending receipt un-polled, a throw inside the poller was rethrown into an unhandled rejection and a spinner with no "Check again" (now `onError`: halt, `stalled`, generic text). Fixed, with the extra guards `disposed`, `removing` and a wrapper for a throwing `runReceiptUpload`. Round 3 (full read of `useReceipt.ts`, because an implementer's botched shell substitution had garbled it and was repaired by hand): APPROVE, no CRITICAL/HIGH/MEDIUM, no leftovers. **Left on purpose:** `retry()` while the phase is `loading` (not reachable through the UI; the panel must not offer it then); `stalled` can stay true while polling resumes after a failed remove (harmless: `checkAgain` cancels first); `useReceipt.ts` is 445 lines (cut into a `receiptAddress.ts` for the view-address refresh if it passes ~600); `ExpenseFormView.vue` is 441 lines (the abort helpers can move into a small composable in the C22 refactor); the implementer observed `make frontend-test` exiting 0 at 99.78% coverage, which showed that `vite.config.ts` enforced only 80% while the plans said "100% kept". Resolved the same day on the owner's instruction: the thresholds are now 100 for lines, branches, functions and statements (Makefile, `docs/local-dev.md` and the CI comment and step label say "100% bar"). **Carried to WP12:** the panel reads view URLs only through `freshView()` and never logs, stores or puts them into router state; "Try again" after a failed first read calls `start()`; "Check again" shows when `stalled`; the live region is fed from `announcement`; the pending replacement is confirmed through `pendingReplacement` with `confirmReplace()` / `cancelReplace()`. Evidence: `make frontend-lint` exit 0, `frontend-test` 67 files / 1538 tests / 100% coverage, `frontend-build`, `check-bundle-csp` and `check-bundle-secrets` exit 0, all re-run by the main session on the final code. Process slips by the implementers: a one-line host `python3` that did nothing, a build log written to `/tmp` and removed, and the shell substitution above.
+  - **WP12 (2026-11-02).** Red run: the `ReceiptPanel` (3 specs), `ReceiptPreview` and `receiptSize` specs failed at import (missing modules); the `canRetry` spec failed 17 of 17; `ExpenseFormView.receipt.spec.ts` failed 7 and passed 3 (the "no panel" negatives, vacuous until the panel exists); the existing form specs stayed green. **Design decisions made here:** (1) the panel has its own always-present polite live region fed only by the composable's four milestone strings, not the page-wide "Expense saved" region (another message could overwrite that one). (2) `useReceipt` gains `canRetry`; the held file is cleared by `start()`, a successful or 404 `remove()`, `stop()` and a refused policy, and kept only after an S3 failure (issuing the policy already replaced the record). (3) The panel sits after the `</form>`, so its input and buttons can never submit the expense form; `:key="id"` on it makes the remount on an expense change structural (the status flow already did it). (4) "Open receipt" near expiry: the click is stopped, the addresses are refreshed through `freshView()`, the new address is checked with `isSafeViewUrl`, and the anchor is clicked once programmatically (one-shot flag reset in a `finally`; the click happens only while the anchor is connected and its `href` equals the checked address; a refreshed address is tied to the receipt it was fetched for). `location` is never used. (5) Every `src` and `href` is the output of `isSafeViewUrl` on the exact bound string; a hostile value renders no `img`/`a` and appears nowhere in the DOM; the image has `referrerpolicy="no-referrer"` and the link `rel="noreferrer"` with no `target`. (6) Accessibility: client file errors are `role="alert"` with `aria-invalid` and re-announce when repeated; the stalled "Still processing" is a neutral `role="status"`; the busy input blocks click, Enter and Space with "An upload is already running."; focus moves to the alert only after an action the user triggered (a flag set by the panel's own handlers), and after Delete, Cancel, Confirm replace, Retry and Check again it lands on the file input (the heading after "Try again"). (7) Size text is base 1024 labelled KB and MB (10 MiB shows as "10 MB"), with the unit switch at the rounded boundary. Review round 1: vue-reviewer BLOCK (focus lost when a control disappears; client file errors silent to screen readers; focus theft from background polling; `aria-disabled` input still opened the picker; size rounding; stale refreshed link; duplicate first-read text); security-reviewer (opus/high) APPROVE with no CRITICAL/HIGH/MEDIUM and three LOW (a stuck one-shot click flag, a Retry for a refused file, modified-click behaviour). All fixed except the INFO items below. Round 2 (fix hunks): vue-reviewer WARN with two MEDIUM (a repeated identical file message was silent the second time; the real-composable upload-failure focus flow was only simulated), security-reviewer APPROVE (INFO only). Fixed in a small pass together with `isConnected` on the click guard and the `:key`. **Left on purpose:** any `https` host is accepted for view links (Phase 7's CSP and a runtime host allowlist, C20); Ctrl/Shift/middle-click on a near-expiry link either opens the same tab or the possibly expired address (the address is still checked); `ReceiptPanel.vue` is 320 lines (natural cut: a `useReceiptFocus` composable); the file name reaches the Replace button's `aria-label` (inert and the user's own name); `receiptPanelHarness.spec.ts` exists only to cover the test helper, and excluding test helpers from coverage would be a config change that belongs to the owner. **Carried to WP13:** the whole-feature security pass; the owner's walkthrough in Chrome and Firefox (not Safari) including a screen reader pass, a real upload through the emulator, and a near-expiry "Open receipt" click; Phase 7: a runtime host allowlist for view addresses, the CSP hosts, and the bundle check that `localhost:9000` is absent from the production build (from WP10). Evidence: `make frontend-lint` exit 0, `frontend-test` 76 files / 1809 tests / 100% coverage (the gate is now enforced), `frontend-build`, `check-bundle-csp` and `check-bundle-secrets` exit 0, all re-run by the main session on the final code.
+  - **WP13 (2026-11-02).** Whole-feature security pass by security-reviewer (opus/high): no CRITICAL or HIGH. Fixed: L1 (a losing worker run could leave its older thumbnail over the winner's; `verifySettled` now also compares the run's own ETag with the record's; unit test added, red first). Carried to Phase 7: M1 per-user throttle on `createReceiptUpload` inside the app (an API Gateway route throttle is shared by all users, so one user could block uploads for everyone; reuse the Phase 2 ThrottleCounter pattern keyed by user, with the gateway throttle only as a high backstop); L2 build-time exact bucket origins for view/upload/thumbnail URLs (for example VITE_RECEIPTS_ORIGIN and VITE_THUMBNAILS_ORIGIN) because CSP cannot limit the Open receipt navigation; L4 cap worker concurrency (event source mapping ScalingConfig.MaximumConcurrency, small, or reserved concurrency for worker and API); optional cheap worker checks: body length equals record size, stored Content-Type equals declared. Left on purpose: L3 each accepted image is decoded twice (inspector then thumbnail maker), a performance trade-off to revisit if worker time matters. Info: the signed view URL sits in browser history for its 5-minute life; locally all buckets share http://localhost:9000, safe only because served types are forced to image or PDF. **Owner request during G3 (2026-11-02):** after adding an expense you had to search the list for it to attach a receipt. Added (option B, owner's choice) a "Save and add receipt" button on the new-expense form only: it creates the expense and opens its page (`router.replace`, so Back skips the blank form) with the "Expense saved" announcement; plain Save is unchanged. Tests first (red: 7 of 8 failed, then the Back spec), vue-reviewer approved with no CRITICAL/HIGH; fixed: the Back history, a created-once assertion, a regression test that Save on the edit page updates and never creates again. Left on purpose: the page reloads the new expense from the server (a brief "Loading expense…"), and only Save shows "Saving…" while pending.
+
+## 8. Risks
+
+| # | Risk | Mitigation | WP |
+|---|---|---|---|
+| R1 | A large legitimate image takes > 8 s under RIE, so local retries reach the DLQ | Step 0 R2 timing; decision 21 | WP7, WP9 |
+| R2 | GD memory per 40 MP decode (~160 MB+) exceeds the local limit or Lambda memory | Header check first; R2 peak measured; Phase 7 memory sizing | WP7 |
+| R3 | The php tools image lacks GD, so unit tests cannot run | Step 0 R3; decision 19 | WP7 |
+| R4 | silo differs from AWS on response overrides or prefix listing | Step 0 R5; conformance-style integration tests | WP3 |
+| R5 | The lint override is too broad, or edited by an agent | Owner-only step; fixture proof | WP10 |
+| R6 | An orphaned object after an S3 failure | ERROR log; Phase 7 alarm; prefix cleanup on expense delete | WP6 |
+| R7 | Pipe test flakiness (timing, shared queue) | Existing marker approach; generous bounds; never concurrent runs | WP9 |
+| R8 | `ExpenseFormView` keeps growing | Composable + panel; ≤ ~15 lines in the view | WP11–12 |
+| R9 | Scope creep (list indicator, PDF thumbnails, OCR) | Decisions 11 and the not-in-scope list | all |
+
+## 9. Lessons applied
+Tests first, with the red run recorded; fail closed (an invalid file is an outcome, not a crash; the client never throws); security round 2 at opus/high; make-only, one run at a time; hand-written fixtures only; protected config edited only by the owner; haiku docs checked line by line; `/ecc:cost-report` at the end.
+
+## 10. Owner decisions (recommended defaults)
+
+**Approved at G1 on 2026-10-29: every recommended default below, unchanged.** Decision 15 is option (a); decisions 19 and 21 still depend on the Step 0 results (R3, R2).
+
+1. **Max size.** 10 MiB (10,485,760 bytes), shown as "10 MB"? **Recommended: yes.** Alternative: 10,000,000 bytes.
+2. **Accepted types.** JPEG, PNG, WebP, PDF only (no HEIC, GIF, AVIF, SVG)? **Recommended: yes** (ADR 0006, ADR 0012 GD results).
+3. **Pixel limits.** ≤ 40 MP and ≤ 12,000 px on each side? **Recommended: yes.** Alternative: 25 MP (less memory, rejects some phone panoramas).
+4. **Thumbnail.** JPEG, fit 480×480, quality 80, white background, no upscaling; EXIF rotation only if `exif` is in the image? **Recommended: yes.** Alternatives: 320 px; WebP thumbnails (ADR 0006 says JPEG).
+5. **EXIF / GPS in originals.** Keep the original exactly as uploaded (only its owner can view it); the thumbnail carries no metadata? **Recommended: yes.** Alternative: re-encode originals to strip metadata; that needs the worker to write to `receipts`, against ADR 0006.
+6. **View URL lifetime.** 5 minutes for originals and thumbnails, refreshed on click when within 60 s of expiry? **Recommended: yes.** Alternatives: 1 min; 15 min.
+7. **Upload policy lifetime.** 5 minutes (ADR 0006)? **Recommended: yes.**
+8. **Polling.** 1 s, then ×1.5 up to 5 s, stop after 60 s with "Check again", pause when the tab is hidden? **Recommended: yes.** Alternative: fixed 2 s for 30 s.
+9. **Replace while pending.** Allowed, with confirmation whenever a receipt exists? **Recommended: yes.** Alternative: block replace while pending (needs an extra state and message).
+10. **Where uploads happen.** Edit page only; the new form shows "attach after saving"? **Recommended: yes.** Alternative: pick a file on the new form and upload after the create succeeds (more states, progress across a navigation).
+11. **Receipt marker in the expense list.** None in Phase 5 (no change to `Expense`)? **Recommended: yes.** Alternative: add `hasReceipt` to `Expense` (a contract change plus one extra read per page).
+12. **Opening the original.** A same-tab link with `inline` disposition (PDFs open in the browser viewer)? **Recommended: yes.** Alternative: `attachment` (always download).
+13. **Upload transport.** `XMLHttpRequest` in `src/api/upload.ts` for real progress, enabled by an ESLint override **you** add to `frontend/eslint.config.ts`? **Recommended: yes.** Alternative: `fetch` with an indeterminate spinner and no lint change.
+14. **Upload URL check in the client.** A shape check plus the CSP host pin on AWS? **Recommended: yes.** Alternative: a build-time pinned upload host (a new `VITE_` variable; it must avoid the `*ORIGIN*` name rule in `vite/devEnv.ts`).
+15. **How `api-php` reaches S3 locally.**
+   - (a) **Recommended:** a second, unpublished `listen` on `api` (nginx) that forwards to `s3:9000` with the `Host` passed through, so no non-AWS image joins `api-internal` (ADR 0007 R13 stays as it is).
+   - (b) `s3` joins `api-internal`, accepting the R13 revisit (silo is hardened but single-maintainer).
+   - (c) A new internal network with `api-php` + `s3` (same exposure as b).
+16. **Expense-delete cleanup.** Prefix listing of both buckets after the transaction? **Recommended: yes.** Alternative: read the receipt first and add a condition on it to the transaction (no list permission; retry on conflict).
+17. **Failure reasons shown.** Coarse codes `unsupported-type`, `too-large`, `unreadable`? **Recommended: yes.** Alternative: one generic "invalid file".
+18. **Policy endpoint status.** 201 with `Location` (like the other creates)? **Recommended: yes.** Alternative: 200.
+19. **GD for unit tests.** If Step 0 R3 finds GD missing from the php dev image, add the `gd` extension to `docker/php/Dockerfile` (dev stage only; no Composer change)? **Recommended: yes.** Alternative: run the GD tests only inside the worker image, as integration tests.
+20. **New dependencies.** None: `aws/aws-sdk-php` already has `PostObjectV4` and the presigners; GD comes from the Bref layer; no npm package. **Recommended: yes.** Any need found later comes back to you.
+21. **Local runner timing.** Keep 8 s / 10 s unless Step 0 R2 shows a 40 MP thumbnail taking more than ~4 s; then raise them to 25 s / 30 s (an ADR 0007 note)? **Recommended: yes.**
+22. **Security review scope.** opus/high on WP2–WP8, WP10, WP12 and the WP13 pass; WP9 and WP11 use the language reviewer? **Recommended: yes.** Alternative: also WP9 and WP11 (about two more opus runs).
+23. **PR shape.** One PR, draft after WP6, squash-merged? **Recommended: yes.**
+24. **Deletions.** Delete `ReceivedReceiptLogger` and its test once the processor replaces it (G5)? **Recommended: yes.**
+25. **DELETE with no receipt.** 404, shown as "Already removed" (the Phase 3 pattern)? **Recommended: yes.** Alternative: always 204.
+26. **"Worker cannot write originals" locally.** Enforced by the code split plus an architecture test; IAM enforces it on AWS (Phase 7)? **Recommended: yes.** Alternative: a restricted silo user and policy for the worker (more bootstrap code).
+27. **PDF first-page render.** No: icon only (PLAN §7)? **Recommended: yes.**

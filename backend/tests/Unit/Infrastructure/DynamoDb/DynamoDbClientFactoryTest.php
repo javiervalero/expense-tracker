@@ -96,4 +96,19 @@ final class DynamoDbClientFactoryTest extends TestCase
 
         self::assertSame('dynamodb.eu-west-1.amazonaws.com', $client->getEndpoint()->getHost());
     }
+
+    public function testAnEndpointFromTheEnvironmentNeverMovesTheClient(): void
+    {
+        $saved = [getenv('AWS_ENDPOINT_URL'), getenv('AWS_ENDPOINT_URL_DYNAMODB')];
+        putenv('AWS_ENDPOINT_URL=https://evil.example');
+        putenv('AWS_ENDPOINT_URL_DYNAMODB=https://evil-db.example');
+        try {
+            $client = DynamoDbClientFactory::create(DynamoDbSettings::fromEnvironment(['DYNAMODB_TABLE' => 'tbl', 'AWS_REGION' => 'eu-west-1']));
+
+            self::assertSame('https://dynamodb.eu-west-1.amazonaws.com', (string) $client->getEndpoint());
+        } finally {
+            putenv($saved[0] === false ? 'AWS_ENDPOINT_URL' : 'AWS_ENDPOINT_URL=' . $saved[0]);
+            putenv($saved[1] === false ? 'AWS_ENDPOINT_URL_DYNAMODB' : 'AWS_ENDPOINT_URL_DYNAMODB=' . $saved[1]);
+        }
+    }
 }

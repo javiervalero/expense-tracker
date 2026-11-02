@@ -13,7 +13,7 @@ final class FrontControllerTest extends TestCase
 {
     private const WARNING_SCHEME = 'frontcontrollertest-warning';
 
-    private const ENV = ['ORIGIN_VERIFY_SECRETS' => 'frontcontroller-slot-0123456789-0123456789', 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1'];
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => 'frontcontroller-slot-0123456789-0123456789', 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'RECEIPTS_BUCKET' => 'test-receipts', 'THUMBNAILS_BUCKET' => 'test-thumbnails', 'AWS_REGION' => 'eu-west-1'];
 
     /** @var list<string> */
     private array $calls = [];

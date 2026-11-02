@@ -58,3 +58,14 @@ Decisions C1–C19 and the review notes are in [the Phase 4 plan](../plans/phase
 - **Cross-tab session (found in the WP11 security review):** a sign-out in one tab sends the other tabs to `/login`, and a sign-in as a different user reloads them, through `BroadcastChannel('expense-tracker-session')` (`src/lib/sessionChannel.ts`). It is a signal only: nothing is stored (C3), messages are parsed strictly, and a tab with no user ignores a sign-out. Pages that show categories make their own request on mount and draw names only after it answers, so a session that expired on the server reaches the 401 handler before any cached data is shown.
 - **Monotonic `Date.now` in tests:** on the WSL2 development host the wall clock steps back by about 600 ms. Vue's event invoker then drops a handler for an event that a test triggers, so a click or submit silently does nothing. The test setup uses a monotonic `Date.now` (`frontend/vite/monotonicClock.ts`, applied through `test.setupFiles`). It is a test-only fix; no assertion was weakened.
 - **Always-rendered live regions:** the polite live regions are always in the DOM and are never `display:none` while empty, so screen readers can announce the first message. They use `aria-live="polite"` without `role="status"`, so they do not collide with the `[role="status"]` queries.
+
+## Implemented in Phase 5 (2026-11-02)
+
+Decisions C17 and C20 in [the Phase 5 plan](../plans/phase-5-receipts.md).
+
+- **Two URL checks (C17, corrected in WP10):** the app checks every bucket address before it is used.
+  - Upload URL: `https:` only, or exactly `http://localhost:9000` in dev. No query, userinfo or fragment. A presigned POST carries no query.
+  - View URL (originals and thumbnails): the same rules, but a query is allowed, because a presigned GET carries its signature there.
+  - Both refuse the app's own origin, and outside dev only `https:` is accepted, so the dev origin is refused.
+- **CSP target for Phase 7 (C20):** `connect-src 'self' https://<receipts-bucket-host>` (the upload is an XHR, which `connect-src` governs, not `form-action`, which stays `'self'`) and `img-src 'self' https://<thumbnails-bucket-host>`. Phase 7 applies it at CloudFront. Nothing changes locally.
+- **The Open receipt link needs a build-time host check too.** CSP does not limit a top-level navigation, so only a build-time check of the exact bucket origins can restrict that link. Phase 7 carry item L2 in [the plan](../plans/phase-5-receipts.md).

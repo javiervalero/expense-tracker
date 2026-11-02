@@ -1,0 +1,15 @@
+{
+  "model": "opusplan",
+  "includeCoAuthoredBy": true,
+  "extraKnownMarketplaces": {
+    "ecc": {
+      "source": {
+        "source": "git",
+        "url": "https://github.com/affaan-m/ECC.git"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "ecc@ecc": true
+  }
+}

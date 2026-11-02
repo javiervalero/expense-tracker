@@ -2,7 +2,7 @@
 # docs/spikes/bref-php85.md for how the digests were taken).
 #
 #   fpm: runtime for the local API (php-fpm behind nginx), mirrors production PHP.
-#   dev: tools image (CLI + Composer + pcov) used for tests, static analysis and formatting.
+#   dev: tools image (CLI + Composer + pcov + gd + exif) used for tests, static analysis and formatting.
 
 FROM php:8.5-fpm-alpine@sha256:fa01fb1645cd0fc566a5f146b099adace33b906571f972f71f2182a7c12d1cd7 AS fpm
 COPY docker/php/conf.d/app.ini /usr/local/etc/php/conf.d/zz-app.ini
@@ -11,8 +11,12 @@ COPY docker/php/php-fpm.d/zz-app.conf /usr/local/etc/php-fpm.d/zz-app.conf
 
 FROM php:8.5-cli-alpine@sha256:93684051146ec037620855feb77f278090bde45ddc030801cd3f2a7685bc4deb AS dev
 COPY --from=composer:2.10.3@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac /usr/bin/composer /usr/bin/composer
-RUN apk add --no-cache git unzip \
- && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS \
+# gd (JPEG, PNG, WebP) and exif: the same image extensions the worker has, so the receipt inspection and thumbnail
+# tests run here (plan phase 5, decision 19). The runtime libraries stay; the -dev packages go with .build-deps.
+RUN apk add --no-cache git unzip libjpeg-turbo libpng libwebp \
+ && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS libjpeg-turbo-dev libpng-dev libwebp-dev \
+ && docker-php-ext-configure gd --with-jpeg --with-webp \
+ && docker-php-ext-install -j"$(nproc)" gd exif \
  && pecl install pcov-1.0.12 \
  && docker-php-ext-enable pcov \
  && apk del --no-network .build-deps

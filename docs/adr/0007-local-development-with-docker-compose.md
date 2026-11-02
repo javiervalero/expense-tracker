@@ -182,3 +182,32 @@ Decision A22 and risk R13 in [the Phase 2 plan](../plans/phase-2-authentication.
   authentication. Using that path needs code execution inside AWS's digest-pinned DynamoDB Local image; the target is
   read-only, non-root, `cap_drop: ALL`, holds only the fake keys and has no route out. `listen.allowed_clients` would
   need fixed subnets that could clash with a developer's network. Revisit if a non-AWS image ever joins `api-internal`.
+
+## Implemented in Phase 5 (2026-11-02, branch `feat/phase-5-receipts`)
+
+Decisions 15(a) and 26 in [the Phase 5 plan](../plans/phase-5-receipts.md).
+
+- **Worker environment (WP8):** `worker` has no `env_file` and only these variables: `APP_ENV=local`, `DYNAMODB_ENDPOINT`,
+  `DYNAMODB_TABLE`, `S3_ENDPOINT`, `S3_PUBLIC_ENDPOINT` (the worker does not use it, but the shared S3 settings need
+  it), the two bucket names (`receipts`, `receipt-thumbnails`), the region and the fake key pair. Its root filesystem is
+  read-only, with a 64 MB `tmpfs` on `/tmp`. Outside `APP_ENV=local`, any of the three endpoint variables is a
+  configuration error.
+- **Runner timing (WP11):** unchanged at an 8 s invocation timeout under the 10 s queue visibility timeout (decision 21).
+  Step 0 R2 measured a 40 MP JPEG or PNG at about 0.4 s from inspect to thumbnail, far below the threshold of about 4 s
+  that would have required a change.
+- **The API → S3 path is tested** by `make test-api-s3-path`, which `make test-integration` also runs. It checks that a
+  signed request through `api:9100` is answered by S3 and that `s3:9000` is not reachable from `api-php`.
+
+- **The API reaches the S3 emulator through nginx (WP3):** `api` gets a second `server` on port 9100, exposed on the
+  Compose networks but not published to the host, whose only upstream is `s3:9000` (fixed in the config, nothing from
+  the request chooses it). `api-php` uses `S3_ENDPOINT=http://api:9100`. `s3` (silo, a non-AWS image) does **not** join
+  `api-internal`, so R13 above is unchanged: no new image can reach php-fpm.
+- **What changed from Phase 2:** "the fake keys can reach nothing but DynamoDB Local" no longer holds. The same `.env`
+  pair is silo's root user, so code running in `api-php` has root on the local S3 emulator through port 9100. Accepted
+  as a local-only risk: it holds only throwaway test data, and on AWS the API gets an IAM role scoped to the two buckets
+  (Phase 7). Any container on `default` or `api-internal` can also use the 9100 listener; they could already reach
+  silo on `default`.
+- **Logging:** the 9100 server logs method, path and status but no query string (S3 listing prefixes hold user ids).
+  The paths themselves still contain user and expense ids (object keys), and nginx's `error_log` can print the full
+  request line, query included, on an upstream error. Requests through 9100 are signed in the `Authorization` header,
+  which is never logged.

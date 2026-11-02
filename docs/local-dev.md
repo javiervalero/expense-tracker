@@ -9,9 +9,17 @@ are emulators, so some behaviour differs from AWS; the differences that matter a
 You need Docker with Compose v2, `make` and `git`. PHP and Node are not needed on the host: every PHP and Node tool
 runs in a pinned container as your user, so no file ends up owned by root.
 
+On macOS, `make lint` also needs `brew install bash coreutils`. Two guard scripts (`make check-image-pins` and
+`make lint-workflows`) need bash 4 or later and GNU `realpath` and `base64`, but macOS ships bash 3.2 and BSD tools.
+Homebrew's `bin` directory must come before `/bin` on your `PATH` (Homebrew's installer sets that up), so that
+`#!/usr/bin/env bash` finds the new bash. The Makefile finds Homebrew's coreutils itself for those two targets and adds
+nothing to your `PATH`; Linux needs nothing extra.
+
 ```bash
 make frontend-install   # once: front-end dependencies (`make up` refuses to start without them)
 make php-install        # once: back-end dependencies (the API mounts backend/vendor)
+make contract-install   # once: OpenAPI contract tooling (lint, bundle, types), needed by the tests
+make local-aws-install  # once: dependencies of the local AWS stand-ins, needed by the tests
 make up                 # creates .env from .env.example, starts everything, waits until healthy
 make down               # stop and remove the containers (see "Resetting state")
 ```
@@ -229,13 +237,70 @@ On AWS a receipt upload goes S3 → event notification → SQS → worker Lambda
 3. The relay turns the event into an AWS-shaped SQS message and puts it on the `receipts` queue in ElasticMQ (`sqs`).
 4. `worker-runner` long-polls `receipts`, and posts each batch to the worker as an SQS event
    (`http://worker:8080/2015-03-31/functions/function/invocations`, the Runtime Interface Emulator).
-5. The worker processes the event. It logs what it receives in Phase 0. A message whose batch fails stays on the
-   queue; after 3 receives it moves to `receipts-dlq`.
+5. The worker processes the event: it checks the file, makes a thumbnail for images and marks the receipt `ready` or
+   `failed`. A message whose batch fails stays on the queue; after 3 receives it moves to `receipts-dlq`.
 
 The emulator keeps events in its own queue while the relay does not answer, and replays them when it does. Its health
 check only shows that the emulator itself is up.
 
-Phase 0 has no upload endpoint yet, so the pipeline is tested with the integration tests (see "Tests"), not by hand.
+The integration tests exercise the pipeline (see "Tests"). To try it by hand in the browser, follow the walkthrough below.
+
+### Receipt walkthrough
+
+The owner runs this walkthrough in Chrome and Firefox, not Safari (WebKit bug 281149). Run `make up` first. The results
+go into the pull request body (gate G3).
+
+1. Open the app on http://localhost:5173 exactly, not 127.0.0.1: the sign-in cookie and the S3 CORS rule only work for
+   that origin.
+2. Register or sign in.
+3. Create a new expense with "Save and add receipt": it saves and opens that expense's page, ready for a receipt (plain
+   "Save" still returns to the list; Back from the page skips the blank form). You can also open an existing expense.
+   Receipts are attached on an existing expense only.
+4. Upload a JPEG. Expect progress, then "Processing", then a thumbnail.
+5. Upload a PDF. Expect a PDF icon, and "Open receipt" opens the file in the browser's PDF viewer.
+6. Choose a file over 10 MB. Expect it to be refused before anything is sent.
+7. Rename a `.txt` file to `.png` and upload it. Expect the failed message: "This file isn't a valid JPEG, PNG, WebP or PDF."
+8. Replace the receipt. Expect a confirmation first, and the old preview is gone afterwards.
+9. Delete the receipt. Expect a confirmation first. Delete it again from a second tab: expect "Already removed."
+10. Replace the receipt in two tabs at once. The second one expects a 409 and the message "Reload".
+11. In DevTools, set the network to "Slow 3G". Progress moves. Leaving the page during an upload aborts it silently.
+    If status polling reaches its 60-second cap, the panel shows "Still processing" and a "Check again" button.
+12. Use the keyboard only, then a screen reader (NVDA or VoiceOver). Expect the milestones to be announced: upload started,
+    processing, ready, failed.
+
+### Looking at the uploaded files in the S3 emulator
+
+The emulator (`s3`, port 9000, only on `127.0.0.1`) has two buckets: `receipts` (the originals) and
+`receipt-thumbnails`. Its web console is off, so use the AWS CLI with the fake key pair from `.env`
+(`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_REGION`; the values below are the `.env.example` ones). Install it
+with `brew install awscli`, or run it in a container as shown. Do this with `make up` running.
+
+```bash
+export AWS_ACCESS_KEY_ID=localdev AWS_SECRET_ACCESS_KEY=localdevsecret AWS_DEFAULT_REGION=eu-west-1
+aws --endpoint-url http://localhost:9000 s3 ls s3://receipts/ --recursive
+aws --endpoint-url http://localhost:9000 s3 ls s3://receipt-thumbnails/ --recursive
+aws --endpoint-url http://localhost:9000 s3 cp s3://receipts/<key> ./receipt-copy   # download one object
+```
+
+Without installing anything (run it from a folder outside the repository if you download files). On Docker Desktop
+(macOS, Windows) a container reaches the host as `host.docker.internal`; on Linux add `--add-host
+host.docker.internal:host-gateway` to the command:
+
+```bash
+docker run --rm -e AWS_ACCESS_KEY_ID=localdev -e AWS_SECRET_ACCESS_KEY=localdevsecret \
+  -e AWS_DEFAULT_REGION=eu-west-1 amazon/aws-cli --endpoint-url http://host.docker.internal:9000 s3 ls s3://receipts/ --recursive
+```
+
+What to expect:
+
+- A key looks like `receipts/<user-id>/<expense-id>/<receipt-id>`. There is no file name or extension; the type is the
+  object's Content-Type.
+- The original appears as soon as the upload ends. The thumbnail appears in `receipt-thumbnails` after the worker has
+  processed an image. A PDF has no thumbnail.
+- Replacing or deleting a receipt removes the old objects from both buckets. A file the worker rejects (a `.txt` renamed
+  to `.png`) is deleted from `receipts` after it is marked failed.
+- The worker's log: `docker compose logs -f worker`.
+- Everything is in memory: `make down` or a restart empties the buckets.
 
 ## Environment variables (`.env`)
 
@@ -299,10 +364,11 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make test-unit` | Backend unit and architecture tests, 80% coverage bar on `src/` |
 | `make test-slow-unit` | Backend unit tests marked `slow`: one Argon2id hash at production cost, timed into `build/tmp/argon2-timing.txt` |
 | `make test-local-aws` | `docker/local-aws` unit tests, 80% coverage bar |
-| `make frontend-test` | Front-end Vitest with coverage, 80% bar |
+| `make frontend-test` | Front-end Vitest with coverage, 100% bar |
 | `make test-conformance` | Conformance tests against DynamoDB Local, ElasticMQ and the S3 emulator (needs `make up`) |
 | `make test-contract` | Contract tests: route parity, every operation documents its errors, every secured operation is covered by the cross-user isolation suite, and the validator against the real bundled spec (run `make contract-bundle` first) |
 | `make test-integration` | Integration tests (needs `make up`): the receipt pipeline S3 → relay → ElasticMQ → runner → worker, the API through nginx (contract-validated, including the cross-user isolation suite), and the DynamoDB item store against DynamoDB Local; afterwards it checks the logs: no password, session token or user content (descriptions, category names, `q`, cursors) may appear |
+| `make test-api-s3-path` | Runs a short script inside a throwaway `api-php` container (needs `make up`; `make test-integration` runs it too) and proves that the API reaches S3 only through the extra nginx listener of `api` (`http://api:9100`, not published on the host): the endpoint is that listener, a signed request through it is answered by S3, and `s3:9000` is not reachable from `api-php` |
 | `make test-shell` | Tests of the shell guards (`scripts/tests/*.test.sh`) |
 | `make tf-test` | Tests of the Terraform check (needs Docker, about 50 s) |
 

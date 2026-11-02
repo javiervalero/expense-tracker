@@ -70,6 +70,7 @@ final class ApiFactory
                 new SystemClock(),
                 new RandomUuidGenerator(),
                 $requestLogger,
+                $config->s3,
             );
 
             // Order, outermost first: errors are rendered as problem+json; the request line is written for every

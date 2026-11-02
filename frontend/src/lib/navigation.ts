@@ -22,3 +22,8 @@ export function navigateTo(url: string): void {
 export function reload(): void {
   window.location.reload()
 }
+
+/** The origin (scheme, host, port) this app is served from. Here because `location` is only read in this file. */
+export function appOrigin(): string {
+  return window.location.origin
+}

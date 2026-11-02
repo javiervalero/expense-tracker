@@ -18,7 +18,7 @@ final class ApiFactoryTest extends TestCase
 {
     private const SECRET_A = 'factory-slot-a-0123456789-0123456789';
     private const SECRET_B = 'factory-slot-b-0123456789-0123456789';
-    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1'];
+    private const ENV = ['ORIGIN_VERIFY_SECRETS' => self::SECRET_A . ',' . self::SECRET_B, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'RECEIPTS_BUCKET' => 'test-receipts', 'THUMBNAILS_BUCKET' => 'test-thumbnails', 'AWS_REGION' => 'eu-west-1'];
 
     private const BROWSER = ['origin' => 'http://localhost:5173', 'x-requested-with' => 'XMLHttpRequest'];
 
@@ -181,7 +181,7 @@ final class ApiFactoryTest extends TestCase
     public function testTheFactoryUsesTheLoadedConfigAndNeverReadsTheEnvironmentItself(): void
     {
         $other = 'loader-slot-0123456789-0123456789-xx';
-        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'AWS_REGION' => 'eu-west-1']);
+        $config = ApiConfig::fromEnvironment(['ORIGIN_VERIFY_SECRETS' => $other, 'CLIENT_IP_HEADER' => 'CloudFront-Viewer-Address', 'APP_ORIGINS' => 'http://localhost:5173', 'DYNAMODB_TABLE' => 'expense-tracker-test', 'RECEIPTS_BUCKET' => 'test-receipts', 'THUMBNAILS_BUCKET' => 'test-thumbnails', 'AWS_REGION' => 'eu-west-1']);
         $kernel = ApiFactory::fromConfigLoader(static fn(): ApiConfig => $config, $this->stream);
 
         self::assertSame(200, $kernel->handle(new Request('GET', '/api/v1/health', [], self::origin($other), ''))->status);

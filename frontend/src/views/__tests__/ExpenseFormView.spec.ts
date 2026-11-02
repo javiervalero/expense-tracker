@@ -19,6 +19,8 @@ const expensesApi = vi.hoisted(() => ({
 const categoriesApi = vi.hoisted(() => ({ listCategories: vi.fn() }))
 vi.mock('@/api/expenses', () => expensesApi)
 vi.mock('@/api/categories', () => categoriesApi)
+// The receipt panel has its own specs; here it must not reach the network.
+vi.mock('@/components/ReceiptPanel.vue', () => ({ default: { render: () => null } }))
 
 const ID = '5a1c1f0e-5d3a-4c8e-9a41-2f6d8e7b1a91'
 const FOOD = '0b7c1f0e-5d3a-4c8e-9a41-2f6d8e7b1a90'
@@ -319,7 +321,7 @@ describe('ExpenseFormView: new', () => {
   it('has no delete button', async () => {
     const { wrapper } = await render('/expenses/new')
 
-    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save'])
+    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save', 'Save and add receipt'])
   })
 
   it('renders text as text, never as markup', async () => {
@@ -342,7 +344,7 @@ describe('ExpenseFormView: edit', () => {
     expensesApi.getExpense.mockResolvedValue(ok(expense()))
     const { wrapper } = await render(path)
 
-    expect(expensesApi.getExpense).toHaveBeenCalledWith(ID)
+    expect(expensesApi.getExpense).toHaveBeenCalledWith(ID, expect.any(AbortSignal))
     expect(wrapper.get('h1').text()).toBe('Edit expense')
     expect((wrapper.get('#expense-date').element as HTMLInputElement).value).toBe('2026-10-01')
     expect((wrapper.get('#expense-amount').element as HTMLInputElement).value).toBe('12.50')
@@ -718,7 +720,7 @@ describe('ExpenseFormView: late answers and a changed route', () => {
     expect(wrapper.get('h1').text()).toBe('New expense')
     expect((wrapper.get('#expense-description').element as HTMLInputElement).value).toBe('')
     expect(wrapper.find('button.danger, [role="group"]').exists()).toBe(false)
-    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save'])
+    expect(wrapper.findAll('button').map((b) => b.text())).toEqual(['Save', 'Save and add receipt'])
   })
 
   it('drops a Reload answer that arrives after the route changed', async () => {

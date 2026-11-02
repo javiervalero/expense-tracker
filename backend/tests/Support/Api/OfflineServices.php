@@ -11,6 +11,7 @@ use App\Infrastructure\DynamoDb\ItemStore;
 use App\Infrastructure\Id\RandomUuidGenerator;
 use App\Infrastructure\Logging\JsonLogger;
 use App\Tests\Support\FrozenClock;
+use App\Tests\Support\S3\TestS3Settings;
 use Aws\MockHandler;
 
 /**
@@ -37,6 +38,7 @@ final class OfflineServices
             new FrozenClock(),
             new RandomUuidGenerator(),
             new JsonLogger($logStream ?? self::memory()),
+            TestS3Settings::create(),
         );
     }
 

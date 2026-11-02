@@ -96,3 +96,28 @@ event shape (see [ADR 0007](0007-local-development-with-docker-compose.md)).
 - More moving parts (two buckets, queue, worker, DLQ) need monitoring: alarms on DLQ depth and on
   receipt-cleanup errors. Both are part of the essential infrastructure, not deferred.
 - Replacing a receipt removes the old one immediately, even if the new upload is then abandoned.
+
+## Implemented in Phase 5 (2026-11-02, branch `feat/phase-5-receipts`)
+
+Decisions C4, C8, C10 and C11 in [the Phase 5 plan](../plans/phase-5-receipts.md). The flow above holds; the points below record what was built and where it differs.
+
+- **C4, upload policy (`POST …/receipt/upload`):** one transaction checks that the expense exists and writes the new
+  `pending` record only if the old one is unchanged (404 or 409). Then the policy is signed locally, the old objects are
+  deleted, and the answer is 201.
+  - Deviation: the order is commit, then sign, then cleanup in a `finally`, so the old files are removed even if signing fails.
+  - Deviation: the policy pins the exact size (`content-length-range` = the declared size, an owner decision). `maxBytes` in the answer stays 10 MiB.
+  - A transaction conflict is answered 503 with `Retry-After`.
+- **C8, expense delete cleanup:** the existing transaction runs first, then both prefixes are listed and deleted with `ListObjectsV2` and `DeleteObjects`, skipping an empty listing.
+  - Deviation: the sweep is bounded: an 8 s budget per call, a cleanup S3 client with a 2 s connect timeout, a 5 s request timeout and 2 attempts, and at most 3 listing pages per prefix.
+  - Anything left over is logged as `receipt cleanup failed` with keys only.
+- **C10, worker:**
+  - Checks the bucket and key, reads the record, reads the object, inspects it, writes the thumbnail, then makes the conditional update to `ready` or `failed`.
+  - Deviation: an invalid file is marked `failed` first and its original is deleted second (review F2), so a storage error never leaves a pending record without its file.
+  - Deviation: a `ready` record stores the object's ETag. A duplicate event compares it with a HEAD of the stored object, and a changed object fails the record and deletes both files.
+  - The worker's `memory_limit` is set to 768M (`WorkerRuntime`).
+  - Phase 7 requirement: SQS batch size 1, because a memory fatal ends the whole batch.
+- **C11, file inspection:**
+  - Magic bytes must match the declared type. Images are then checked by header (at most 12,000 px a side and 40 MP) before GD decodes them. GD warnings become `unreadable`.
+  - Deviation: JPEG and PNG structure walkers run first. The PNG walker refuses `zTXt`, compressed `iTXt`, a second `iCCP` and more than 1,000 non-IDAT chunks.
+  - PDFs are checked by magic bytes only.
+  - Not tested: CMYK JPEG (GD cannot produce one to test with).

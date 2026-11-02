@@ -189,7 +189,7 @@ jobs:
       - name: Audit dependencies for known vulnerabilities
         run: make RUN_NODE= contract-audit
 
-  # The front-end (ADR 0008): ESLint, Prettier --check, vue-tsc, Vitest with the 80% coverage bar, the production build,
+  # The front-end (ADR 0008): ESLint, Prettier --check, vue-tsc, Vitest with the 100% coverage bar, the production build,
   # a check that the origin-verify value is not in the bundle, and npm audit. Node is installed here, so RUN_NODE is
   # empty (same make targets as locally).
   frontend:
@@ -215,7 +215,7 @@ jobs:
       - name: ESLint, Prettier (check) and vue-tsc
         run: make RUN_NODE= frontend-lint
 
-      - name: Unit and component tests with coverage (80% bar)
+      - name: Unit and component tests with coverage (100% bar)
         run: make RUN_NODE= frontend-test
 
       - name: Production build

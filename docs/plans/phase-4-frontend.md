@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Implemented 2026-10-28** (WP1–WP11). G3 (owner browser walkthrough) done 2026-10-28, with fixes in the notes below. Pending: G6 (PR #7 merge). Approved 2026-10-26 (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
+| Status | **Implemented 2026-10-28** (WP1–WP11). G3 (owner browser walkthrough) done 2026-10-28, with fixes in the notes below. G6 (merge of PR #7) done 2026-10-28. Approved 2026-10-26 (gate G1: the owner approved the plan and all seventeen section 10 decisions with the recommended defaults) |
 | Phase | 4 (PLAN §12, essential track), size M |
 | Branch | `feat/phase-4-frontend`, from `main` at 19552c0 (Phase 3 merged in PR #6) |
 | Inputs | BRIEF; PLAN §5, §8, §9, §10, §12, §13; ADR 0002 (pagination), 0004 (incl. "Implemented in Phase 2"), 0005, 0008, 0011, 0012 §4.1; `contract/openapi.yaml` 0.11.0; [Phase 2 plan](phase-2-authentication.md) §7.2 and the WP12 notes; [Phase 3 plan](phase-3-categories-expenses.md) §7.2, and the notes from WP2, WP8, WP10, WP11 and WP13; the Phase 0 front end (`frontend/**`), `Makefile`, `docker-compose.yml`, `.github/workflows/ci.yml` |

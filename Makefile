@@ -35,10 +35,10 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
 
 help: ## Show this help
-	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
+	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 php-image: ## Build the PHP tools image (pinned base images, pcov, Composer)
 	docker build --target dev -t $(PHP_IMAGE) -f docker/php/Dockerfile .
@@ -168,10 +168,13 @@ test-conformance: .env check-env php-image ## Conformance tests (DynamoDB Local,
 # purge that same queue themselves, so they cannot run while the runner is up. The recipe therefore:
 #   1. stops `worker-runner` (project-scoped: only this Compose project's service), then runs every suite except the
 #      group `needs-runner` (so S3ToQueueTest, RelayHttpTest and RieInvocationTest);
-#   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included). That test
+#   2. starts it again and runs the group `needs-runner` (ReceiptPipeTest: the whole pipe, runner included; ReceiptLifecycleTest: the API-to-worker life cycle). That test
 #      writes the run-unique upload key and poison message id under build/pipe-test/, and the recipe then greps the
 #      service logs for exactly those values (an empty queue alone could mean "no event"): the worker must have logged
-#      "receipt received" for the key, and (unless FAST) the runner must have logged "messages failed, left on the
+#      "receipt ready" for the pipe test's key and for the lifecycle test's JPEG key, and "receipt failed" for its HTML key
+#      (both tests seed or request a real receipt, so the real worker path runs); no value of the lifecycle test's upload
+#      policy (Policy, X-Amz-Signature) and not the name X-Amz-Signature may appear in the api-php or worker logs (C15);
+#      and (unless FAST) the runner must have logged "messages failed, left on the
 #      queue" for the poison id (the worker reported it in batchItemFailures, so this is the partial-failure path, not an
 #      outage and not a whole-batch failure);
 #   3. restarts the runner afterwards ALSO when a test fails or the recipe is interrupted. dash (the shell make uses)
@@ -190,8 +193,16 @@ CLIENT_IP_MARKERS = build/client-ip-test
 # logged by api-php; descriptions and names are also checked in the nginx log, `q` and cursors are not (local nginx logs query strings, B23).
 AUTH_MARKERS = build/auth-test
 
+# Decision 15(a), proved from INSIDE the api-php service (a throwaway container of the same service, same networks and
+# hardening; `--no-deps` starts nothing else): S3_ENDPOINT is the nginx listener http://api:9100, a signed request through
+# it is answered by S3, and s3:9000 is not reachable. The script is piped in because the container mounts no scripts.
+# `make test-integration` runs it too. Needs `make up`.
+test-api-s3-path: .env check-env ## Check from inside api-php that S3 is reachable only through the nginx listener api:9100; run `make up` first
+	$(COMPOSE) run --rm --no-deps -T api-php php < scripts/api-s3-path-check.php
+
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
+	scripts/check-stack-up.sh $(COMPOSE); \
 	trap 'code=$$?; trap - EXIT; $(COMPOSE) start worker-runner >/dev/null || echo "make test-integration: could not start worker-runner again; run make up" >&2; exit $$code' EXIT; \
 	trap 'exit 130' INT; trap 'exit 143' TERM HUP; \
 	echo "make test-integration, part 1: worker-runner stopped (the suites below read the receipts queue themselves)"; \
@@ -199,6 +210,8 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	rm -rf $(CLIENT_IP_MARKERS) $(AUTH_MARKERS); \
 	ip_since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(PHPUNIT_INTEGRATION) --exclude-group needs-runner $(EXCLUDE_SLOW); \
+	echo "make test-integration: api-php to S3 path check"; \
+	$(MAKE) --no-print-directory test-api-s3-path; \
 	fail() { echo "make test-integration: $$1" >&2; exit 1; }; \
 	[ -f $(CLIENT_IP_MARKERS)/markers.json ] || fail "the client IP test left no $(CLIENT_IP_MARKERS)/markers.json"; \
 	marker() { v=$$(sed -n "s/^ *\"$$1\": \"\(.*\)\",\{0,1\}$$/\1/p" $(CLIENT_IP_MARKERS)/markers.json); [ -n "$$v" ] || fail "markers.json has no '$$1' marker (did its test run?)"; printf '%s' "$$v"; }; \
@@ -242,9 +255,20 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 	since=$$(date -u +%Y-%m-%dT%H:%M:%SZ); \
 	$(COMPOSE) start worker-runner; \
 	$(PHPUNIT_INTEGRATION) --group needs-runner $(EXCLUDE_SLOW); \
-	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || { echo "make test-integration: the pipe test left no upload key marker" >&2; exit 1; }; \
-	$(COMPOSE) logs --no-log-prefix --since "$$since" worker | grep -F '"message":"receipt received"' | grep -qF "\"key\":\"$$key\"" \
-		|| { echo "make test-integration: the worker logged no 'receipt received' line for the key $$key" >&2; exit 1; }; \
+	key=$$(cat $(PIPE_MARKERS)/upload-key.txt) || fail "the pipe test left no upload key marker"; \
+	readykey=$$(cat $(PIPE_MARKERS)/ready-key.txt) || fail "the lifecycle test left no ready-key marker"; \
+	failedkey=$$(cat $(PIPE_MARKERS)/failed-key.txt) || fail "the lifecycle test left no failed-key marker"; \
+	workerlogs=$$($(COMPOSE) logs --no-log-prefix --since "$$since" worker) || fail "could not read the worker logs"; \
+	apilogs2=$$($(COMPOSE) logs --no-log-prefix --since "$$since" api-php) || fail "could not read the api-php logs"; \
+	logged() { printf '%s\n' "$$workerlogs" | grep -F "\"message\":\"$$1\"" | grep -qF "\"key\":\"$$2\"" || fail "the worker logged no '$$1' line for the key $$2"; }; \
+	logged "receipt ready" "$$key"; logged "receipt ready" "$$readykey"; logged "receipt failed" "$$failedkey"; \
+	echo "make test-integration: worker receipt ready/failed log checks passed"; \
+	secret() { [ $${#2} -ge 10 ] || fail "the leak check for $$1 has a value shorter than 10 characters (vacuous)"; \
+		if printf '%s\n' "$$apilogs2" | grep -qF -e "$$2"; then fail "$$1 appears in the api-php logs (a signed upload secret leaked into a log)"; fi; \
+		if printf '%s\n' "$$workerlogs" | grep -qF -e "$$2"; then fail "$$1 appears in the worker logs (a signed upload secret leaked into a log)"; fi; }; \
+	secret "the upload POLICY value" "$$(cat $(PIPE_MARKERS)/policy-value.txt)"; secret "the upload X-Amz-Signature value" "$$(cat $(PIPE_MARKERS)/signature-value.txt)"; \
+	secret "the name X-Amz-Signature" "X-Amz-Signature"; \
+	echo "make test-integration: signed upload log hygiene checks passed"; \
 	if [ -z "$(FAST)" ]; then \
 		id=$$(cat $(PIPE_MARKERS)/poison-message-id.txt) || { echo "make test-integration: the dead-letter test left no message id marker" >&2; exit 1; }; \
 		$(COMPOSE) logs --no-log-prefix --since "$$since" worker-runner | grep -F '"message":"messages failed, left on the queue"' | grep -qF "\"failedMessageIds\":[\"$$id\"]" \
@@ -305,6 +329,17 @@ print-JQ_IMAGE:
 	@printf '%s\n' $(call shell_quote,$(JQ_IMAGE))
 print-YQ_IMAGE:
 	@printf '%s\n' $(call shell_quote,$(YQ_IMAGE))
+
+# macOS ships BSD tools, but check-image-pins.sh, lint-workflows.sh and check-php-platform.sh use GNU `realpath -m` and
+# `base64 -d`. On a Mac with Homebrew's coreutils (`brew install coreutils`) its GNU tools are put first on PATH for the
+# three targets that run them and for nothing else. On Linux (CI included) `uname -s` is not Darwin, so nothing here
+# applies.
+ifeq ($(shell uname -s),Darwin)
+GNU_TOOLS_DIR := $(firstword $(wildcard /opt/homebrew/opt/coreutils/libexec/gnubin /usr/local/opt/coreutils/libexec/gnubin))
+endif
+ifneq ($(GNU_TOOLS_DIR),)
+check-image-pins lint-workflows check-platform: export PATH := $(GNU_TOOLS_DIR):$(PATH)
+endif
 
 check-image-pins: ## Every Dockerfile FROM/COPY --from/--mount from=, and Compose image (as Compose resolves it), is pinned by digest
 	@scripts/check-image-pins.sh
@@ -392,7 +427,7 @@ contract-audit: ## contract/: npm audit, high severity and above (needs contract
 contract: contract-lint contract-bundle contract-check-types ## Lint + bundle + check the committed types (needs contract-install)
 
 # The front-end (ADR 0008). `make frontend-install` first (once, and after a lockfile change). Lint = ESLint, Prettier
-# --check and vue-tsc (type check of the app, the tests and the Node-side config). Test = Vitest with the 80% bar on
+# --check and vue-tsc (type check of the app, the tests and the Node-side config). Test = Vitest with the 100% bar on
 # frontend/src and frontend/vite (see vite.config.ts for what is excluded and why). Scripts of dependencies never run.
 frontend-install: ## frontend/: install npm dependencies from package-lock.json (no install scripts)
 	$(NPM_FRONTEND) ci --ignore-scripts --no-audit --no-fund
@@ -405,7 +440,7 @@ frontend-lint: frontend-ready ## frontend/: ESLint, Prettier --check and vue-tsc
 	$(NPM_FRONTEND) run format:check
 	$(NPM_FRONTEND) run type-check
 
-frontend-test: frontend-ready ## frontend/: Vitest with coverage, 80% bar (needs frontend-install)
+frontend-test: frontend-ready ## frontend/: Vitest with coverage, 100% bar (needs frontend-install)
 	$(NPM_FRONTEND) run test:coverage
 
 # The build runs WITH the origin-verify value in its environment, so that `check-bundle-secrets` is a real check: if the

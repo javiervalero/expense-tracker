@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, useTemplateRef, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
+import type { RouteLocationRaw } from 'vue-router'
 
 import { createExpense, deleteExpense, getExpense, updateExpense } from '@/api/expenses'
 import type { ApiResult } from '@/api/http'
@@ -8,6 +9,7 @@ import type { Expense } from '@/api/types'
 import ConfirmDeleteButton from '@/components/ConfirmDeleteButton.vue'
 import FormAlert from '@/components/FormAlert.vue'
 import FormField from '@/components/FormField.vue'
+import ReceiptPanel from '@/components/ReceiptPanel.vue'
 import { useFormErrors } from '@/composables/useFormErrors'
 import { APP_CURRENCY, DATE_MAX, DATE_MIN } from '@/config'
 import { todayLocal } from '@/lib/dates'
@@ -72,6 +74,27 @@ const heading = useTemplateRef<HTMLElement>('heading')
 // request remembers the value it started with; an answer that finds a different one belongs to a form that is gone, so
 // it changes nothing on screen and never navigates.
 let generation = 0
+// Aborts the two reads (load and Reload) of the form that is leaving. Saves and deletes are never aborted: their
+// outcome is still announced.
+let reads = new AbortController()
+
+// The form starts showing something else: the old form's read is aborted and its answers dropped.
+function leaveForm(): void {
+  generation += 1
+  reads.abort()
+}
+
+// Each read gets its own signal; a read still on its way is superseded by it.
+function newReadSignal(): AbortSignal {
+  reads.abort()
+  reads = new AbortController()
+  return reads.signal
+}
+
+// True when a read's answer must change nothing: the form moved on, or the read was aborted.
+function isDropped(mine: number, result: ApiResult<Expense>): boolean {
+  return mine !== generation || (!result.ok && result.error.kind === 'aborted')
+}
 
 function knownCategory(candidate: string): boolean {
   return categories.items.some((category) => category.id === candidate)
@@ -100,11 +123,13 @@ async function loadExpense(): Promise<void> {
   const mine = generation
   status.value = 'loading'
   const waiting = categories.load()
-  const result = await getExpense(id.value)
+  const result = await getExpense(id.value, newReadSignal())
   await waiting
   if (mine !== generation) {
     return
   }
+  // An aborted answer while the form is still the current one should not happen (a read is aborted only when the form
+  // moves on); it is then an ordinary failure, so that the form never stays on "Loading".
   if (!result.ok) {
     const view = describeExpenseError(result.error, false)
     loadMessage.value = view.form
@@ -119,7 +144,7 @@ async function loadExpense(): Promise<void> {
 
 // Starts from a blank form for whatever the route shows now.
 function resetForm(): void {
-  generation += 1
+  leaveForm()
   date.value = todayLocal()
   amount.value = ''
   description.value = ''
@@ -139,7 +164,7 @@ watch(
   routeId,
   (current) => {
     if (current === null) {
-      generation += 1
+      leaveForm()
       return
     }
     resetForm()
@@ -161,13 +186,16 @@ watch(
   { immediate: true },
 )
 
-onBeforeUnmount(() => {
-  generation += 1
-})
+onBeforeUnmount(leaveForm)
 
 // Leaving: the message is announced once the list page is there.
-async function leave(message: string): Promise<void> {
-  await router.push('/expenses')
+// `replace` swaps the blank "New expense" form out of history, so Back from the edit page does not return to it.
+async function leave(
+  message: string,
+  to: RouteLocationRaw = '/expenses',
+  replace = false,
+): Promise<void> {
+  await (replace ? router.replace(to) : router.push(to))
   await setFlash(message)
 }
 
@@ -210,7 +238,8 @@ function readForm(): ExpenseValues | null {
   return checked.value
 }
 
-async function submit(): Promise<void> {
+// `thenReceipt`: on success open the new expense's edit page (where the receipt panel is) instead of the list.
+async function submit(thenReceipt = false): Promise<void> {
   if (busy.value) {
     return
   }
@@ -235,7 +264,10 @@ async function submit(): Promise<void> {
       return result.ok ? await setFlash('Expense saved') : undefined
     }
     if (result.ok) {
-      return await leave('Expense saved')
+      const to = thenReceipt
+        ? { name: 'expense-edit', params: { id: result.data.id } }
+        : '/expenses'
+      return await leave('Expense saved', to, thenReceipt)
     }
     const view = describeExpenseError(result.error, true)
     conflict.value = view.conflict
@@ -255,8 +287,8 @@ async function reload(): Promise<void> {
   const mine = generation
   reloading.value = true
   try {
-    const result = await getExpense(id.value)
-    if (mine !== generation) {
+    const result = await getExpense(id.value, newReadSignal())
+    if (isDropped(mine, result)) {
       return
     }
     errors.clear()
@@ -316,7 +348,7 @@ async function remove(): Promise<void> {
       <RouterLink v-if="loadGone" to="/expenses">Back to expenses</RouterLink>
       <button v-else type="button" @click="loadExpense">Retry</button>
     </div>
-    <form v-else novalidate @submit.prevent="submit">
+    <form v-else novalidate @submit.prevent="submit()">
       <FormAlert ref="formAlert" :message="errors.formMessage.value" />
       <p v-if="gone"><RouterLink to="/expenses">Back to expenses</RouterLink></p>
       <div v-if="conflict" class="conflict">
@@ -390,6 +422,14 @@ async function remove(): Promise<void> {
         <button type="submit" class="primary" :aria-disabled="busy ? 'true' : undefined">
           {{ pending ? 'Saving…' : 'Save' }}
         </button>
+        <button
+          v-if="!isEdit"
+          type="button"
+          :aria-disabled="busy ? 'true' : undefined"
+          @click="submit(true)"
+        >
+          Save and add receipt
+        </button>
         <RouterLink to="/expenses">Cancel</RouterLink>
         <ConfirmDeleteButton
           v-if="isEdit"
@@ -403,6 +443,10 @@ async function remove(): Promise<void> {
         <p v-if="notice" class="notice">{{ notice }}</p>
       </div>
     </form>
+
+    <!-- A receipt needs an existing expense id; the key remounts the panel for another expense. -->
+    <p v-if="!isEdit" class="hint">To attach a receipt, use Save and add receipt.</p>
+    <ReceiptPanel v-else-if="status === 'ready' && !gone" :key="id" :expense-id="id" />
   </section>
 </template>
 

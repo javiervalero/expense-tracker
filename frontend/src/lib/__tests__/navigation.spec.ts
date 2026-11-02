@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { isInternalPath, navigateTo, reload } from '../navigation'
+import { appOrigin, isInternalPath, navigateTo, reload } from '../navigation'
 import { INTERNAL_PATH_CASES } from './internalPathCases'
 
 const assignMock = vi.fn<(url: string) => void>()
@@ -51,5 +51,17 @@ describe('reload', () => {
     reload()
 
     expect(reloadMock).toHaveBeenCalledOnce()
+  })
+})
+
+describe('appOrigin', () => {
+  it('returns the origin of the page the app runs on', () => {
+    vi.stubGlobal('location', { origin: 'https://app.example' })
+
+    expect(appOrigin()).toBe('https://app.example')
+  })
+
+  it('reads the real page origin when nothing is stubbed', () => {
+    expect(appOrigin()).toBe(window.location.origin)
   })
 })

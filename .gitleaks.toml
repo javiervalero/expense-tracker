@@ -36,3 +36,12 @@ condition = "AND"
 targetRules = ["generic-api-key"]
 paths = ['''^frontend/src/views/__tests__/AuthPages\.http\.spec\.ts$''']
 regexes = ['''^uniq-secret-pw-91$''']
+
+[[allowlists]]
+# Phase 5 WP4: a made-up S3 object key that must fail to parse, in the receipt repository's corrupt-item tests. The
+# generic rule reads `objectKey => '...'` as a key/value secret. It is not a credential for any system.
+description = "Fake unparseable receipt object key in the receipt repository unit tests"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^backend/tests/Unit/Receipts/ReceiptRepositoryTest\.php$''']
+regexes = ['''^receipts/not/a/key$''']

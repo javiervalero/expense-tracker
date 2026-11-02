@@ -8,7 +8,8 @@ use App\Tests\Architecture\Support\TokenScanner;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Phase 3 (B10): the DynamoDB client is built once, in the composition root (`ApiFactory`), and handed to ItemStore.
+ * Phase 3 (B10): the DynamoDB client is built once, in the composition root (`ApiFactory`, and since Phase 5 the worker's
+ * `WorkerFactory`), and handed to ItemStore.
  * Nothing else under src/ may call `DynamoDbClientFactory::create(`, so no second, unguarded client exists.
  *
  * It tokenises with PhpToken. Caught: `DynamoDbClientFactory::create(` (plain, qualified or fully qualified name, any
@@ -45,14 +46,18 @@ final class DynamoDbClientFactoryCallTest extends TestCase
     public function testOnlyTheCompositionRootCreatesTheDynamoDbClient(): void
     {
         $root = dirname(__DIR__, 2) . '/src';
-        $own = $root . '/Api/ApiFactory.php';
-        self::assertFileExists($own);
+        $roots = [$root . '/Api/ApiFactory.php', $root . '/Worker/WorkerFactory.php'];
+        foreach ($roots as $compositionRoot) {
+            self::assertFileExists($compositionRoot);
+        }
         $hits = [];
-        foreach (TokenScanner::phpFilesExcept($root, $own) as $path) {
-            $hits = [...$hits, ...$this->scanFile($path)];
+        foreach (TokenScanner::phpFiles($root) as $path) {
+            if (!in_array($path, $roots, true)) {
+                $hits = [...$hits, ...$this->scanFile($path)];
+            }
         }
 
-        self::assertSame([], $hits, 'Build the DynamoDB client only in ApiFactory and pass the ItemStore on.');
+        self::assertSame([], $hits, 'Build the DynamoDB client only in ApiFactory and WorkerFactory and pass the ItemStore on.');
     }
 
     /**

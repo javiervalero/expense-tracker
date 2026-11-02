@@ -7,9 +7,10 @@ namespace App\Tests\Architecture;
 use PHPUnit\Framework\TestCase;
 
 /**
- * Phase 2 (A12 follow-up): DynamoDbClientFactory is the one place that builds an AWS client, and credentials come
+ * Phase 2 (A12 follow-up): DynamoDbClientFactory is the one place that builds an AWS client (Phase 5: S3ClientFactory
+ * is the one place that builds the S3 client), and credentials come
  * only from the SDK's default chain (the execution role on Lambda, the environment locally). Nothing else under src/
- * may build `DynamoDbClient` or `Sdk` with `new`, or pass a `'credentials'` option (static keys in code).
+ * may build `DynamoDbClient`, `S3Client`, `S3MultiRegionClient` or `Sdk` with `new`, or pass a `'credentials'` option (static keys in code).
  *
  * It tokenises with PhpToken. Caught: `new` followed by a name whose last segment is DynamoDbClient or Sdk (plain,
  * qualified or fully qualified, any case), an import that renames either (`use Aws\Sdk as Other`), and a string
@@ -19,7 +20,8 @@ use PHPUnit\Framework\TestCase;
 final class AwsClientConstructionTest extends TestCase
 {
     private const FIXTURES = __DIR__ . '/Fixtures/awsclient';
-    private const CLIENT_NAMES = ['dynamodbclient', 'sdk'];
+    private const CLIENT_NAMES = ['dynamodbclient', 's3client', 's3multiregionclient', 'sdk'];
+    private const FACTORIES = ['/Infrastructure/DynamoDb/DynamoDbClientFactory.php', '/Infrastructure/S3/S3ClientFactory.php'];
     private const NAME_TOKENS = [T_STRING, T_NAME_QUALIFIED, T_NAME_FULLY_QUALIFIED, T_NAME_RELATIVE];
 
     public function testCleanFixtureBuildsNoClient(): void
@@ -45,29 +47,43 @@ final class AwsClientConstructionTest extends TestCase
         self::assertDirectoryExists(dirname(__DIR__, 2) . '/src', 'The guard scans src/ but it does not exist.');
     }
 
-    public function testOnlyTheClientFactoryBuildsAClientOrPassesCredentials(): void
+    public function testAnS3ClientBuiltOutsideItsFactoryIsFlagged(): void
+    {
+        $file = self::FIXTURES . '/leaky/LeakyS3.php';
+
+        self::assertSame([
+            $file . ':14: new S3Client',
+            $file . ':15: new \\Aws\\S3\\S3Client',
+        ], $this->scanFile($file));
+    }
+
+    public function testOnlyTheClientFactoriesBuildAClientOrPassCredentials(): void
     {
         $root = dirname(__DIR__, 2) . '/src';
-        $own = $root . '/Infrastructure/DynamoDb/DynamoDbClientFactory.php';
-        self::assertFileExists($own);
+        $own = array_map(static fn(string $path): string => $root . $path, self::FACTORIES);
+        foreach ($own as $factory) {
+            self::assertFileExists($factory);
+        }
         $hits = [];
         $files = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
         foreach ($files as $entry) {
-            if ($entry instanceof \SplFileInfo && $entry->getExtension() === 'php' && $entry->getPathname() !== $own) {
+            if ($entry instanceof \SplFileInfo && $entry->getExtension() === 'php' && !in_array($entry->getPathname(), $own, true)) {
                 $hits = [...$hits, ...$this->scanFile($entry->getPathname())];
             }
         }
 
-        self::assertSame([], $hits, 'Build clients only in DynamoDbClientFactory and never pass credentials: the SDK finds them.');
+        self::assertSame([], $hits, 'Build clients only in DynamoDbClientFactory and S3ClientFactory and never pass credentials: the SDK finds them.');
     }
 
-    public function testTheClientFactoryItselfPassesNoCredentials(): void
+    public function testTheClientFactoriesThemselvesPassNoCredentials(): void
     {
-        $own = dirname(__DIR__, 2) . '/src/Infrastructure/DynamoDb/DynamoDbClientFactory.php';
+        foreach (self::FACTORIES as $path) {
+            $own = dirname(__DIR__, 2) . '/src' . $path;
 
-        $labels = array_map(static fn(string $hit): string => substr($hit, (int) strrpos($hit, ': ') + 2), $this->scanFile($own));
+            $labels = array_map(static fn(string $hit): string => substr($hit, (int) strrpos($hit, ': ') + 2), $this->scanFile($own));
 
-        self::assertNotContains('credentials option', $labels);
+            self::assertNotContains('credentials option', $labels, $path);
+        }
     }
 
     /**
