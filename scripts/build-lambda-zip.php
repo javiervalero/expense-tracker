@@ -139,7 +139,7 @@ $options = [
     'build-dir' => 'build/lambda',
     'tfvars' => 'infra/terraform/envs/dev/package.auto.tfvars.json',
 ];
-$arguments = array_slice($argv, 1);
+$arguments = isset($argv) ? array_slice($argv, 1) : [];
 while ($arguments !== []) {
     $argument = array_shift($arguments);
     $name = ltrim($argument, '-');

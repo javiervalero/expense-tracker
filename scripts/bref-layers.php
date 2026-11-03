@@ -84,7 +84,7 @@ $options = [
     'out' => $root . '/infra/terraform/envs/dev/bref-layers.auto.tfvars.json',
 ];
 $check = false;
-$arguments = array_slice($argv, 1);
+$arguments = isset($argv) ? array_slice($argv, 1) : [];
 while ($arguments !== []) {
     $argument = array_shift($arguments);
     if ($argument === '--check') {
