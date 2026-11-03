@@ -334,6 +334,35 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/reports/monthly": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the spending of one month
+         * @description Adds up the signed-in user's expenses whose date is in the given calendar month, per category. `month` is
+         *     required and is `YYYY-MM` (2000-01 to 2099-12); the server has no time zone and no default, so the client says
+         *     which month it means. A parameter this operation does not know, a missing or malformed `month` gets `400`; so does a repeated `month` on the local stack (behind API Gateway the last value is used and validated like any other).
+         *
+         *     Only categories with at least one expense in the month appear, biggest total first (ties by category name, with
+         *     the uncategorized row last). The row with `categoryId: null` and `name: null` holds expenses with no category,
+         *     or whose category was deleted. A month without expenses is a normal `200` with `totalCents: 0` and no rows.
+         *
+         *     At most 10,000 expenses are added up. If the month has more, `complete` is `false` and the totals cover the
+         *     newest 10,000.
+         */
+        get: operations["getMonthlyReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -444,6 +473,33 @@ export interface components {
             items: components["schemas"]["Expense"][];
             /** @description Pass it as `cursor` to get the next page, or `null` when there is none. */
             nextCursor: string | null;
+        };
+        /**
+         * @description What the signed-in user spent in one calendar month. `complete` is `false` when the month had more than 10,000
+         *     expenses: the totals then cover the newest 10,000.
+         */
+        MonthlyReport: {
+            /** @description The month reported, `YYYY-MM`. */
+            month: string;
+            /** @description The sum of all the counted expenses, in cents. */
+            totalCents: number;
+            /** @description How many expenses were counted. */
+            expenseCount: number;
+            /** @description `false` when the month has more expenses than were counted. */
+            complete: boolean;
+            /** @description One row per category with at least one expense, biggest total first. Empty for a month without expenses. */
+            categories: components["schemas"]["CategoryTotal"][];
+        };
+        /** @description The spending of one category in the month. `categoryId` and `name` are both `null` for the uncategorized row. */
+        CategoryTotal: {
+            /** @description The id of the category (a lower-case UUID), or `null` for expenses with no category or whose category was deleted. */
+            categoryId: string | null;
+            /** @description The category's current name, or `null` for the uncategorized row. */
+            name: string | null;
+            /** @description The sum of the category's counted expenses, in cents. */
+            totalCents: number;
+            /** @description How many expenses of the category were counted. */
+            expenseCount: number;
         };
         /** @description The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error. */
         NewExpense: {
@@ -1572,6 +1628,37 @@ export interface operations {
             401: components["responses"]["SessionRequired"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["ResourceNotFound"];
+            405: components["responses"]["MethodNotAllowed"];
+            500: components["responses"]["InternalServerError"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    getMonthlyReport: {
+        parameters: {
+            query: {
+                /** @description The month to report, `YYYY-MM`, from 2000-01 to 2099-12. */
+                month: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The report of the month. */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "X-Content-Type-Options": components["headers"]["ContentTypeOptionsNoSniff"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MonthlyReport"];
+                };
+            };
+            400: components["responses"]["InvalidQuery"];
+            401: components["responses"]["SessionRequired"];
+            403: components["responses"]["Forbidden"];
             405: components["responses"]["MethodNotAllowed"];
             500: components["responses"]["InternalServerError"];
             503: components["responses"]["ServiceUnavailable"];

@@ -2,7 +2,7 @@ openapi: 3.1.0
 
 info:
   title: Expense Tracker API
-  version: 0.13.0
+  version: 0.14.0
   summary: HTTP API of the expense tracker, served under /api/v1.
   description: |
     The source of truth for the API (ADR 0011). A change to the API changes this file in the same pull request.
@@ -17,7 +17,7 @@ info:
     change it, so it is described here but not declared as a parameter. Every operation says explicitly whether it
     needs the session (`security: []` means public); there is no global default.
 
-    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. Phase 5 adds receipts. The other endpoints arrive in later phases.
+    Phase 2 adds registration, sign-in, the current user and sign-out. Phase 3 adds categories and expenses. Phase 5 adds receipts. Phase 6 adds the monthly report. The other endpoints arrive in later phases.
 
 servers:
   - url: /api/v1
@@ -34,6 +34,8 @@ tags:
     description: The signed-in user's expenses. Another user's expense is never visible, and answers like a missing one.
   - name: receipts
     description: The receipt file of one expense. Another user's expense is never visible, and answers like a missing one.
+  - name: reports
+    description: The signed-in user's spending summaries.
 
 paths:
   /health:
@@ -919,6 +921,57 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /reports/monthly:
+    get:
+      operationId: getMonthlyReport
+      tags: [reports]
+      summary: Read the spending of one month
+      description: |
+        Adds up the signed-in user's expenses whose date is in the given calendar month, per category. `month` is
+        required and is `YYYY-MM` (2000-01 to 2099-12); the server has no time zone and no default, so the client says
+        which month it means. A parameter this operation does not know, a missing or malformed `month` gets `400`; so does a repeated `month` on the local stack (behind API Gateway the last value is used and validated like any other).
+
+        Only categories with at least one expense in the month appear, biggest total first (ties by category name, with
+        the uncategorized row last). The row with `categoryId: null` and `name: null` holds expenses with no category,
+        or whose category was deleted. A month without expenses is a normal `200` with `totalCents: 0` and no rows.
+
+        At most 10,000 expenses are added up. If the month has more, `complete` is `false` and the totals cover the
+        newest 10,000.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: month
+          in: query
+          required: true
+          description: The month to report, `YYYY-MM`, from 2000-01 to 2099-12.
+          schema:
+            type: string
+            pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+      responses:
+        '200':
+          description: The report of the month.
+          headers:
+            Cache-Control:
+              $ref: '#/components/headers/CacheControlNoStore'
+            X-Content-Type-Options:
+              $ref: '#/components/headers/ContentTypeOptionsNoSniff'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MonthlyReport'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '401':
+          $ref: '#/components/responses/SessionRequired'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '405':
+          $ref: '#/components/responses/MethodNotAllowed'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
 components:
   securitySchemes:
     sessionCookie:
@@ -1396,6 +1449,66 @@ components:
             - type: string
               maxLength: 512
             - type: 'null'
+    MonthlyReport:
+      type: object
+      description: |
+        What the signed-in user spent in one calendar month. `complete` is `false` when the month had more than 10,000
+        expenses: the totals then cover the newest 10,000.
+      additionalProperties: false
+      required: [month, totalCents, expenseCount, complete, categories]
+      properties:
+        month:
+          type: string
+          pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          description: The month reported, `YYYY-MM`.
+        totalCents:
+          type: integer
+          minimum: 0
+          maximum: 1000000000000
+          description: The sum of all the counted expenses, in cents.
+        expenseCount:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: How many expenses were counted.
+        complete:
+          type: boolean
+          description: '`false` when the month has more expenses than were counted.'
+        categories:
+          type: array
+          maxItems: 10000
+          description: One row per category with at least one expense, biggest total first. Empty for a month without expenses.
+          items:
+            $ref: '#/components/schemas/CategoryTotal'
+    CategoryTotal:
+      type: object
+      description: The spending of one category in the month. `categoryId` and `name` are both `null` for the uncategorized row.
+      additionalProperties: false
+      required: [categoryId, name, totalCents, expenseCount]
+      properties:
+        categoryId:
+          description: The id of the category (a lower-case UUID), or `null` for expenses with no category or whose category was deleted.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
+        name:
+          description: The category's current name, or `null` for the uncategorized row.
+          oneOf:
+            - type: string
+              minLength: 1
+              maxLength: 50
+            - type: 'null'
+        totalCents:
+          type: integer
+          minimum: 1
+          maximum: 1000000000000
+          description: The sum of the category's counted expenses, in cents.
+        expenseCount:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: How many expenses of the category were counted.
     NewExpense:
       type: object
       description: The body of a create. `date`, `amountCents` and `description` are required; anything else but `categoryId` is a validation error.

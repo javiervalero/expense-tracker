@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Stub `docker` for scripts/tests/smoke.test.sh. smoke.sh only calls `docker run --rm -i --network none <image> <jq args>`;
+# this stub never runs anything. It answers by the jq FILTER (the last argument) with canned values, and logs its argv
+# (FAKE_ARGV_LOG). A jq call with `-e` (a yes/no test) succeeds unless FAKE_JQ_E_EXIT says otherwise.
+# The markers below are the secrets the test searches for in the script's output and in the logged argv.
+set +x
+: "${FAKE_DIR:?}" "${FAKE_ARGV_LOG:?}"
+all_args="$*"
+printf '%s\n' "${all_args//$'\n'/ }" >>"$FAKE_ARGV_LOG"
+
+if [ "${1:-}" != "run" ]; then
+  echo "stub docker: only 'run' is supported" >&2
+  exit 99
+fi
+shift
+args=("$@")
+filter=${args[$((${#args[@]} - 1))]}
+cat >/dev/null
+
+bump() { # <counter name> -> prints how many times it has been called, including this call
+  local file="$FAKE_DIR/jq.$1" count=0
+  if [ -f "$file" ]; then count=$(<"$file"); fi
+  count=$((count + 1))
+  printf '%s' "$count" >"$file"
+  printf '%s' "$count"
+}
+
+for arg in "${args[@]}"; do
+  if [ "$arg" = "-e" ]; then exit "${FAKE_JQ_E_EXIT:-0}"; fi
+done
+
+case "$filter" in
+  '.id')
+    printf 'aaaaaaaa-0000-4000-8000-%012d\n' "$(bump id)" ;;
+  '.version')
+    printf '1\n' ;;
+  '.title // empty')
+    printf 'Stubbed problem title\n' ;;
+  '.url')
+    printf '%s\n' "${FAKE_UPLOAD_URL:-http://localhost:9000/receipts}" ;;
+  '.fields | to_entries[] | [.key, .value] | @tsv')
+    printf 'key\treceipts/user/expense/receipt\n'
+    printf 'Content-Type\timage/png\n'
+    printf 'Policy\tPOLICYMARKER_0123456789ab==\n'
+    printf 'X-Amz-Algorithm\tAWS4-HMAC-SHA256\n'
+    printf 'X-Amz-Credential\tFAKEKEYID/20261102/us-east-1/s3/aws4_request\n'
+    printf 'X-Amz-Date\t20261102T000000Z\n'
+    printf 'X-Amz-Signature\tSIGNATUREMARKER_0123456789\n'
+    if [ -n "${FAKE_EXTRA_FIELD:-}" ]; then printf '%s\tpublic-read\n' "$FAKE_EXTRA_FIELD"; fi ;;
+  '.status')
+    read -r -a statuses <<<"${FAKE_RECEIPT_STATUSES:-ready failed}"
+    index=$(($(bump status) - 1))
+    last=$((${#statuses[@]} - 1))
+    if [ "$index" -gt "$last" ]; then index=$last; fi
+    printf '%s\n' "${statuses[$index]}" ;;
+  '.failureReason')
+    printf 'unsupported-type\n' ;;
+  '.viewUrl')
+    printf '%s\n' "${FAKE_VIEW_URL:-http://localhost:9000/receipts/VIEWURLMARKER_0123456789?X-Amz-Signature=VIEWSIGMARKER_0123456789}" ;;
+  '.nextCursor // empty')
+    if [ "$(bump cursor)" -le 4 ] || [ -n "${FAKE_CURSOR_FOREVER:-}" ]; then printf 'CURSOR_abc123\n'; fi ;;
+  '.items[].id')
+    if [ -n "${FAKE_DUPLICATE_ITEM_IDS:-}" ]; then
+      printf 'bbbbbbbb-0000-4000-8000-000000000001\n'
+    else
+      printf 'bbbbbbbb-0000-4000-8000-%012d\n' "$(bump item)"
+    fi ;;
+  '.items | length')
+    printf '1\n' ;;
+  *)
+    echo "stub docker: unexpected jq filter: $filter" >&2
+    exit 99 ;;
+esac

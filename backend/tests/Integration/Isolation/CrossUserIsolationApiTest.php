@@ -37,6 +37,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         'deleteReceipt' => ['DELETE', '/expenses/{id}/receipt'],
         'getCurrentUser' => ['GET', '/auth/me'],
         'getExpense' => ['GET', '/expenses/{id}'],
+        'getMonthlyReport' => ['GET', '/reports/monthly'],
         'getReceipt' => ['GET', '/expenses/{id}/receipt'],
         'listCategories' => ['GET', '/categories'],
         'listExpenses' => ['GET', '/expenses'],
@@ -168,6 +169,58 @@ final class CrossUserIsolationApiTest extends ApiTestCase
             self::assertSame($unknownFilter, $foreignFilter, "category=<A's> differs from category=<unknown> (with '$extra')");
         }
         $this->assertUnchanged($world);
+    }
+
+    public function testMonthlyReportsCoverOnlyTheCallersExpenses(): void
+    {
+        $world = $this->world();
+        [$food, $travel] = $world['aCategories'];
+
+        // (a) Control: as A the October report holds all of A's data, so an empty answer for B is the isolation.
+        $this->actAs($world['a']);
+        $own = $this->report('2026-10');
+        self::assertSame(5010, $own['totalCents']);
+        self::assertSame(5, $own['expenseCount']);
+        self::assertTrue($own['complete']);
+        self::assertSame(
+            [[$travel, 2004, 2], [$food, 2002, 2], [null, 1004, 1]],
+            array_map(static fn(array $row): array => [$row['categoryId'], $row['totalCents'], $row['expenseCount']], $own['categories']),
+        );
+        self::assertSame([$world['aNames'][1], $world['aNames'][0], null], array_column($own['categories'], 'name'));
+
+        // (b) As B, A's month looks exactly like a month in which B has nothing, and shows none of A's ids or names.
+        $this->actAs($world['b']);
+        $foreign = $this->report('2026-10');
+        $empty = $this->report('2026-08');
+        self::assertSame(['month' => '2026-10'] + $empty, $foreign, "A's month differs from an empty month of B");
+        self::assertSame(['month' => '2026-10', 'totalCents' => 0, 'expenseCount' => 0, 'complete' => true, 'categories' => []], $foreign);
+        $raw = (string) $this->call('GET', '/reports/monthly', '/reports/monthly?month=2026-10', null)->getBody();
+        foreach ([...$world['aCategories'], ...$world['aExpenses'], ...$world['aNames']] as $secret) {
+            self::assertStringNotContainsString($secret, $raw);
+        }
+
+        // (c) B's own month has only B's three expenses.
+        $mine = $this->report('2026-09');
+        self::assertSame(1503, $mine['totalCents']);
+        self::assertSame(3, $mine['expenseCount']);
+        self::assertSame(
+            [[$world['bCategory'], 1001, 2], [null, 502, 1]],
+            array_map(static fn(array $row): array => [$row['categoryId'], $row['totalCents'], $row['expenseCount']], $mine['categories']),
+        );
+        $this->assertUnchanged($world);
+    }
+
+    /**
+     * @return array{month: string, totalCents: int, expenseCount: int, complete: bool, categories: list<array{categoryId: string|null, name: string|null, totalCents: int, expenseCount: int}>}
+     */
+    private function report(string $month): array
+    {
+        $response = $this->call('GET', '/reports/monthly', '/reports/monthly?month=' . $month, null);
+        self::assertSame(200, $response->getStatusCode());
+        /** @var array{month: string, totalCents: int, expenseCount: int, complete: bool, categories: list<array{categoryId: string|null, name: string|null, totalCents: int, expenseCount: int}>} $body */
+        $body = $this->problemBody($response);
+
+        return $body;
     }
 
     public function testReplayingCursorsAcrossUsersStaysInTheCallersData(): void
@@ -324,6 +377,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
             $bodies['/expenses/' . $id . '/receipt'] = (string) $this->call('GET', '/expenses/{id}/receipt', '/expenses/' . $id . '/receipt', null)->getBody();
         }
         $bodies['/expenses'] = (string) $this->listing('')->getBody();
+        $bodies['/reports/monthly?month=2026-10'] = (string) $this->call('GET', '/reports/monthly', '/reports/monthly?month=2026-10', null)->getBody();
 
         return $bodies;
     }
@@ -338,6 +392,7 @@ final class CrossUserIsolationApiTest extends ApiTestCase
         $this->actAs($world['a']);
         foreach ($world['snapshot'] as $path => $before) {
             $template = match (true) {
+                str_starts_with($path, '/reports/monthly') => '/reports/monthly',
                 str_ends_with($path, '/receipt') => '/expenses/{id}/receipt',
                 str_starts_with($path, '/expenses/') => '/expenses/{id}',
                 default => $path,

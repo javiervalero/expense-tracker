@@ -48,7 +48,7 @@ describe('guards: signed out', () => {
     expect(query).toEqual({ redirect: '/expenses?from=2026-01-01' })
   })
 
-  it.each(['/expenses/new', '/categories', `/expenses/${UUID}`])(
+  it.each(['/expenses/new', '/categories', '/summary?month=2026-10', `/expenses/${UUID}`])(
     'sends %s to /login',
     async (path) => {
       const router = newRouter()

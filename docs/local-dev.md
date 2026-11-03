@@ -227,6 +227,30 @@ curl -i -c jar.txt -b jar.txt "${H[@]}" -X DELETE $API/categories/<category id>
 # 204, the category's expenses become Uncategorized (categoryId null)
 ```
 
+## Monthly summary from the command line
+
+The summary totals one calendar month of the signed-in user's expenses, per category. Sign in first (see "Signing in
+from the command line"), so that `jar.txt`, `API` and `H` exist. A GET needs only `X-Origin-Verify` and the cookie, so
+the other headers in `H` are not needed here.
+
+```bash
+curl -i -b jar.txt "${H[@]}" "$API/reports/monthly?month=2026-10"
+# 200, body {"month":"2026-10","totalCents":2450,"expenseCount":3,"complete":true,"categories":[{"categoryId":"<category id>","name":"Food","totalCents":2050,"expenseCount":2},{"categoryId":null,"name":null,"totalCents":400,"expenseCount":1}]}
+```
+
+The body has the shape `{month, totalCents, expenseCount, complete, categories: [{categoryId, name, totalCents,
+expenseCount}]}`. The example above is made up.
+
+- `month` is required and is `YYYY-MM`, from 2000-01 to 2099-12. A missing, malformed or repeated `month`, or an
+  unknown parameter, is 400.
+- Amounts are integer cents, as everywhere in the API: `2450` is 24.50.
+- Only categories with at least one expense in the month appear, biggest total first. Categories without spending are
+  omitted. A month with no expenses is 200, with `totalCents` 0 and no rows.
+- The row with `categoryId` null and `name` null is Uncategorized. It holds expenses with no category and expenses
+  whose category was deleted.
+- `complete` is `false` when the month has more than 10,000 expenses. The totals then cover the newest 10,000
+  expenses of the month.
+
 ## Receipt pipeline (local)
 
 On AWS a receipt upload goes S3 → event notification → SQS → worker Lambda. Locally the same path is:
@@ -359,7 +383,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 
 | Target | What it does |
 |---|---|
-| `make test` | All tests: backend unit and architecture, `docker/local-aws` unit, front-end (Vitest), then starts the stack for conformance and integration. Leaves the stack running |
+| `make test` | All tests: backend unit and architecture, `docker/local-aws` unit, front-end (Vitest), then starts the stack for conformance, integration and the smoke test. Leaves the stack running |
 | `make test-fast` | Like `make test`, without the tests marked `slow` (the dead-letter test, about 35 s, and the production Argon2id hash) |
 | `make test-unit` | Backend unit and architecture tests, 80% coverage bar on `src/` |
 | `make test-slow-unit` | Backend unit tests marked `slow`: one Argon2id hash at production cost, timed into `build/tmp/argon2-timing.txt` |
@@ -369,6 +393,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make test-contract` | Contract tests: route parity, every operation documents its errors, every secured operation is covered by the cross-user isolation suite, and the validator against the real bundled spec (run `make contract-bundle` first) |
 | `make test-integration` | Integration tests (needs `make up`): the receipt pipeline S3 → relay → ElasticMQ → runner → worker, the API through nginx (contract-validated, including the cross-user isolation suite), and the DynamoDB item store against DynamoDB Local; afterwards it checks the logs: no password, session token or user content (descriptions, category names, `q`, cursors) may appear |
 | `make test-api-s3-path` | Runs a short script inside a throwaway `api-php` container (needs `make up`; `make test-integration` runs it too) and proves that the API reaches S3 only through the extra nginx listener of `api` (`http://api:9100`, not published on the host): the endpoint is that listener, a signed request through it is answered by S3, and `s3:9000` is not reachable from `api-php` |
+| `make smoke` | Curl smoke test of every feature against the running stack, then checks that the local dead-letter queue did not grow. Run `make up` first; never while `make test-integration` runs. See "Smoke test" |
 | `make test-shell` | Tests of the shell guards (`scripts/tests/*.test.sh`) |
 | `make tf-test` | Tests of the Terraform check (needs Docker, about 50 s) |
 
@@ -448,6 +473,82 @@ exact `docker run` line, copy it, and replace the final `npm --prefix frontend r
 ```bash
 bash scripts/tests/check-fixtures.test.sh
 ```
+
+## Smoke test
+
+`make smoke` runs `scripts/smoke.sh` against the local stack, through the Vite proxy at http://localhost:5173. Run
+`make up` first. The script never sends `X-Origin-Verify`: the proxy adds it.
+
+**Never run `make smoke` while `make test-integration` runs.** That target stops `worker-runner`, so receipts would
+never settle.
+
+The script checks, in order:
+
+- `GET /health`;
+- a request without a session gets 401, and a write without `X-Requested-With` gets 403;
+- sign-in: a new account is registered, or an existing one signs in (login mode, below);
+- categories: create, list, rename, and a duplicate name;
+- expenses: create, read, update, a stale `version`, and a filtered list followed by `nextCursor`;
+- the monthly summary: totals per category for a fixed month, the Uncategorized row, an empty month, invalid months,
+  and the totals after a category is deleted;
+- receipts: a valid PNG reaches `ready`; text declared as `image/png` fails; a file one byte over the declared size is
+  refused by the bucket; the receipt can be deleted;
+- cleanup: the expenses and categories are deleted, and the session is closed.
+
+The output is check names only: `ok <n> - <name>` for each passed check, and `not ok <n> - <name>` for a failed one,
+with the HTTP status and the problem title. It never prints a response body, header, cookie, password, upload policy
+or signed address.
+
+**Account.** Each run registers a new throwaway user, `smoke-<UTC time>-<random>@example.com`, with a random password
+that is never printed. The API has no account deletion, so the user stays until the local stack restarts
+(`make down && make up`).
+
+**Base URL.** The script accepts `https://<host>[:port]` or `http://localhost[:port]` and nothing else: no path, query,
+fragment or user name. Use `localhost`, not `127.0.0.1`. The session cookie is `Secure`, and curl keeps it over plain
+`http://localhost`; the script refuses `127.0.0.1`.
+
+**Registration limit.** Registration is limited to 5 per hour per address. Each run uses one registration, and
+`--cross-user` uses two. So more than 5 runs of `make test` in an hour hit the limit. At the limit the script stops with
+`registration is throttled (5 per hour per address): wait, restart the local stack, or set SMOKE_EMAIL/SMOKE_PASSWORD`
+(exit 1). Then wait for the window to pass, restart the local stack (`make down && make up` resets the counters), or
+use login mode.
+
+**Login mode.** To use an existing account, export `SMOKE_EMAIL` and `SMOKE_PASSWORD` in your shell. Set both or neither.
+The password must be 12 to 128 printable ASCII characters, with no double quote and no backslash. The account must not
+hold expenses in 2001-02 or 2001-03; the script stops if it does.
+
+```bash
+export SMOKE_EMAIL=me@example.com
+read -rs SMOKE_PASSWORD && export SMOKE_PASSWORD   # typed, not shown
+make smoke
+unset SMOKE_PASSWORD
+```
+
+**Never put `SMOKE_PASSWORD` on the make command line** (for example `make smoke SMOKE_PASSWORD=...`). Other users on
+the machine can see command-line arguments in the process list. The same user can also read a process's environment in
+`/proc` for the length of the run, so the password is visible there too.
+
+**Other settings.**
+
+- `SMOKE_JQ`: a local `jq` to use instead of the pinned `jq` image (`JQ_IMAGE`, which `make` exports), for example on a
+  CI runner. The script passes it the signed upload data, so use only a `jq` you trust.
+- `SMOKE_MAX_WAIT`: how many seconds a receipt may stay `pending` before the run fails. The default is 30. Digits only.
+- `SMOKE_FLAGS=--cross-user`: `make smoke SMOKE_FLAGS=--cross-user` adds a second user. The second user must get 404 for
+  the first user's expense and receipt, and must see an empty summary and an empty list. It uses a second registration.
+
+Without make, run the script directly: `scripts/smoke.sh [--cross-user] <base-url>`.
+
+**Exit codes.** 0: all checks passed. 1: a check failed; the run stopped and cleaned up. 2: a usage or setup error
+(a bad base URL, a missing tool or setting), before any request. 3: the checks passed or stopped, but the cleanup
+failed.
+
+**Dead-letter queue.** `make smoke` reads the local dead-letter queue (`receipts-dlq`) before the run and after it, and
+fails if the count grew. After the run it reads the count three times (now, then 5 and 10 seconds later) and uses the
+highest, because a message reaches the dead-letter queue only after three failed receives. `make test-integration`
+leaves one message there on purpose, so the check compares before and after, not against zero.
+
+**Where it runs.** In CI, in the `integration` job, after the integration tests. Also at the end of `make test`, so
+each `make test` uses one registration.
 
 ## Resetting state
 

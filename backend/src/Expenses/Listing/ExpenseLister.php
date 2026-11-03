@@ -8,7 +8,6 @@ use App\Auth\Session\Principal;
 use App\Categories\CategoryResolver;
 use App\Expenses\ExpenseBatch;
 use App\Expenses\InvalidStartKey;
-use App\Infrastructure\DynamoDb\ItemStore;
 use App\Infrastructure\DynamoDb\StorageFailure;
 use InvalidArgumentException;
 use LogicException;
@@ -101,14 +100,7 @@ final readonly class ExpenseLister
         } catch (InvalidStartKey $refused) {
             throw $startKeyIsFromClient ? InvalidQuery::cursor() : $refused;
         }
-        if (count($batch->items) > $batchLimit) {
-            throw new StorageFailure(ItemStore::QUERY_OPERATION, StorageFailure::CORRUPT_ITEM);
-        }
-        if ($batch->items === [] && $batch->lastKey !== null) {
-            // Not possible without a filter expression; refused so that a misbehaving store cannot make the loop spin.
-            throw new StorageFailure(ItemStore::QUERY_OPERATION, StorageFailure::CORRUPT_ITEM);
-        }
 
-        return $batch;
+        return $batch->checkedAgainst($batchLimit);
     }
 }

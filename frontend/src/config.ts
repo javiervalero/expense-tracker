@@ -61,3 +61,12 @@ export const DEV_UPLOAD_ORIGIN = 'http://localhost:9000'
 
 // Plan decision 6: a signed view address is fetched again when it expires within 60 seconds.
 export const URL_REFRESH_MARGIN_MS = 60_000
+
+// Plan phase-6 D12 and the contract: the monthly report covers 2000-01 to 2099-12 (the expense dates' range).
+export const MONTH_MIN = '2000-01'
+export const MONTH_MAX = '2099-12'
+
+// Plan phase-6 D14: the largest total the report can show (10,000 expenses of at most MAX_CENTS is 1e12; safe in JS).
+export const REPORT_MAX_TOTAL_CENTS = 1_000_000_000_000
+// Plan phase-6 D8, D16: the report counts at most this many expenses a month; beyond it `complete` is false.
+export const REPORT_MAX_EXPENSES = 10_000

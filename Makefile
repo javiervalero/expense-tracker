@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock smoke
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -200,6 +200,31 @@ AUTH_MARKERS = build/auth-test
 test-api-s3-path: .env check-env ## Check from inside api-php that S3 is reachable only through the nginx listener api:9100; run `make up` first
 	$(COMPOSE) run --rm --no-deps -T api-php php < scripts/api-s3-path-check.php
 
+# The curl smoke test (scripts/smoke.sh) against the local stack through the Vite proxy, plus a check that the local
+# dead-letter queue did not grow during the run (it is compared before and after, not with zero: `make test-integration`
+# leaves a poison message there on purpose). SMOKE_FLAGS=--cross-user adds the second-user checks (2 registrations; the
+# register throttle is 5 per hour per address). JQ_IMAGE is exported below. NEVER run it while `make test-integration`
+# runs: that target stops worker-runner, so receipts would never settle.
+# The dead-letter count is read once before, and three times after (now, +5 s, +10 s): a message reaches the DLQ only after
+# 3 failed receives, so one early read could miss it. The MAX of the three is compared with the count before. If smoke.sh
+# itself fails, the recipe stops there and no DLQ report is printed.
+SMOKE_FLAGS ?=
+SMOKE_BASE_URL = http://localhost:5173
+
+smoke: .env check-env ## Curl smoke test of every feature against the local stack (+ local DLQ must not grow); run `make up` first, never with test-integration
+	@set -e; \
+	scripts/check-stack-up.sh $(COMPOSE); \
+	before=$$(scripts/smoke-local-dlq.sh); \
+	scripts/smoke.sh $(SMOKE_FLAGS) $(SMOKE_BASE_URL); \
+	after=$$(scripts/smoke-local-dlq.sh); \
+	for wait_seconds in 5 5; do \
+	  sleep $$wait_seconds; \
+	  reread=$$(scripts/smoke-local-dlq.sh); \
+	  if [ "$$reread" -gt "$$after" ]; then after=$$reread; fi; \
+	done; \
+	echo "make smoke: local dead-letter queue before=$$before max-after=$$after"; \
+	if [ "$$after" -gt "$$before" ]; then echo "make smoke: the dead-letter queue grew during the run" >&2; exit 1; fi
+
 test-integration: .env check-env php-image ## Integration tests: receipt pipeline (S3 -> relay -> ElasticMQ -> worker-runner -> worker), API through nginx, DynamoDB item store; run `make up` first
 	@set -e; \
 	scripts/check-stack-up.sh $(COMPOSE); \
@@ -278,7 +303,7 @@ test-integration: .env check-env php-image ## Integration tests: receipt pipelin
 # The whole test suite (Phase 0 definition of done). Run as a sequence (not as prerequisites) so that the order holds
 # with `make -j` too: the cheap suites first, then the stack (`make up` is idempotent) for the tests that need it.
 # Needs `make php-install`, `make contract-install`, `make local-aws-install` and `make frontend-install` once. Leaves the stack running: `make down`.
-test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration
+test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then (starts the stack) conformance + integration + smoke
 	$(MAKE) --no-print-directory test-unit
 	$(if $(FAST),,$(MAKE) --no-print-directory test-slow-unit)
 	$(MAKE) --no-print-directory contract-bundle
@@ -288,6 +313,7 @@ test: ## ALL tests: backend unit + architecture, local-aws unit, frontend, then 
 	$(MAKE) --no-print-directory up
 	$(MAKE) --no-print-directory test-conformance
 	$(MAKE) --no-print-directory test-integration
+	$(MAKE) --no-print-directory smoke
 
 test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter test, ~35 s, and the production Argon2id hash)
 	$(MAKE) --no-print-directory test FAST=1

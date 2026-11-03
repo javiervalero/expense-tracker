@@ -1,0 +1,16 @@
+GET /health 200
+POST /auth/register 201
+POST /auth/login 200
+POST /auth/logout 204
+POST /categories 201 201 409
+GET /categories 200
+PATCH /categories/* 200
+DELETE /categories/* 204
+POST /expenses 201
+GET /expenses 200
+POST /expenses/*/receipt/upload 201
+GET /expenses/*/receipt 200 200 404 404
+DELETE /expenses/*/receipt 204
+GET /expenses/* 200 404
+PATCH /expenses/* 200 409
+DELETE /expenses/* 204

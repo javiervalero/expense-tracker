@@ -44,6 +44,8 @@ use App\Receipts\Http\DeleteReceiptHandler;
 use App\Receipts\Http\GetReceiptHandler;
 use App\Receipts\ReceiptObjectCleaner;
 use App\Receipts\ReceiptRepository;
+use App\Reports\Http\MonthlyReportHandler;
+use App\Reports\MonthlyReportBuilder;
 
 /**
  * The route table of the API (templates are relative to `/api/v1`). Every route holds a factory, not a handler: the
@@ -80,6 +82,7 @@ final class Routes
             new Route('POST', '/expenses/{id}/receipt/upload', static fn(): RequireSession => self::createReceiptUpload($services)),
             new Route('GET', '/expenses/{id}/receipt', static fn(): RequireSession => self::getReceipt($services)),
             new Route('DELETE', '/expenses/{id}/receipt', static fn(): RequireSession => self::deleteReceipt($services)),
+            new Route('GET', '/reports/monthly', static fn(): RequireSession => self::monthlyReport($services)),
         ];
     }
 
@@ -153,6 +156,11 @@ final class Routes
     private static function listExpenses(ApiServices $services): RequireSession
     {
         return self::guarded(new ListExpensesHandler(new ExpenseLister(self::expenses($services)), self::categories($services)), $services);
+    }
+
+    private static function monthlyReport(ApiServices $services): RequireSession
+    {
+        return self::guarded(new MonthlyReportHandler(new MonthlyReportBuilder(self::expenses($services)), self::categories($services)), $services);
     }
 
     private static function createExpense(ApiServices $services): RequireSession

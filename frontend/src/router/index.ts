@@ -6,6 +6,7 @@ import ExpensesView from '@/views/ExpensesView.vue'
 import LoginView from '@/views/LoginView.vue'
 import NotFoundView from '@/views/NotFoundView.vue'
 import RegisterView from '@/views/RegisterView.vue'
+import SummaryView from '@/views/SummaryView.vue'
 import { installFocusManagement } from './focus'
 import { installGuards } from './guards'
 
@@ -47,6 +48,7 @@ const routes: RouteRecordRaw[] = [
     component: CategoriesView,
     meta: { title: 'Categories' },
   },
+  { path: '/summary', name: 'summary', component: SummaryView, meta: { title: 'Monthly summary' } },
   {
     path: '/:pathMatch(.*)*',
     name: 'not-found',

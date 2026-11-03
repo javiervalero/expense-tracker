@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Stub `make` for scripts/tests/smoke.test.sh: only `print-JQ_IMAGE` exists (smoke.sh asks for it when JQ_IMAGE is unset).
+set +x
+unset BASH_XTRACEFD
+printf '%s\n' "make $*" >>"${FAKE_ARGV_LOG:?}"
+case " $* " in
+  *" print-JQ_IMAGE "*) printf '%s\n' "${FAKE_MAKE_JQ_IMAGE:?}" ;;
+  *) echo "stub make: unexpected call" >&2; exit 99 ;;
+esac

@@ -77,3 +77,11 @@ same commit as their routes (a contract-only commit fails `RoutesMatchContractTe
   `maxLength` on names, descriptions and `q` is the server's byte pre-check (characters × 4 + 1024), and the
   description states the real rule. The `category` filter is `anyOf` a lower-case v4 UUID pattern or exactly `none`
   (a format-only `oneOf` would be ambiguous, since `none` satisfies `format: uuid`).
+
+## Implemented in Phase 6 (2026-11-02)
+
+The contract went from 0.13.0 to 0.14.0. The change is additive, as this ADR allows.
+
+- New tag: `reports`.
+- New operation: `getMonthlyReport`, `GET /reports/monthly`, with the required query parameter `month` (`YYYY-MM`).
+- New schemas: `MonthlyReport` and `CategoryTotal`.

@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Stub of a LOCAL jq (the SMOKE_JQ override): same canned answers as the stub docker, no container.
+set +x
+unset BASH_XTRACEFD
+exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/docker" run --rm -i --network none local-jq-stub "$@"
