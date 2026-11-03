@@ -189,7 +189,7 @@ clarifications of this ADR, not changes to it. Keys are built in `App\Categories
 - **Isolation** is pinned end to end by `CrossUserIsolationApiTest`, and `CrossUserCoverageTest` fails CI when a
   secured operation is not covered by it.
 
-## Implemented in Phase 6 (2026-11-02, PR pending)
+## Implemented in Phase 6 (2026-11-02, PR #9)
 
 The monthly summary (`GET /reports/monthly`) is built on this model. The decisions are D1, D5 and D7 in
 [the Phase 6 plan](../plans/phase-6-monthly-summary.md).
