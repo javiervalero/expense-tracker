@@ -7,6 +7,11 @@ terraform {
       source  = "hashicorp/aws"
       version = "6.68.0"
     }
+    # Runs locally (no credentials): generates the bucket-name suffix and the origin-verify secrets.
+    random = {
+      source  = "hashicorp/random"
+      version = "3.9.1"
+    }
   }
 
   # Partial configuration: only the non-secret settings are committed. Phase 7 supplies bucket, key and region with

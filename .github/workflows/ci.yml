@@ -306,6 +306,10 @@ jobs:
       - name: Terraform fmt (check), init without backend, validate
         run: make tf-check
 
+      # Offline `terraform test` with the AWS provider mocked: no account, no credentials.
+      - name: Terraform unit tests (mocked AWS provider)
+        run: make tf-unit
+
       # Not part of `make test-shell` (slow: Docker plus a provider download); runs only here and via `make tf-test`.
       - name: Tests of the Terraform check
         run: make tf-test

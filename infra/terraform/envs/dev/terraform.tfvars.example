@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (git-ignored) and fill in. Placeholders only: never commit real values.
+# The layer versions and the Lambda package path come from generated *.auto.tfvars.json files.
+
+aws_region     = "us-east-1"
+aws_account_id = "123456789012" # your 12-digit AWS account id
+
+# Which origin-verify secret slot CloudFront sends: "a" or "b".
+origin_verify_active_slot = "a"

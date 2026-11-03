@@ -21,6 +21,17 @@ variable "environment" {
   }
 }
 
+# No default: the owner picks the slot explicitly. Rotation (ADR 0012) flips it after the other slot is renewed.
+variable "origin_verify_active_slot" {
+  description = "Which origin-verify secret slot CloudFront sends: \"a\" or \"b\"."
+  type        = string
+
+  validation {
+    condition     = contains(["a", "b"], var.origin_verify_active_slot)
+    error_message = "origin_verify_active_slot must be \"a\" or \"b\"."
+  }
+}
+
 # No default: the 12-digit account id goes in an uncommitted tfvars file or in CI variables, never in the repo.
 variable "aws_account_id" {
   description = "Id of the AWS account the provider may act on (12 digits). Put the value in an uncommitted tfvars file or in CI variables, never in the repo."
