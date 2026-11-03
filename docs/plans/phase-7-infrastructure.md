@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| Status | **Draft for G1** (owner approval of the 15 decisions in §10 pending). Drafted by `ecc:planner` (opus/high) from PLAN §12 rows 7–8, ADRs 0001/0005/0006/0009/0010/0012, the carry lists in the Phase 1–6 plans, and the code (`ApiConfig`, `WorkerConfig`, `S3Settings`, `DynamoDbSettings`, `LocalEnvironment`, `WorkerRuntime`, client factories, `infra/dynamodb/table.json`, `Makefile`, `scripts/terraform.sh`, `ci.yml`) |
+| Status | **Approved at G1 on 2026-11-03.** The owner approved all 15 decisions in §10 with their recommended defaults; the 9 contradictions are resolved as written above. Step 0 research (R1–R11) may still adjust details and is recorded at G2. Drafted by `ecc:planner` (opus/high) from PLAN §12 rows 7–8, ADRs 0001/0005/0006/0009/0010/0012, the carry lists in the Phase 1–6 plans, and the code (`ApiConfig`, `WorkerConfig`, `S3Settings`, `DynamoDbSettings`, `LocalEnvironment`, `WorkerRuntime`, client factories, `infra/dynamodb/table.json`, `Makefile`, `scripts/terraform.sh`, `ci.yml`) |
 | Phase | 7 (essential track), size L |
 | Branch | `feat/phase-7-infrastructure`, from `main` at c4f29da |
 | AWS | **None.** No `terraform plan/apply/destroy/import`, no `init` with a backend, no AWS CLI, no credentials. All validation is offline. **Every plan against AWS, every apply and every destroy belongs to Phase 8, and each one needs the owner's explicit go-ahead.** |
