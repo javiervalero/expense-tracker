@@ -22,7 +22,7 @@ Legend: **confirmed** = read in an official page or observed by running; **open*
 | R4 | SDK presigned host form: eu-west-1 → `<bucket>.s3.eu-west-1.amazonaws.com`; us-east-1 → `<bucket>.s3.amazonaws.com`. Same for POST action and GET. | confirmed (ran) | The CSP `connect-src` and `img-src` host depends on the region; build it from the region variable. |
 | R5 | Bref 3.0.12 `layers.json` has `php-85` (version 20 in eu-west-1 and us-east-1) and `arm-php-85`. `bref/extra-php-extensions` has `gd-php-85` (version 1 in both regions); its latest release is 3.0.13. | confirmed (read) | D10 holds. Check that 3.0.13 pairs with Bref 3.0.12 when adding the dependency (WP3). |
 | R6 | SDK inventory per entry point: see the table below. No `Scan`, no table administration, no SQS SDK call. | confirmed (code) | IAM tables in D20. |
-| R6 | The **worker also deletes** from `receipts` (failed, replaced, obsolete) and the API deletes from both buckets. Neither Lambda puts objects into `receipts`. | confirmed (code) | Reword "worker cannot write to `receipts`" to "cannot put objects into `receipts`"; the worker's policy needs `s3:DeleteObject` there. |
+| R6 | The **worker also deletes** from `receipts` (failed, replaced, obsolete) and the API deletes from both buckets. Neither Lambda puts objects into `receipts`. | confirmed (code) | Already covered: the plan's IAM table (D20) gives the worker `DeleteObject` on `receipts` and "never `PutObject`". Only the short phrase "worker cannot write to `receipts`" in `PLAN.md` row 7 is imprecise; read it as "cannot put objects". |
 | R6 | Three of the four alarm messages are logged by the **API** only. `CorruptItem` is a failure-code value, not a log line (not yet traced to a log line). | confirmed (code) | D22 metric filters go on the API log group; trace `CorruptItem` before building that alarm. |
 | R7 | The PHP tools image has `gd` but **no `zip` extension and no `zip` binary** (only `unzip`). | confirmed (ran) | WP3 needs another way to build a reproducible zip. See owner decision below. |
 | R8 | Worker memory re-measure with a GD-generated progressive JPEG. | not done | Moves to WP6. |
@@ -37,11 +37,11 @@ Legend: **confirmed** = read in an official page or observed by running; **open*
 | API | GetItem, PutItem, UpdateItem, DeleteItem (including ReturnValues), Query on `LSI1` and the base table, TransactWriteItems | presigned POST and GET (no call), DeleteObject, ListObjectsV2, DeleteObjects on `receipts` and `receipt-thumbnails` | none |
 | Worker | GetItem, UpdateItem (receipt records only) | GetObject and HeadObject on `receipts`, PutObject on `receipt-thumbnails`, DeleteObject on both | none (the event source mapping receives and deletes) |
 
-## Decisions for the owner at G2
+## Owner decisions at G2 (2026-11-03)
 
-1. **Lambda zip tool (R7):** the tools image cannot zip. Options: (a) add the `zip` package to the PHP tools image (recommended: small, pinned, reproducible); (b) use host `python3` (the host's version is not pinned); (c) use the Terraform `archive` provider (a data source, which D2 rules out). Recommended: (a).
-2. **Region:** the plan assumes eu-west-1 as an example. The region fixes the CSP hosts and prices. Confirm before WP8.
-3. **Test shape (R1):** because mocks produce random ARNs, IAM and policy tests use realistic override values. No decision needed unless you prefer assertions on structure only.
+1. **Lambda zip tool (R7): decided.** Add the `zip` package to the pinned PHP tools image in WP3 (D11 updated). The host `python3` (not pinned) and the Terraform `archive` data source (ruled out by D2) were not chosen.
+2. **Region: decided, us-east-1** (see [ADR 0013](../adr/0013-aws-region-us-east-1.md)). `eu-west-1` was never a decision; it was a placeholder from Phase 0. Chosen for low cost on a proof of concept. Effects: the S3 host in the CSP is the global form `<bucket>.s3.amazonaws.com`; the local placeholders change to `us-east-1`; prices in §9 are re-checked for us-east-1 (the confirmed on-demand prices above are for this region).
+3. **Test shape (R1):** because mocks produce random ARNs, IAM and policy tests use realistic override values. No decision needed.
 
 ## Throwaway spike
 
