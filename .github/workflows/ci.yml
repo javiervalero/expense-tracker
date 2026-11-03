@@ -52,6 +52,10 @@ jobs:
       - name: Install dependencies from composer.lock
         run: make RUN_PHP= php-install
 
+      # The committed Terraform layer versions equal what the installed Bref layers.json files say (fails on drift).
+      - name: Bref layer versions file is up to date
+        run: make RUN_PHP= tf-layers-check
+
       - name: Check composer.json, code style (dry run) and static analysis
         run: make RUN_PHP= lint-php
 
@@ -137,6 +141,11 @@ jobs:
       # The Lambda ini (backend/php/conf.d) is loaded by the pinned bref/php-85 image with the hardened values.
       - name: Lambda php.ini hardening is loaded by the pinned bref/php-85 image
         run: make check-php-ini
+
+      # The one Lambda zip (reproducible, built in the tools image) and its rules; its --no-dev vendor/ loads on the
+      # pinned bref/php-85 image.
+      - name: Lambda package builds and passes its checks
+        run: make lambda-build lambda-check
 
       # backend/ and docker/local-aws/ each keep a copy of the S3 event fixtures; they must stay identical.
       - name: S3 event fixtures are identical in both copies

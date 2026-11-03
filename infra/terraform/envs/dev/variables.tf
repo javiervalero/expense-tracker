@@ -21,6 +21,39 @@ variable "environment" {
   }
 }
 
+# Bref layer versions per region. Both maps come from the generated, committed bref-layers.auto.tfvars.json
+# (`make tf-layers`, read from composer's installed layers.json files; D10). A region Bref does not publish to fails here,
+# at validation, instead of at deploy.
+variable "bref_php_layer_versions" {
+  description = "Version of the Bref php-85 layer per region (generated file bref-layers.auto.tfvars.json)."
+  type        = map(number)
+
+  validation {
+    condition     = alltrue([for v in values(var.bref_php_layer_versions) : v >= 1 && v == floor(v)])
+    error_message = "Every bref_php_layer_versions value must be a positive integer."
+  }
+
+  validation {
+    condition     = contains(keys(var.bref_php_layer_versions), var.aws_region)
+    error_message = "bref_php_layer_versions has no entry for aws_region: Bref does not publish the php-85 layer there."
+  }
+}
+
+variable "bref_gd_layer_versions" {
+  description = "Version of the gd-php-85 layer (bref/extra-php-extensions) per region (generated file bref-layers.auto.tfvars.json)."
+  type        = map(number)
+
+  validation {
+    condition     = alltrue([for v in values(var.bref_gd_layer_versions) : v >= 1 && v == floor(v)])
+    error_message = "Every bref_gd_layer_versions value must be a positive integer."
+  }
+
+  validation {
+    condition     = contains(keys(var.bref_gd_layer_versions), var.aws_region)
+    error_message = "bref_gd_layer_versions has no entry for aws_region: the gd-php-85 layer is not published there."
+  }
+}
+
 # No default: the owner picks the slot explicitly. Rotation (ADR 0012) flips it after the other slot is renewed.
 variable "origin_verify_active_slot" {
   description = "Which origin-verify secret slot CloudFront sends: \"a\" or \"b\"."

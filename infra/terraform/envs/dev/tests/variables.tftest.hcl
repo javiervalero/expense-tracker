@@ -7,6 +7,8 @@ variables {
   aws_account_id            = "123456789012" # the AWS documentation example account
   environment               = "dev"
   origin_verify_active_slot = "a"
+  bref_php_layer_versions   = { "us-east-1" = 20 }
+  bref_gd_layer_versions    = { "us-east-1" = 1 }
 }
 
 run "accepts_valid_values" {

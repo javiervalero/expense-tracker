@@ -9,6 +9,7 @@
         "bref/bref": "~3.0.12"
     },
     "require-dev": {
+        "bref/extra-php-extensions": "~3.0.13",
         "friendsofphp/php-cs-fixer": "~3.95.27",
         "opis/json-schema": "~2.6.0",
         "phpstan/phpstan": "~2.3.1",
