@@ -55,6 +55,13 @@ build() { # <build dir> <tfvars file> (relative to the repository)
   run_in_image php scripts/build-lambda-zip.php --backend "$REL/backend" --build-dir "$1" --tfvars "$2"
 }
 
+# --- Build: composer runs without plugins or scripts ------------------------------------------------------------
+# A Composer plugin of a dependency runs code during `install`; the package build must run none (a supply-chain barrier).
+# The command line is asserted on the script's source, because the fixture backend has no dependencies to carry a plugin.
+install_line="$(grep -F "'composer', 'install'" scripts/build-lambda-zip.php || true)"
+grep -qF "'--no-plugins'" <<<"$install_line" || fail "build: composer install must pass --no-plugins: $install_line"
+grep -qF "'--no-scripts'" <<<"$install_line" || fail "build: composer install must pass --no-scripts: $install_line"
+
 # --- Build: shape of the zip ------------------------------------------------------------------------------------
 build "$REL/b1" "$REL/pkg1.json"
 expect_status 'build' 0

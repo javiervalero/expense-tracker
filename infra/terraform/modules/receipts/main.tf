@@ -229,6 +229,22 @@ resource "aws_sqs_queue_redrive_allow_policy" "dlq" {
   })
 }
 
+# The dead-letter queue is TLS-only as well. Nothing sends to it with a policy of its own: the main queue's redrive
+# does not need one, so this policy holds the deny alone.
+resource "aws_sqs_queue_policy" "dlq" {
+  queue_url = aws_sqs_queue.dlq.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      merge(local.deny_insecure_transport, {
+        Action   = "sqs:*"
+        Resource = aws_sqs_queue.dlq.arn
+      })
+    ]
+  })
+}
+
 resource "aws_sqs_queue_policy" "receipts" {
   queue_url = aws_sqs_queue.receipts.id
 

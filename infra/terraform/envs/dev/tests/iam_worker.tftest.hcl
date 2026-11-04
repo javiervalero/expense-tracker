@@ -32,6 +32,15 @@ override_resource {
   }
 }
 
+# The function's postcondition compares the reported code hash with the one computed from package_sha256 (the hash of the
+# empty input here); the mock returns a random string for it.
+override_resource {
+  target = module.function.aws_lambda_function.this
+  values = {
+    code_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+  }
+}
+
 # The provider validates that aws_lambda_function.role is an ARN, and the mock returns a random string.
 override_resource {
   target = module.function.aws_iam_role.this

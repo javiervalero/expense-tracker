@@ -11,7 +11,7 @@ declare(strict_types=1);
  *   --tfvars     default infra/terraform/envs/dev/package.auto.tfvars.json (git-ignored)
  *
  * Steps: copy {public, entrypoints, src, php/conf.d, composer.json, composer.lock} to <build-dir>/src, run
- * `composer install --no-dev --classmap-authoritative --no-scripts` there, then zip with the `zip` binary of the tools
+ * `composer install --no-dev --classmap-authoritative --no-plugins --no-scripts` there, then zip with the `zip` binary of the tools
  * image (there is no ext-zip). Reproducible: entries sorted by byte order, fixed mtime, fixed permissions, no
  * directory entries, no extra attributes, UTC. The tfvars file holds {lambda_package_path, lambda_package_sha256};
  * the path is relative to the tfvars file's directory, which is where Terraform runs (-chdir).
@@ -172,7 +172,7 @@ foreach (COPIED as $item) {
 // A fixed autoloader class suffix (only in the copy): without it Composer may pick a random one, which would change
 // vendor/autoload.php, and with it the sha256, on every build. Not a relevant key of the lock's content-hash.
 run(['composer', 'config', 'autoloader-suffix', 'LambdaPackage', '--working-dir=' . $source], $source);
-run(['composer', 'install', '--no-dev', '--classmap-authoritative', '--no-scripts', '--no-progress', '--prefer-dist', '--working-dir=' . $source], $source);
+run(['composer', 'install', '--no-dev', '--classmap-authoritative', '--no-plugins', '--no-scripts', '--no-progress', '--prefer-dist', '--working-dir=' . $source], $source);
 
 $files = listFiles($source);
 foreach ($files as $file) {

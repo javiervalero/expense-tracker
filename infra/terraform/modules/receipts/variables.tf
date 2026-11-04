@@ -35,9 +35,19 @@ variable "cors_allowed_origin" {
   description = "The single origin the receipts bucket accepts in CORS, for example https://d111111abcdef8.cloudfront.net."
   type        = string
 
+  # The same rule as the API module's allowed_origin (the CORS origin and APP_ORIGINS must be the same string), and as
+  # strict as ApiConfig (ORIGIN_PATTERN and isValidOrigin, https case): labels of 1 to 63 characters, none empty or
+  # starting/ending with a hyphen; a port, when given, has no leading zero, is at most 65535 and is not 443.
   validation {
-    condition     = can(regex("^https://[a-z0-9]([a-z0-9.-]*[a-z0-9])?(:[0-9]{1,5})?$", var.cors_allowed_origin))
-    error_message = "cors_allowed_origin must be one https origin without a path or a trailing slash, and not a wildcard."
+    condition     = can(regex("^https://[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*(:[1-9][0-9]{0,4})?$", var.cors_allowed_origin))
+    error_message = "cors_allowed_origin must be one https origin (lower-case DNS labels of 1 to 63 characters, optional port) without a path or a trailing slash, and not a wildcard."
+  }
+
+  validation {
+    condition = alltrue([
+      for p in flatten(regexall(":([0-9]+)$", var.cors_allowed_origin)) : tonumber(p) <= 65535 && tonumber(p) != 443
+    ])
+    error_message = "cors_allowed_origin must not carry the default https port 443, nor a port above 65535."
   }
 }
 

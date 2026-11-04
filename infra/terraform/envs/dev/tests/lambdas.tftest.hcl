@@ -64,6 +64,31 @@ override_resource {
   }
 }
 
+# The function's postcondition compares the code hash Lambda reports with the one computed from package_sha256. The mock
+# returns a random string for code_sha256, so it is pinned to the hash of the empty input (the default package_sha256 of
+# this file) wherever the function can sit. A file-level override wins over a run-level one for the same address, so the
+# runs that need another code hash (the second hash vector, the mismatch) live in lambda_code_hash.tftest.hcl.
+override_resource {
+  target = aws_lambda_function.this
+  values = {
+    code_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+  }
+}
+
+override_resource {
+  target = module.function.aws_lambda_function.this
+  values = {
+    code_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+  }
+}
+
+override_resource {
+  target = module.worker.module.function.aws_lambda_function.this
+  values = {
+    code_sha256 = "47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU="
+  }
+}
+
 # ---------------------------------------------------------------- modules/lambda-function
 
 run "function_runs_provided_al2023_on_x86_64" {
@@ -179,23 +204,9 @@ run "function_code_is_the_package_with_a_base64_hash_of_the_hex_sha256" {
   }
 }
 
-run "the_hash_conversion_is_right_for_a_second_vector" {
-  command = apply
-
-  module {
-    source = "../../modules/lambda-function"
-  }
-
-  variables {
-    package_sha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" # sha256("abc")
-  }
-
-  assert {
-    condition     = aws_lambda_function.this.source_code_hash == "ungWv48Bz+pBQUDeXa4iI7ADYaOWF3qctBD/YfIAFa0="
-    error_message = "source_code_hash must be the base64 form of the hex sha256 of \"abc\"."
-  }
-}
-
+# The uploaded zip must be the zip that was hashed: after apply, the code hash Lambda reports must equal the hash the
+# module computed from package_sha256. Under the mock, code_sha256 is a random string, so it is pinned with
+# override_resource (file level for the right hash; here for a wrong one).
 run "layers_are_php_85_then_gd_php_85_from_the_publisher_accounts" {
   command = apply
 
@@ -450,6 +461,156 @@ run "rejects_a_policy_with_a_wildcard_resource" {
   expect_failures = [var.policy_json]
 }
 
+run "rejects_a_wildcard_in_the_middle_of_an_action" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:*Object\"],\"Resource\":[\"arn:aws:s3:::example/*\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_an_action_that_is_only_a_wildcard" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":[\"arn:aws:s3:::example/*\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_a_wildcard_in_the_second_statement_only" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::example/*\"]},{\"Effect\":\"Allow\",\"Action\":[\"dynamodb:Q*ery\"],\"Resource\":[\"arn:aws:dynamodb:us-east-1:123456789012:table/t\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_a_resource_that_is_every_bucket" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::*\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_a_resource_that_is_every_object_of_every_bucket" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::*/*\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_a_bare_wildcard_resource_inside_a_list" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::example/*\",\"*\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+run "rejects_a_statement_without_a_resource" {
+  command = plan
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"]}]}"
+  }
+
+  expect_failures = [var.policy_json]
+}
+
+# The legitimate wildcards stay valid: the streams of one log group (...:log-group:<name>:*) and the objects under one
+# bucket or prefix (arn:aws:s3:::bucket/prefix/*).
+run "accepts_the_log_stream_and_object_path_wildcards" {
+  command = apply
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  variables {
+    policy_json = "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"logs:CreateLogStream\",\"logs:PutLogEvents\"],\"Resource\":[\"arn:aws:logs:us-east-1:123456789012:log-group:/aws/lambda/expense-tracker-dev-worker:*\"]},{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\"],\"Resource\":[\"arn:aws:s3:::example/receipts/*\"]}]}"
+  }
+
+  assert {
+    condition     = output.policy == var.policy_json
+    error_message = "A log-stream ARN and an object-path ARN are legitimate and must be accepted."
+  }
+}
+
+# The API's environment carries the origin-verify secret, so the output that shows the environment must be sensitive:
+# otherwise a module output (and `terraform output`, and the plan summary) would print it.
+run "the_environment_output_is_sensitive" {
+  command = apply
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  assert {
+    condition     = issensitive(output.environment_variables)
+    error_message = "The environment_variables output must be marked sensitive."
+  }
+
+  assert {
+    condition     = nonsensitive(keys(output.environment_variables)) == tolist(["BREF_PING_DISABLE", "BREF_RUNTIME", "DYNAMODB_TABLE", "RECEIPTS_BUCKET"])
+    error_message = "The key set stays readable through keys() and nonsensitive()."
+  }
+}
+
+run "the_invoke_arn_is_exposed_for_the_api_integration" {
+  command = apply
+
+  module {
+    source = "../../modules/lambda-function"
+  }
+
+  assert {
+    condition     = output.invoke_arn == aws_lambda_function.this.invoke_arn
+    error_message = "invoke_arn must be the function's invoke ARN."
+  }
+}
+
 run "rejects_a_reserved_aws_environment_key" {
   command = plan
 
@@ -642,8 +803,10 @@ run "worker_environment_is_exactly_the_planned_key_set" {
   }
 
   # D23: no *_ENDPOINT, no APP_ENV, no AWS_* key; the origin-verify keys are the API's only.
+  # The function module marks its environment output sensitive (the API passes a secret through it), so the worker's
+  # test reads it through nonsensitive(). That is safe here because the worker's environment holds no secret.
   assert {
-    condition = module.function.environment_variables == tomap({
+    condition = nonsensitive(module.function.environment_variables) == tomap({
       BREF_RUNTIME      = "function"
       BREF_PING_DISABLE = "1"
       DYNAMODB_TABLE    = "expense-tracker-dev"
@@ -654,7 +817,7 @@ run "worker_environment_is_exactly_the_planned_key_set" {
   }
 
   assert {
-    condition     = length([for k in keys(module.function.environment_variables) : k if startswith(k, "AWS_") || endswith(k, "_ENDPOINT") || k == "APP_ENV"]) == 0
+    condition     = length([for k in nonsensitive(keys(module.function.environment_variables)) : k if startswith(k, "AWS_") || endswith(k, "_ENDPOINT") || k == "APP_ENV"]) == 0
     error_message = "No AWS_* key, *_ENDPOINT key or APP_ENV may reach the worker."
   }
 }

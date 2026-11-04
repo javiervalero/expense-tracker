@@ -105,4 +105,14 @@ resource "aws_lambda_function" "this" {
 
   # The function must not start (or be invoked by a mapping) before its permissions exist.
   depends_on = [aws_iam_role_policy.this]
+
+  # The uploaded zip must be the zip that was hashed: Lambda reports the base64 sha256 of the code it stored, and it must
+  # equal the one computed from package_sha256 (which `make lambda-build` wrote). A mismatch means the file at
+  # package_path changed after the hash was taken.
+  lifecycle {
+    postcondition {
+      condition     = self.code_sha256 == local.package_hash
+      error_message = "The code hash Lambda reports does not match package_sha256: the zip at package_path is not the zip that was hashed. Run `make lambda-build` again."
+    }
+  }
 }

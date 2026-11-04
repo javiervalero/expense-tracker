@@ -288,6 +288,8 @@
 | Local endpoints reaching AWS | Exact env key set: no `*_ENDPOINT`, no `APP_ENV` | WP7, WP10 |
 | An agent touching AWS | D1: no credentials in the container, mock-provider guard, rule 3.1 | WP2 |
 | Accidental state loss | `prevent_destroy`, versioning, noncurrent expiry after 90 days | WP4 |
+| Direct-to-S3 spend with a reused signed link: a registered user reuses one presigned GET (view URL) or POST policy for its whole 300 s validity, downloading a 10 MiB receipt repeatedly or re-posting to the same key in a loop; every request is billed and each upload queues a worker run. API throttles only limit new links; D15 does not cover S3; the $5 budget only notifies and lags by hours. Order of magnitude from the WP7 security review: about $900/day of data transfer at 1 Gbps | Accepted for the proof of concept (owner, 2026-11-04). Mitigations: queue-age alarm on the main queue in WP9; Phase 8 runbook step to attach an explicit-deny s3:GetObject/PutObject policy to the API role (this kills outstanding presigned URLs); later: shorter URL TTL (about 60 s) or receipts through CloudFront (L8) | WP9, Phase 8 |
+| Shared route throttles blocked by direct execute-api calls: junk requests straight to the public execute-api address (no secret) still count against the shared route limits before PHP answers 403; about 2-5 req/s on POST /api/v1/auth/login blocks every login, 10-20 req/s at `$default` blocks everything. ADR 0012 accepted "slows users"; with these limits it stops them | Accepted for the proof of concept (owner, 2026-11-04); no IaC-only fix exists (HTTP APIs have no WAF or resource policy). Options later: higher `$default` limit (50-100 req/s) with reserved concurrency, L8 WAF | WP7, Phase 8 |
 
 ## 5. Test plan
 
@@ -326,6 +328,18 @@
   - WP6 review M1: the worker's `ListBucket` on receipts carries the condition `s3:prefix = receipts/*` (D20). S3 may not evaluate `s3:prefix` for the bucket-level check behind a missing-key `GetObject`/`HeadObject`, which would give 403 instead of 404, and the worker would retry the message three times into the DLQ (`S3ObjectStore` treats only `NoSuchKey`/404 as "missing"). Not checkable offline. Smoke test: delete a receipt, run the worker on its message, expect 404 handling. If it is 403, drop the `Condition` from the worker's `ReceiptsList` statement (the worker never lists) and update the policy test;
   - build-time bucket origins (Phase 5 L2) and the `localhost:9000` bundle check;
   - leftover smoke users.
+  - WP9 addition: alarm on the main receipts queue `ApproximateAgeOfOldestMessage` (free tier) as the early signal for the direct-to-S3 abuse above.
+  - WP7 security review checks that only real AWS can answer:
+    - S3 to SQS delivery with SSE-SQS and the queue TLS deny (R9; if it fails, drop the TLS deny first);
+    - HTTP API route throttles for `$default` and specific routes, and acceptance of the values (R2);
+    - real access-log lines contain no query string;
+    - a direct execute-api call gets 403, plus forged-header and underscore-header checks;
+    - the `s3:TestEvent` sent when the notification is created is treated as invalid by the worker and does not land in the DLQ (the DLQ alarm must not fire on day one);
+    - IAM propagation timing for the event source mapping on the first apply (a retry may be needed);
+    - the API Gateway account-level CloudWatch Logs role exists, or the deploy principal can create it;
+    - run `aws s3api head-bucket --expected-bucket-owner <account>` on the state bucket before `init` (name squatting);
+    - read the account Lambda concurrency quota before setting reserved concurrency (the API flood can starve the worker).
+  - state bucket hardening to consider: deny when `s3:TlsVersion` < 1.2; scope who can read state (it holds the origin secrets) when the OIDC role (L2) is added.
 - **Carried out, later:**
   - M1 per-user upload and report throttle (proposed new L item, owner decision 10);
   - request deadline in code (owner decision 9);
@@ -334,6 +348,10 @@
   - L3 tflint/checkov (expected findings to justify: SSE-S3 not KMS, default certificate TLS floor, no WAF/logging, SNS unencrypted, no VPC/X-Ray);
   - L4, L8.
 - **§7.3 Review notes:** filled per WP.
+  - WP5: code-reviewer approved, no CRITICAL/HIGH/MEDIUM; one LOW renamed.
+  - WP6: code-reviewer approved; MEDIUM `gd_layer_version` made non-nullable and validated (>= 1); MEDIUM s3:prefix 403/404 carried to Phase 8; R8 worker memory measured, 768M/1024 MB kept.
+  - WP7: code-reviewer approved after fixing the MEDIUM (`allowed_origin` and `cors_allowed_origin` now exactly as strict as `ApiConfig::ORIGIN_PATTERN`: https only, labels 1-63, port 1-65535 without leading zero, not 443); security-reviewer (opus/high) over WP4–WP7: no CRITICAL/HIGH, 2 MEDIUM accepted (rows in §4), fixed L2 (DLQ TLS-deny policy), L3 (postcondition: uploaded zip hash equals the built hash) and I2 (`--no-plugins`); skipped L1 (worker deny principal via `aws:PrincipalArn` condition: IAM already denies `PutObject`, defence in depth only).
+    - Round 2 (opus/high, fix hunks only): no CRITICAL/HIGH/MEDIUM, all five hunks sound. Four LOW carried, none exploitable from outside because every policy is built in this repo from validated ARNs: (1) the `policy_json` wildcard check is still a blocklist (`?` wildcards, `arn:aws:s3:::*/receipts/*`, `arn:aws:logs:*:*:*` and a `*` region pass); later: an allowlist where `*` appears only as one final `/*` or `:*`, and a validated `aws_region` (`^[a-z]{2}(-[a-z]+)+-[0-9]$`); (2) the code-hash postcondition detects a mismatched zip after `UpdateFunctionCode`, it does not prevent it; Phase 8 `make deploy` must re-hash the zip right before apply (`filesha256(var.lambda_package_path) == var.lambda_package_sha256`), and recovery may need `terraform apply -replace=module.<x>.aws_lambda_function.this`; (3) the `--no-plugins` static test in `scripts/tests/lambda-zip.test.sh` could match a comment or a second install line; tighten to exactly one `run([...])` line; (4) `composer config` in `scripts/build-lambda-zip.php` has no `--no-plugins` (a global plugin could load; the build copy has no vendor directory).
 
 ## 8. Risks
 

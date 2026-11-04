@@ -423,6 +423,39 @@ run "queue_policy_lets_only_this_bucket_send" {
   }
 }
 
+run "dlq_policy_denies_plain_http_and_nothing_else" {
+  command = apply
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  assert {
+    condition     = aws_sqs_queue_policy.dlq.queue_url == aws_sqs_queue.dlq.id
+    error_message = "The TLS-only policy must be attached to the dead-letter queue."
+  }
+
+  assert {
+    condition = jsondecode(aws_sqs_queue_policy.dlq.policy) == {
+      Version = "2012-10-17"
+      Statement = [{
+        Sid       = "DenyInsecureTransport"
+        Effect    = "Deny"
+        Principal = "*"
+        Action    = "sqs:*"
+        Resource  = aws_sqs_queue.dlq.arn
+        Condition = { Bool = { "aws:SecureTransport" = "false" } }
+      }]
+    }
+    error_message = "The DLQ policy must be exactly one statement: deny sqs:* on the DLQ ARN over plain HTTP (same shape as the main queue's)."
+  }
+
+  assert {
+    condition     = aws_sqs_queue.dlq.arn != aws_sqs_queue.receipts.arn
+    error_message = "The DLQ and the main queue must be different queues."
+  }
+}
+
 run "one_notification_on_receipts_only_with_the_receipts_prefix" {
   command = apply
 
@@ -562,6 +595,168 @@ run "rejects_a_plain_http_cors_origin" {
   }
 
   expect_failures = [var.cors_allowed_origin]
+}
+
+# The CORS origin and the API's APP_ORIGINS must be the same string, so this rule is exactly as strict as ApiConfig
+# (ORIGIN_PATTERN and isValidOrigin, https case): DNS labels of 1 to 63 characters, no label starting or ending with a
+# hyphen, a port from 1 to 65535 without a leading zero and not 443 (a browser never sends it).
+run "rejects_cors_origin_with_the_default_https_port" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://d111111abcdef8.cloudfront.net:443"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_a_port_that_starts_with_zero" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://d111111abcdef8.cloudfront.net:0443"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_a_port_above_65535" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://d111111abcdef8.cloudfront.net:70000"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_port_zero" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://d111111abcdef8.cloudfront.net:0"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_an_empty_label" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://a..b"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_a_label_starting_with_a_hyphen" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://a.-b"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_a_label_ending_with_a_hyphen" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://a-.b"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "rejects_cors_origin_with_a_64_character_label" {
+  command = plan
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com"
+  }
+
+  expect_failures = [var.cors_allowed_origin]
+}
+
+run "accepts_cors_origin_with_a_63_character_label_and_a_cloudfront_domain" {
+  command = apply
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.receipts.cors_rule).allowed_origins == toset(["https://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com"])
+    error_message = "A label of 63 characters is valid."
+  }
+}
+
+run "accepts_cors_origin_with_port_8443" {
+  command = apply
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  variables {
+    cors_allowed_origin = "https://d111111abcdef8.cloudfront.net:8443"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.receipts.cors_rule).allowed_origins == toset(["https://d111111abcdef8.cloudfront.net:8443"])
+    error_message = "A non-default port from 1 to 65535 is valid."
+  }
+}
+
+run "accepts_a_cloudfront_domain_as_cors_origin" {
+  command = apply
+
+  module {
+    source = "../../modules/receipts"
+  }
+
+  assert {
+    condition     = one(aws_s3_bucket_cors_configuration.receipts.cors_rule).allowed_origins == toset(["https://d111111abcdef8.cloudfront.net"])
+    error_message = "A CloudFront domain is a valid CORS origin."
+  }
 }
 
 run "rejects_a_worker_role_that_is_not_a_role_arn" {

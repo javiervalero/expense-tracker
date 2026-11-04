@@ -79,9 +79,15 @@ variable "environment_variables" {
 }
 
 # The caller builds it with jsonencode() (no aws_iam_policy_document, no managed policy; D2, D20). The checks below are a
-# second barrier for a policy that is too broad: a bare "*" resource, or an action that ends with a wildcard.
+# second barrier for a policy that is too broad:
+#   - an Action must not contain "*" anywhere ("s3:*", "s3:Get*", "s3:*Object", "*");
+#   - a Resource must not be "*" or end with ":::*" (every bucket of S3, or the same shape in any service) or ":::*/*"
+#     (every object of every bucket).
+# What stays valid on purpose: a log group's streams (arn:...:log-group:<name>:*, which ends with ":*" but not ":::*")
+# and the objects under one bucket or prefix (arn:aws:s3:::<bucket>/<prefix>/*). A statement with no Resource (or with
+# NotAction/NotResource instead) fails the whole check.
 variable "policy_json" {
-  description = "The inline IAM policy of the function's role, as JSON. No wildcard action and no \"*\" resource."
+  description = "The inline IAM policy of the function's role, as JSON. No wildcard inside an action, and no resource that is \"*\" or ends with \":::*\"."
   type        = string
 
   validation {
@@ -92,9 +98,10 @@ variable "policy_json" {
   validation {
     condition = try(alltrue([
       for s in jsondecode(var.policy_json).Statement :
-      !anytrue([for a in flatten([s.Action]) : endswith(a, "*")]) && !contains(flatten([s.Resource]), "*")
+      !anytrue([for a in flatten([s.Action]) : strcontains(a, "*")])
+      && !anytrue([for r in flatten([s.Resource]) : r == "*" || endswith(r, ":::*") || endswith(r, ":::*/*")])
     ]), false)
-    error_message = "policy_json must not grant a wildcard action (for example s3:*) or the resource \"*\"."
+    error_message = "policy_json must not grant a wildcard action (for example s3:* or s3:Get*), the resource \"*\", or a resource that ends with \":::*\" (for example arn:aws:s3:::*)."
   }
 }
 

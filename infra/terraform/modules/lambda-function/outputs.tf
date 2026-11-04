@@ -30,8 +30,8 @@ output "log_group_arn" {
 }
 
 # The outputs below let a caller's test see what the function was given, since a test cannot reach resources inside a
-# child module. They carry no secret today; the API (WP7) passes a sensitive value in its environment, and then
-# environment_variables must be marked sensitive here.
+# child module. The API passes the origin-verify secret in its environment, so environment_variables is sensitive (a
+# caller's test reads the key set through nonsensitive(keys(...)), and never makes the whole map readable).
 output "runtime" {
   description = "Runtime of the function."
   value       = aws_lambda_function.this.runtime
@@ -63,8 +63,14 @@ output "layers" {
 }
 
 output "environment_variables" {
-  description = "Environment of the function."
+  description = "Environment of the function. Sensitive: the API's holds the origin-verify secret."
   value       = one(aws_lambda_function.this.environment).variables
+  sensitive   = true
+}
+
+output "invoke_arn" {
+  description = "Invoke ARN of the function (what an API Gateway integration calls)."
+  value       = aws_lambda_function.this.invoke_arn
 }
 
 output "policy" {
