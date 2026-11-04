@@ -54,6 +54,29 @@ variable "bref_gd_layer_versions" {
   }
 }
 
+# The Lambda package, shared by both functions. Both values come from the generated, git-ignored
+# package.auto.tfvars.json (`make lambda-build`, D11); there is no default, so a plan without a built package fails
+# here instead of deploying nothing.
+variable "lambda_package_path" {
+  description = "Path of the Lambda deployment zip, relative to this directory (generated file package.auto.tfvars.json)."
+  type        = string
+
+  validation {
+    condition     = endswith(var.lambda_package_path, ".zip") && length(var.lambda_package_path) > length(".zip")
+    error_message = "lambda_package_path must name a .zip file (run `make lambda-build`)."
+  }
+}
+
+variable "lambda_package_sha256" {
+  description = "SHA-256 of the Lambda deployment zip as 64 lower-case hex digits (generated file package.auto.tfvars.json)."
+  type        = string
+
+  validation {
+    condition     = can(regex("^[0-9a-f]{64}$", var.lambda_package_sha256))
+    error_message = "lambda_package_sha256 must be exactly 64 lower-case hexadecimal digits (run `make lambda-build`)."
+  }
+}
+
 # No default: the owner picks the slot explicitly. Rotation (ADR 0012) flips it after the other slot is renewed.
 variable "origin_verify_active_slot" {
   description = "Which origin-verify secret slot CloudFront sends: \"a\" or \"b\"."

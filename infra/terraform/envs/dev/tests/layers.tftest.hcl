@@ -9,6 +9,8 @@ variables {
   origin_verify_active_slot = "a"
   bref_php_layer_versions   = { "us-east-1" = 20, "sa-east-1" = 20 }
   bref_gd_layer_versions    = { "us-east-1" = 1, "sa-east-1" = 1 }
+  lambda_package_path       = "../../../../build/lambda/backend.zip"
+  lambda_package_sha256     = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" # sha256 of the empty input
 }
 
 run "accepts_layers_that_cover_the_region" {

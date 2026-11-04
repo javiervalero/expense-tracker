@@ -323,6 +323,7 @@
   - `test-metric-filter` against real log lines;
   - all ADR 0012 and Phase 1/2 live checks (direct API Gateway 403, forged and underscore viewer address, `X_Origin_Verify`, duplicate cookies, encoded paths, IPv6, no `X-Powered-By`);
   - DLQ depth in smoke; report and login latency (tune memory);
+  - WP6 review M1: the worker's `ListBucket` on receipts carries the condition `s3:prefix = receipts/*` (D20). S3 may not evaluate `s3:prefix` for the bucket-level check behind a missing-key `GetObject`/`HeadObject`, which would give 403 instead of 404, and the worker would retry the message three times into the DLQ (`S3ObjectStore` treats only `NoSuchKey`/404 as "missing"). Not checkable offline. Smoke test: delete a receipt, run the worker on its message, expect 404 handling. If it is 403, drop the `Condition` from the worker's `ReceiptsList` statement (the worker never lists) and update the policy test;
   - build-time bucket origins (Phase 5 L2) and the `localhost:9000` bundle check;
   - leftover smoke users.
 - **Carried out, later:**
