@@ -319,6 +319,10 @@ jobs:
       - name: Terraform unit tests (mocked AWS provider)
         run: make tf-unit
 
+      # The CloudFront Function of the edge module: node:test in the pinned node image, no dependency.
+      - name: CloudFront Function tests (SPA rewrite)
+        run: make tf-fn-test
+
       # Not part of `make test-shell` (slow: Docker plus a provider download); runs only here and via `make tf-test`.
       - name: Tests of the Terraform check
         run: make tf-test

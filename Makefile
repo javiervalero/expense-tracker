@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -342,7 +342,7 @@ test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
 # guards, and the dependency audits. (The Bref boundary is an architecture test, so it runs in `make test-unit`.)
 # Needs the three `*-install` targets once. Each part is a target of its own, so a failure names the check.
-LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check tf-unit tf-layers-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
+LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check tf-unit tf-fn-test tf-layers-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
 
 lint: ## ALL static checks and audits (no stack needed): PHP, front-end, contract, Terraform, platform + image pins
 	@set -e; for t in $(LINT_TARGETS); do \
@@ -544,6 +544,11 @@ tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstr
 	  $(TERRAFORM) -chdir="$$root" init -backend=false -input=false -lockfile=readonly; \
 	  $(TERRAFORM) -chdir="$$root" test; \
 	done
+
+# The CloudFront Function of the edge module (D19) is plain JavaScript run by CloudFront, so its test needs only Node's
+# own runner (node:test + vm) in the pinned node image: no npm install, no dependency, no network.
+tf-fn-test: ## Terraform: tests of the CloudFront Function modules/edge/functions/spa-rewrite.js (node:test in the pinned node image)
+	$(RUN_NODE) node --test infra/terraform/modules/edge/functions/spa-rewrite.test.mjs
 
 tf-test: ## Terraform: tests of tf-check (needs Docker, ~50s; excluded from test-shell)
 	bash scripts/tests/terraform-check.test.sh

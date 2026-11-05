@@ -4,7 +4,7 @@
 #
 # The cycle to rule out is the one Phase 2 R15 feared: the API Lambda's APP_ORIGINS needs the CloudFront domain, and the
 # distribution needs the API endpoint. There is none, because the endpoint belongs to the API resource and not to the
-# Lambda. The edge module does not exist yet (WP8), so terraform_data stands in for the distribution: it takes the API
+# Lambda. The real edge module is wired in edge-wiring; here terraform_data stands in for the distribution: it takes the API
 # endpoint as input (the real edge dependency) and hands the domain on to the API module as the allowed origin.
 # terraform_data is built into Terraform: no extra provider.
 
