@@ -13,7 +13,7 @@ FROM php:8.5-cli-alpine@sha256:93684051146ec037620855feb77f278090bde45ddc030801c
 COPY --from=composer:2.10.3@sha256:af98f42dfff7c68ba8d53c2164fd9fde1087b7d449514baa38c418b1f6bc4bac /usr/bin/composer /usr/bin/composer
 # gd (JPEG, PNG, WebP) and exif: the same image extensions the worker has, so the receipt inspection and thumbnail
 # tests run here (plan phase 5, decision 19). The runtime libraries stay; the -dev packages go with .build-deps.
-RUN apk add --no-cache git unzip libjpeg-turbo libpng libwebp \
+RUN apk add --no-cache git unzip zip libjpeg-turbo libpng libwebp \
  && apk add --no-cache --virtual .build-deps $PHPIZE_DEPS libjpeg-turbo-dev libpng-dev libwebp-dev \
  && docker-php-ext-configure gd --with-jpeg --with-webp \
  && docker-php-ext-install -j"$(nproc)" gd exif \

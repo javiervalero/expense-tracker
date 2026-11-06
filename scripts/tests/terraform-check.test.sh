@@ -10,6 +10,8 @@ mkdir -p "$REPO/.terraform"
 WORK="$(mktemp -d "$REPO/.terraform/tf-check-test.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 REL="${WORK#"$REPO"/}"
+# modules/table reads ../../../dynamodb/table.json, which from a copy at $WORK/<name> resolves to $WORK/dynamodb.
+cp -r "$REPO/infra/dynamodb" "$WORK/dynamodb"
 
 failures=0
 status=0

@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-test tf-lock smoke
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -108,6 +108,27 @@ BREF_IMAGE = $(shell sed -nE 's/^[[:space:]]*FROM[[:space:]]+(bref\/php-85:[^@[:
 check-php-ini: ## The Lambda ini (backend/php/conf.d) is loaded by the pinned bref/php-85 image with the hardened values
 	@test -n "$(BREF_IMAGE)" || { echo "check-php-ini: no pinned bref/php-85 FROM line in $(WORKER_DOCKERFILE)" >&2; exit 1; }
 	docker run --rm --entrypoint php --mount "type=bind,src=$(CURDIR)/backend/php/conf.d,dst=/var/task/php/conf.d,readonly" $(BREF_IMAGE) -r '$$want = ["zend.exception_ignore_args" => "1", "expose_php" => "", "enable_post_data_reading" => ""]; $$bad = []; foreach ($$want as $$key => $$value) { if ((string) ini_get($$key) !== $$value) { $$bad[] = $$key . "=" . var_export(ini_get($$key), true); } } if ($$bad) { fwrite(STDERR, "check-php-ini: unexpected values: " . implode(", ", $$bad) . "\n"); exit(1); } echo "check-php-ini: ok\n";'
+
+# Phase 7 (D10, D11). The Bref layer versions Terraform uses come from the installed layers.json files (needs
+# `make php-install`); the committed file is infra/terraform/envs/dev/bref-layers.auto.tfvars.json. `tf-layers-check`
+# (scripts/bref-layers.php --check) re-derives the content and fails on drift without writing anything.
+tf-layers: $(PHP_IMAGE_DEP) ## Regenerate infra/terraform/envs/dev/bref-layers.auto.tfvars.json from the installed Bref layers.json files
+	$(RUN_PHP) php scripts/bref-layers.php
+
+tf-layers-check: $(PHP_IMAGE_DEP) ## Fail when bref-layers.auto.tfvars.json differs from the installed layers.json files (needs php-install)
+	$(RUN_PHP) php scripts/bref-layers.php --check
+
+# One reproducible Lambda zip (build/lambda/backend.zip) for both functions, plus the git-ignored
+# envs/dev/package.auto.tfvars.json with its path and sha256. Both targets run in the tools image (Composer and `zip`).
+lambda-build: $(PHP_IMAGE_DEP) ## Build build/lambda/backend.zip (reproducible) and envs/dev/package.auto.tfvars.json
+	$(RUN_PHP) php scripts/build-lambda-zip.php
+
+# The zip rules (scripts/check-lambda-zip.sh), then the --no-dev vendor/autoload.php of the build loads on the pinned
+# bref/php-85 image (the same pinned image as check-php-ini; no new pull).
+lambda-check: $(PHP_IMAGE_DEP) ## Check build/lambda/backend.zip (required files, nothing dev, under 50 MB) and that its vendor/ loads in the pinned bref/php-85 image
+	$(RUN_PHP) sh scripts/check-lambda-zip.sh build/lambda/backend.zip
+	@test -n "$(BREF_IMAGE)" || { echo "lambda-check: no pinned bref/php-85 FROM line in $(WORKER_DOCKERFILE)" >&2; exit 1; }
+	docker run --rm --network none --cap-drop ALL --security-opt no-new-privileges --entrypoint php --mount "type=bind,src=$(CURDIR)/build/lambda/src,dst=/var/task,readonly" $(BREF_IMAGE) -r 'require "/var/task/vendor/autoload.php"; echo "lambda-check: vendor/autoload.php loads\n";'
 
 .env:
 	cp .env.example .env
@@ -321,7 +342,7 @@ test-fast: ## Like `make test`, without the tests marked `slow` (the dead-letter
 # Everything that checks without running the stack: style, static analysis, type checks, the contract, Terraform, the
 # guards, and the dependency audits. (The Bref boundary is an architecture test, so it runs in `make test-unit`.)
 # Needs the three `*-install` targets once. Each part is a target of its own, so a failure names the check.
-LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
+LINT_TARGETS = lint-php lint-local-aws frontend-lint contract tf-check tf-unit tf-fn-test tf-layers-check check-platform check-php-ini check-image-pins lint-workflows check-fixtures audit audit-local-aws contract-audit frontend-audit
 
 lint: ## ALL static checks and audits (no stack needed): PHP, front-end, contract, Terraform, platform + image pins
 	@set -e; for t in $(LINT_TARGETS); do \
@@ -514,6 +535,22 @@ tf-check: ## Terraform: fmt check, then init (no backend, read-only lock files) 
 	  $(TERRAFORM) -chdir="$$root" init -backend=false -input=false -lockfile=readonly; \
 	  $(TERRAFORM) -chdir="$$root" validate; \
 	done
+
+tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstrap and envs/dev; refuses a test file without the mock, a state bucket without prevent_destroy, or an envs/dev output outside the seven of D26 / mentioning a secret
+	scripts/check-tftest-mocks.sh $(TF_DIR)
+	scripts/check-prevent-destroy.sh --require-bucket $(TF_DIR)/bootstrap
+	scripts/check-alarm-messages.sh
+	scripts/check-outputs.sh $(TF_DIR)/envs/dev/outputs.tf
+	@set -e; for root in $(TF_ROOTS); do \
+	  echo "== $$root"; \
+	  $(TERRAFORM) -chdir="$$root" init -backend=false -input=false -lockfile=readonly; \
+	  $(TERRAFORM) -chdir="$$root" test; \
+	done
+
+# The CloudFront Function of the edge module (D19) is plain JavaScript run by CloudFront, so its test needs only Node's
+# own runner (node:test + vm) in the pinned node image: no npm install, no dependency, no network.
+tf-fn-test: ## Terraform: tests of the CloudFront Function modules/edge/functions/spa-rewrite.js (node:test in the pinned node image)
+	$(RUN_NODE) node --test infra/terraform/modules/edge/functions/spa-rewrite.test.mjs
 
 tf-test: ## Terraform: tests of tf-check (needs Docker, ~50s; excluded from test-shell)
 	bash scripts/tests/terraform-check.test.sh

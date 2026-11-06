@@ -13,6 +13,10 @@ contract/dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+# A plan file holds secrets in plain text.
+*.tfplan
+tfplan
+*.plan
 *.tfvars
 *.tfvars.json
 backend*.hcl
@@ -25,6 +29,11 @@ override.tf.json
 .terraformrc
 build/
 dist/
+# Phase 7 (D24): the generated layer versions file is tracked, so only that one file is un-ignored (by name, after the
+# *.tfvars.json rule above); any other *.auto.tfvars.json, including the generated package inputs, stays ignored.
+# The *.example files do not match any rule, and backend*.hcl above already covers backend.hcl; build/ covers
+# build/lambda/.
+!infra/terraform/envs/dev/bref-layers.auto.tfvars.json
 .php-cs-fixer.cache
 
 # Personal editor settings

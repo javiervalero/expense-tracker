@@ -22,6 +22,7 @@ ADRs 0001–0011 were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`
 | [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Accepted |
 | [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Accepted |
 | [0012](0012-runtime-platform.md) | Runtime platform: PHP 8.5, x86_64, Bref 3 configuration and client IP | Accepted |
+| [0013](0013-aws-region-us-east-1.md) | AWS region: us-east-1 | Accepted |
 
 ## Template
 

@@ -1,0 +1,6 @@
+# Copy to backend.hcl (git-ignored) and pass it with: terraform init -backend-config=backend.hcl
+# Bucket name: expense-tracker-tfstate-<account id>-<region> (created by the bootstrap root).
+
+bucket = "expense-tracker-tfstate-123456789012-us-east-1"
+key    = "envs/dev/terraform.tfstate"
+region = "us-east-1"

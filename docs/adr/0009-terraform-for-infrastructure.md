@@ -37,3 +37,14 @@ are Lambda (with Bref layers), API Gateway, DynamoDB, S3, SQS, CloudFront, IAM, 
 - Clear `plan` → `apply` → `destroy` cycle; widely used skills.
 - We manage the state bucket ourselves, through the bootstrap step.
 - Packaging the PHP code for Lambda (a zip with `vendor/`) is a build step in CI, outside Terraform.
+
+## Implemented in Phase 7
+
+The code is in `infra/terraform/`. The plan is [the Phase 7 plan](../plans/phase-7-infrastructure.md) (decision D3);
+the module list is in [infra/terraform/modules/README.md](../../infra/terraform/modules/README.md).
+
+- **Layout:** `bootstrap/` creates the state bucket (the bucket where Terraform records what it has built). `modules/`
+  holds seven reusable modules. `envs/dev/` is the dev environment that calls them.
+- **Offline tests:** `terraform test` checks the configuration against a mock AWS provider (`mock_provider "aws"`, a
+  stand-in for AWS that makes no calls). `make tf-unit` runs them. Nothing touches AWS: no credentials are used and no
+  plan or apply runs (decisions D1 and D2).

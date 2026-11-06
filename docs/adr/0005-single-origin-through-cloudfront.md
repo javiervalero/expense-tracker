@@ -37,3 +37,17 @@ Locally, the Vite dev server proxies `/api` to the PHP container, which gives th
 - A custom domain (Route 53 + ACM certificate) is optional. Without one, the default `*.cloudfront.net` domain
   works.
 - CloudFront changes take a few minutes to roll out, which slows down infrastructure iterations slightly.
+
+## Implemented in Phase 7
+
+Built in `infra/terraform/modules/edge` (decisions D17 to D19). CloudFront is AWS's content delivery network, the front
+door for the site and the API.
+
+- **`/api/*`:** sent to the API with caching turned off (the AWS managed `CachingDisabled` policy). Cookies, query strings
+  and five headers are forwarded: `Origin`, `X-Requested-With`, `Content-Type`, `Accept` and `CloudFront-Viewer-Address`.
+- **`/assets/*`:** served from the site bucket with a one-year cache (`Cache-Control: public, max-age=31536000, immutable`).
+- **Everything else (default):** served from the site bucket. A small function sends single-page-app deep links (a last
+  path segment with no dot, such as `/expenses/123`) to `/index.html`. It runs on the default behaviour only.
+- **Secret origin header:** CloudFront adds `X-Origin-Verify` with the active secret to every API request. PHP checks it
+  (see ADR 0012).
+- There are no custom error pages, so the API's error responses reach the browser unchanged.

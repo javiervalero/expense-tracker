@@ -7,9 +7,14 @@ terraform {
       source  = "hashicorp/aws"
       version = "6.68.0"
     }
+    # Runs locally (no credentials): generates the bucket-name suffix and the origin-verify secrets.
+    random = {
+      source  = "hashicorp/random"
+      version = "3.9.1"
+    }
   }
 
-  # Partial configuration: only the non-secret settings are committed. Phase 7 supplies bucket, key and region with
+  # Partial configuration: only the non-secret settings are committed. Phase 8 supplies bucket, key and region with
   # `terraform init -backend-config=...`. `make tf-check` runs `init -backend=false`, so the backend is never contacted.
   backend "s3" {
     use_lockfile = true
