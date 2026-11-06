@@ -295,3 +295,17 @@ Decisions A13 and A14 in [the Phase 2 plan](../plans/phase-2-authentication.md).
 - A `CloudFront-Viewer-Address` sent by the client is replaced by CloudFront.
 - The IPv6 format through CloudFront (IPv6 enabled on the distribution).
 - The allow-list origin request policy works with API Gateway (`Host` not forwarded).
+
+## Implemented in Phase 7
+
+- **Layer versions file:** `infra/terraform/envs/dev/bref-layers.auto.tfvars.json` is committed. `make tf-layers`
+  generates it from the layer lists that Composer installs with Bref (decision D10). `make tf-layers-check` fails when
+  the file no longer matches them.
+- **Origin-verify secrets:** two slots, `a` and `b`, in `infra/terraform/envs/dev/secrets.tf`. Terraform generates each
+  one with `random_password` (a Terraform resource that makes a random value; here 64 letters and digits). The API
+  accepts both. CloudFront sends the slot chosen by `origin_verify_active_slot`, which has no default
+  (`infra/terraform/envs/dev/variables.tf`). Each slot has a rotation variable, `origin_verify_rotation_a` and
+  `origin_verify_rotation_b`. Changing one makes a new secret for that slot only (decision D16).
+- **Timeout chain:** the API Lambda gives up after 25 s, the API Gateway integration after 29 s, and CloudFront after
+  30 s (decision D12; values in `infra/terraform/modules/api/main.tf`). Each outer layer waits longer than the one
+  inside it, so the Lambda limit fires first and returns its own error.

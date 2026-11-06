@@ -59,6 +59,17 @@ Decisions C1–C19 and the review notes are in [the Phase 4 plan](../plans/phase
 - **Monotonic `Date.now` in tests:** on the WSL2 development host the wall clock steps back by about 600 ms. Vue's event invoker then drops a handler for an event that a test triggers, so a click or submit silently does nothing. The test setup uses a monotonic `Date.now` (`frontend/vite/monotonicClock.ts`, applied through `test.setupFiles`). It is a test-only fix; no assertion was weakened.
 - **Always-rendered live regions:** the polite live regions are always in the DOM and are never `display:none` while empty, so screen readers can announce the first message. They use `aria-live="polite"` without `role="status"`, so they do not collide with the `[role="status"]` queries.
 
+## Implemented in Phase 7
+
+The front end is served by CloudFront as described in [ADR 0005](0005-single-origin-through-cloudfront.md) (the
+`infra/terraform/modules/edge` module, decisions D17 to D19). The Content Security Policy (CSP, the browser rules for what
+a page may load) is set by CloudFront on site and asset responses, not on API responses.
+
+- **CSP hosts:** `connect-src` (where the page may send requests) allows the receipts bucket, which receives uploads, and
+  `img-src` (images) allows the thumbnails bucket. Both host names are built in `modules/edge/main.tf` from the bucket
+  names and the region, in the form the AWS SDK signs (decision D18). The other directives are the target list above.
+- **Deep links:** the single-page-app rewrite function is described in ADR 0005.
+
 ## Implemented in Phase 5 (2026-11-02)
 
 Decisions C17 and C20 in [the Phase 5 plan](../plans/phase-5-receipts.md).

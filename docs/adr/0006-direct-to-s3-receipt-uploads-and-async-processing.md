@@ -121,3 +121,18 @@ Decisions C4, C8, C10 and C11 in [the Phase 5 plan](../plans/phase-5-receipts.md
   - Deviation: JPEG and PNG structure walkers run first. The PNG walker refuses `zTXt`, compressed `iTXt`, a second `iCCP` and more than 1,000 non-IDAT chunks.
   - PDFs are checked by magic bytes only.
   - Not tested: CMYK JPEG (GD cannot produce one to test with).
+
+## Implemented in Phase 7
+
+The queue and worker settings are in `infra/terraform/modules/receipts` and `infra/terraform/modules/worker` (decisions D7
+and D8).
+
+- **Worker trigger:** the worker reads one message at a time (batch size 1), so a bad file cannot make others fail with
+  it. Failed messages are reported one by one (`ReportBatchItemFailures`, so only the failed message is retried), and at
+  most 2 worker runs happen at the same time (maximum concurrency 2).
+- **Queue numbers:** a message stays hidden for 180 s after a worker takes it (the visibility timeout, six times the
+  worker's 30 s limit). Unread messages are kept for 4 days (retention). After 3 failed receives, a message moves to the
+  dead-letter queue (DLQ, a separate queue for messages that keep failing).
+- **Bucket policy:** the receipts bucket policy explicitly denies `s3:PutObject` to the worker role. This is a second
+  barrier behind the worker's IAM policy (the permissions attached to the role), so the worker cannot write receipts
+  even if IAM is widened by mistake.
