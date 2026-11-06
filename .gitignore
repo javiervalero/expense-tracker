@@ -13,6 +13,10 @@ contract/dist/
 .terraform/
 *.tfstate
 *.tfstate.*
+# A plan file holds secrets in plain text.
+*.tfplan
+tfplan
+*.plan
 *.tfvars
 *.tfvars.json
 backend*.hcl

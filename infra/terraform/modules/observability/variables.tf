@@ -52,6 +52,7 @@ variable "dlq_name" {
 variable "alert_email" {
   description = "Address that receives the alarms and the budget notifications. SNS emails a confirmation link the owner must click once."
   type        = string
+  sensitive   = true
 
   validation {
     condition     = can(regex("^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*\\.[A-Za-z]{2,}$", var.alert_email)) && length(var.alert_email) <= 254

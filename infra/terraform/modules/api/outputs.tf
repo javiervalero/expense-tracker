@@ -1,4 +1,5 @@
-# No output carries the origin-verify secret (a test pins it): the environment is exposed by key only.
+# The origin-verify secret is carried only by the sensitive outputs `environment_variables` here and
+# `origin_verify_header_value` in modules/edge; the root never exports it. Never wrap either in nonsensitive().
 
 # The edge module (WP8) reads api_endpoint to build the API origin. It belongs to the API resource alone, so the
 # distribution can be created before the function's environment (APP_ORIGINS) is known; see the ORDERING note in main.tf.

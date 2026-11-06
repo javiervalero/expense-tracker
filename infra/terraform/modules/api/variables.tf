@@ -92,8 +92,8 @@ variable "thumbnails_bucket_arn" {
 
 # ORIGIN_VERIFY_SECRETS (ApiConfig): one or two comma-separated slots. A slot is at least 32 visible ASCII characters
 # (SLOT_PATTERN: \x21, \x23-\x5B, \x5D-\x7E, so no space, no control character, no double quote and no backslash). PHP also
-# refuses a repeated slot and a slot that contains the other. The value is a secret: the variable is sensitive, no output
-# carries it, and no message below quotes it. The random_password resources and the CloudFront header are WP8/WP10's.
+# refuses a repeated slot and a slot that contains the other. The value is a secret: the variable is sensitive, only the
+# sensitive output environment_variables carries it, and no message below quotes it. The random_password resources and the CloudFront header are WP8/WP10's.
 variable "origin_verify_secrets" {
   description = "Value of ORIGIN_VERIFY_SECRETS: the accepted X-Origin-Verify slots, comma-separated (1 or 2 slots, each at least 32 visible ASCII characters). Secret."
   type        = string

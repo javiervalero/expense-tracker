@@ -214,23 +214,34 @@ run "the_filter_patterns_are_the_quoted_messages_on_the_api_log_group" {
   }
 
   assert {
-    condition     = aws_cloudwatch_log_metric_filter.messages["receipt_cleanup_failed"].pattern == "\"receipt cleanup failed\""
-    error_message = "The receipt-cleanup filter must be the quoted phrase."
+    condition     = aws_cloudwatch_log_metric_filter.messages["receipt_cleanup_failed"].pattern == "\"\\\"message\\\":\\\"receipt cleanup failed\\\"\""
+    error_message = "The receipt-cleanup filter must be anchored on the JSON key: \"\\\"message\\\":\\\"receipt cleanup failed\\\"\"."
   }
 
   assert {
-    condition     = aws_cloudwatch_log_metric_filter.messages["client_address_unavailable"].pattern == "\"client address unavailable\""
-    error_message = "The client-address filter must be the quoted phrase."
+    condition     = aws_cloudwatch_log_metric_filter.messages["client_address_unavailable"].pattern == "\"\\\"message\\\":\\\"client address unavailable\\\"\""
+    error_message = "The client-address filter must be anchored on the JSON key."
   }
 
   assert {
-    condition     = aws_cloudwatch_log_metric_filter.messages["login_throttle_cleanup_failed"].pattern == "\"login throttle clean-up failed after a successful login\""
-    error_message = "The login-throttle filter must be the quoted phrase."
+    condition     = aws_cloudwatch_log_metric_filter.messages["login_throttle_cleanup_failed"].pattern == "\"\\\"message\\\":\\\"login throttle clean-up failed after a successful login\\\"\""
+    error_message = "The login-throttle filter must be anchored on the JSON key."
   }
 
+  # Two alternatives (a leading ?): the end of the exceptionMessage value followed by the "file" key, and the "code" field.
   assert {
-    condition     = aws_cloudwatch_log_metric_filter.messages["corrupt_item"].pattern == "\"CorruptItem\""
-    error_message = "The corrupt-item filter must be the quoted failure code."
+    condition     = aws_cloudwatch_log_metric_filter.messages["corrupt_item"].pattern == "?\"\\\"code\\\":\\\"CorruptItem\\\"\" ?\"(CorruptItem)\\\",\\\"file\\\"\""
+    error_message = "The corrupt-item filter must be anchored on the code field or on the end of exceptionMessage followed by the file key."
+  }
+
+  # Request text (path, origin) is logged through json_encode, which escapes every quote: a pattern that needs a raw
+  # quote next to the phrase cannot be forged. A bare quoted phrase is a substring match anywhere in the line.
+  assert {
+    condition = alltrue([
+      for f in values(aws_cloudwatch_log_metric_filter.messages) :
+      strcontains(f.pattern, "\\\"")
+    ])
+    error_message = "Every filter pattern must carry an escaped quote (a JSON anchor), never a bare quoted phrase."
   }
 
   assert {

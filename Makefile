@@ -536,10 +536,11 @@ tf-check: ## Terraform: fmt check, then init (no backend, read-only lock files) 
 	  $(TERRAFORM) -chdir="$$root" validate; \
 	done
 
-tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstrap and envs/dev; refuses a test file without the mock or a state bucket without prevent_destroy
+tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstrap and envs/dev; refuses a test file without the mock, a state bucket without prevent_destroy, or an envs/dev output outside the seven of D26 / mentioning a secret
 	scripts/check-tftest-mocks.sh $(TF_DIR)
 	scripts/check-prevent-destroy.sh --require-bucket $(TF_DIR)/bootstrap
 	scripts/check-alarm-messages.sh
+	scripts/check-outputs.sh $(TF_DIR)/envs/dev/outputs.tf
 	@set -e; for root in $(TF_ROOTS); do \
 	  echo "== $$root"; \
 	  $(TERRAFORM) -chdir="$$root" init -backend=false -input=false -lockfile=readonly; \

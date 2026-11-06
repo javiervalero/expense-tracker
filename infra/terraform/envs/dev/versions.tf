@@ -14,7 +14,7 @@ terraform {
     }
   }
 
-  # Partial configuration: only the non-secret settings are committed. Phase 7 supplies bucket, key and region with
+  # Partial configuration: only the non-secret settings are committed. Phase 8 supplies bucket, key and region with
   # `terraform init -backend-config=...`. `make tf-check` runs `init -backend=false`, so the backend is never contacted.
   backend "s3" {
     use_lockfile = true

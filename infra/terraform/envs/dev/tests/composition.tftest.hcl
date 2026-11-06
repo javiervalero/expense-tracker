@@ -190,6 +190,11 @@ run "the_two_secrets_differ_and_neither_contains_the_other" {
   }
 }
 
+# These two runs check WIRING only: each slot's keepers come from its own rotation variable, and changing one variable
+# changes only that slot's keepers. That a changed keeper really generates a new secret is the random provider's
+# documented behaviour, and a test file cannot prove it: a run can read the root's outputs of an earlier run but not
+# its resources, and a secret must never be an output (D26, scripts/check-outputs.sh), so the old and the new secret
+# cannot be compared. The runs share one state, so the second run applies a change on top of the first.
 run "each_slot_is_renewed_by_its_own_rotation_value" {
   command = apply
 
@@ -206,6 +211,25 @@ run "each_slot_is_renewed_by_its_own_rotation_value" {
   assert {
     condition     = random_password.origin_verify_b.keepers["rotation"] == "2024-rotation-b"
     error_message = "Slot B must be kept by origin_verify_rotation_b."
+  }
+}
+
+run "changing_the_rotation_value_of_slot_a_changes_only_the_keepers_of_slot_a" {
+  command = apply
+
+  variables {
+    origin_verify_rotation_a = "2025-rotation-a"
+    origin_verify_rotation_b = "2024-rotation-b"
+  }
+
+  assert {
+    condition     = random_password.origin_verify_a.keepers["rotation"] == "2025-rotation-a"
+    error_message = "Slot A's keepers must follow the new origin_verify_rotation_a."
+  }
+
+  assert {
+    condition     = random_password.origin_verify_b.keepers["rotation"] == "2024-rotation-b"
+    error_message = "Slot B's keepers must not change when only origin_verify_rotation_a changes."
   }
 }
 
@@ -451,6 +475,20 @@ run "the_three_buckets_differ_and_share_one_random_suffix" {
   assert {
     condition     = module.receipts.queue_name == "expense-tracker-dev-receipts" && module.receipts.dlq_name == "expense-tracker-dev-receipts-dlq"
     error_message = "The queues must be named after the environment."
+  }
+}
+
+run "the_table_ceilings_are_400_reads_and_100_writes" {
+  command = apply
+
+  assert {
+    condition     = module.table.max_read_request_units == 400
+    error_message = "The table's read ceiling must be 400 (D15)."
+  }
+
+  assert {
+    condition     = module.table.max_write_request_units == 100
+    error_message = "The table's write ceiling must be 100 (D15)."
   }
 }
 

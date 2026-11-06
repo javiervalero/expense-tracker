@@ -1,4 +1,5 @@
-# No output carries the origin-verify secret (the variable is sensitive and nothing here derives a value from it).
+# The origin-verify secret is carried only by the sensitive outputs `origin_verify_header_value` here and
+# `environment_variables` in modules/api; the root never exports it. Never wrap either in nonsensitive().
 
 output "domain_name" {
   description = "Domain of the distribution, for example d111111abcdef8.cloudfront.net; the API's allowed origin and the receipts CORS origin are https:// plus this."

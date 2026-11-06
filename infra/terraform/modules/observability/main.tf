@@ -20,15 +20,19 @@ locals {
   # THE GUARDED LIST. Each message is a substring the PHP code logs; scripts/check-alarm-messages.sh reads the
   # `message = "..."` entries between the two marker comments and fails when one is no longer in backend/src. Keep one
   # entry per line, and do not put another `message = "..."` between the markers.
+  # Each entry also carries its literal CloudWatch `pattern` (HCL-escaped: read it as the text after unescaping `\"` and
+  # `\\`); scripts/tests/alarm-patterns.test.sh reads it from here and proves, on JSON lines, that a genuine line matches
+  # and request-controlled text (path, Origin) does not. Keep `pattern` on the same line as its `message`.
   # Step 0 R6: the API alone logs all four, so they all sit on the API log group. `CorruptItem` is not a log message
   # of its own but the failure code that appears in the "unhandled exception" line (exceptionMessage "DynamoDB <op>
-  # failed (CorruptItem)") and in the `code` field of other API lines.
+  # failed (CorruptItem)", then the "file" key) and in the `code` field of other API lines; its pattern has two
+  # alternatives (a leading `?` means OR).
   # alarm-messages:begin
   alarm_messages = {
-    receipt_cleanup_failed        = { message = "receipt cleanup failed", metric = "ReceiptCleanupFailed" }
-    client_address_unavailable    = { message = "client address unavailable", metric = "ClientAddressUnavailable" }
-    login_throttle_cleanup_failed = { message = "login throttle clean-up failed after a successful login", metric = "LoginThrottleCleanupFailed" }
-    corrupt_item                  = { message = "CorruptItem", metric = "CorruptItem" }
+    receipt_cleanup_failed        = { message = "receipt cleanup failed", metric = "ReceiptCleanupFailed", pattern = "\"\\\"message\\\":\\\"receipt cleanup failed\\\"\"" }
+    client_address_unavailable    = { message = "client address unavailable", metric = "ClientAddressUnavailable", pattern = "\"\\\"message\\\":\\\"client address unavailable\\\"\"" }
+    login_throttle_cleanup_failed = { message = "login throttle clean-up failed after a successful login", metric = "LoginThrottleCleanupFailed", pattern = "\"\\\"message\\\":\\\"login throttle clean-up failed after a successful login\\\"\"" }
+    corrupt_item                  = { message = "CorruptItem", metric = "CorruptItem", pattern = "?\"\\\"code\\\":\\\"CorruptItem\\\"\" ?\"(CorruptItem)\\\",\\\"file\\\"\"" }
   }
   # alarm-messages:end
 }
@@ -83,8 +87,15 @@ resource "aws_cloudwatch_metric_alarm" "queue_age" {
 
 # --- Log-message alarms ----------------------------------------------------------------------------------------------
 
-# The pattern is the message in double quotes: CloudWatch then matches the phrase as a substring of the line, whatever
-# the JSON line or the PHP-FPM prefix around it (Phase 8 checks real lines with the read-only test-metric-filter).
+# The pattern is a quoted term that includes the JSON structure around the phrase (`"message":"<phrase>"`, quotes
+# escaped inside the term), still a substring match, so a prefix before the JSON line does not matter. A bare quoted
+# phrase would match anywhere in the line, and the API logs request text (the path in OriginVerifyMiddleware and
+# CsrfMiddleware, the Origin header in CsrfMiddleware): anyone could forge an alarm by requesting `/CorruptItem`.
+# JsonLogger writes every value through json_encode, which escapes each `"` inside a value as `\"`, so request text can
+# never produce the raw `"message":"` or the raw `","file"` that the patterns need.
+# Not documented by AWS: the page "Filter pattern syntax" shows quoted terms and `?` terms but not `\"` inside a quoted
+# term, nor `?` with quoted terms. Phase 8 MUST run the read-only test-metric-filter on a real line of each kind before
+# trusting these alarms.
 # The value is 1 per matching line. There is no default_value: a filter without one publishes nothing while quiet, and
 # the alarms read a missing datapoint as notBreaching, which is the same as 0 without a datapoint every minute.
 resource "aws_cloudwatch_log_metric_filter" "messages" {
@@ -92,7 +103,7 @@ resource "aws_cloudwatch_log_metric_filter" "messages" {
 
   name           = "${var.name}-${replace(each.key, "_", "-")}"
   log_group_name = var.api_log_group_name
-  pattern        = "\"${each.value.message}\""
+  pattern        = each.value.pattern
 
   metric_transformation {
     name      = each.value.metric

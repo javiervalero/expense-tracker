@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Usage: scripts/terraform.sh <terraform arguments...>   (for example: scripts/terraform.sh -chdir=infra/terraform/envs/dev validate)
 # Runs the pinned Terraform image with the repository mounted at /app, as the host user, with all capabilities dropped.
-# Phase 0 has no AWS resources and no credentials: no AWS credentials reach the container because none are passed
+# Phase 7 runs only offline commands (fmt, validate, init -backend=false, test). The wrapper does NOT enforce a command
+# allow-list: it relies on the container having no credentials, so plan/apply cannot reach an account. Phase 8 will need
+# its own gate. No AWS credentials reach the container because none are passed
 # (the container only gets the -e variables below), ~/.aws is not mounted, and the instance-metadata lookup is off. The only network access is the provider download from the Terraform registry.
 # The plugin cache lives in .terraform/ (git-ignored), so providers are downloaded once.
 set -euo pipefail

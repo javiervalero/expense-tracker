@@ -116,6 +116,7 @@ variable "origin_verify_rotation_b" {
 variable "alert_email" {
   description = "Address that receives the alarms and the budget notifications. Put the value in an uncommitted tfvars file."
   type        = string
+  sensitive   = true
 }
 
 variable "monthly_budget_usd" {

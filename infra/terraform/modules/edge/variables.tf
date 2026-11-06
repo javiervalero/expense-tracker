@@ -66,7 +66,8 @@ variable "api_endpoint" {
 # ASCII characters: \x21, \x23-\x5B, \x5D-\x7E, so no space, no control character, no double quote and no backslash), plus
 # two of this module's own: no comma, because ORIGIN_VERIFY_SECRETS is comma-separated and PHP would split such a slot, so
 # the header could never match; and at most 1,783 characters, the CloudFront limit for a header value. The value is a
-# secret: the variable is sensitive, no output carries it, and no message below quotes it.
+# secret: the variable is sensitive, only the sensitive output origin_verify_header_value carries it, and no message
+# below quotes it.
 variable "origin_verify_secret" {
   description = "Value of the X-Origin-Verify header CloudFront adds to every API request: the active slot of ORIGIN_VERIFY_SECRETS. Secret."
   type        = string
