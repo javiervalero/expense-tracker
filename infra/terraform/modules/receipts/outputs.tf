@@ -42,3 +42,20 @@ output "dlq_name" {
   description = "Name of the dead-letter queue (the CloudWatch QueueName dimension)."
   value       = aws_sqs_queue.dlq.name
 }
+
+output "queue_name" {
+  description = "Name of the main receipts queue (the CloudWatch QueueName dimension of the queue-age alarm)."
+  value       = aws_sqs_queue.receipts.name
+}
+
+# The outputs below let the composition's test see what the module was given, since a test cannot reach resources
+# inside a child module.
+output "visibility_timeout_seconds" {
+  description = "Visibility timeout of the main receipts queue in seconds (at least 6 times the worker timeout, D8)."
+  value       = aws_sqs_queue.receipts.visibility_timeout_seconds
+}
+
+output "cors_allowed_origins" {
+  description = "The origins of the receipts bucket's CORS rule."
+  value       = one(aws_s3_bucket_cors_configuration.receipts.cors_rule).allowed_origins
+}

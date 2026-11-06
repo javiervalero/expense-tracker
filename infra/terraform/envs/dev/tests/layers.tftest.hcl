@@ -7,6 +7,7 @@ variables {
   aws_account_id            = "123456789012" # the AWS documentation example account
   environment               = "dev"
   origin_verify_active_slot = "a"
+  alert_email               = "alerts@example.com"
   bref_php_layer_versions   = { "us-east-1" = 20, "sa-east-1" = 20 }
   bref_gd_layer_versions    = { "us-east-1" = 1, "sa-east-1" = 1 }
   lambda_package_path       = "../../../../build/lambda/backend.zip"

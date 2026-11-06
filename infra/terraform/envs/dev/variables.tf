@@ -88,6 +88,56 @@ variable "origin_verify_active_slot" {
   }
 }
 
+# Changing a rotation value renews that slot's secret (random_password keepers; ADR 0012). Any non-empty text works, for
+# example a date.
+variable "origin_verify_rotation_a" {
+  description = "Rotation marker of origin-verify slot A: change the value to generate a new secret for the slot."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = length(var.origin_verify_rotation_a) > 0
+    error_message = "origin_verify_rotation_a must not be empty."
+  }
+}
+
+variable "origin_verify_rotation_b" {
+  description = "Rotation marker of origin-verify slot B: change the value to generate a new secret for the slot."
+  type        = string
+  default     = "1"
+
+  validation {
+    condition     = length(var.origin_verify_rotation_b) > 0
+    error_message = "origin_verify_rotation_b must not be empty."
+  }
+}
+
+# No default: the address goes in an uncommitted tfvars file, never in the repo (D22, D24). The module validates its shape.
+variable "alert_email" {
+  description = "Address that receives the alarms and the budget notifications. Put the value in an uncommitted tfvars file."
+  type        = string
+}
+
+variable "monthly_budget_usd" {
+  description = "Monthly cost budget for the whole account, in US dollars (owner decision 11: 5)."
+  type        = number
+  default     = 5
+}
+
+# -1 leaves the function unreserved. Phase 8 reads the account's Lambda concurrency quota before choosing a value; a new
+# account's quota can be too low for any reservation (R6), and an API flood could starve the worker.
+variable "api_reserved_concurrent_executions" {
+  description = "Reserved concurrency of the API function; -1 leaves it unreserved."
+  type        = number
+  default     = -1
+}
+
+variable "worker_reserved_concurrent_executions" {
+  description = "Reserved concurrency of the worker function; -1 leaves it unreserved."
+  type        = number
+  default     = -1
+}
+
 # No default: the 12-digit account id goes in an uncommitted tfvars file or in CI variables, never in the repo.
 variable "aws_account_id" {
   description = "Id of the AWS account the provider may act on (12 digits). Put the value in an uncommitted tfvars file or in CI variables, never in the repo."

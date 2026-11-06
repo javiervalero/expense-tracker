@@ -40,6 +40,18 @@ output "receipts_host" {
   value       = local.receipts_host
 }
 
+# Read from the distribution's API origin, so a caller's test sees the value CloudFront really sends. Sensitive: it is the
+# origin-verify secret; a test compares it as a boolean and never prints it.
+output "origin_verify_header_value" {
+  description = "Value of the X-Origin-Verify header on the distribution's API origin. Sensitive."
+  value = one(flatten([
+    for origin in aws_cloudfront_distribution.this.origin : [
+      for header in origin.custom_header : header.value if header.name == "X-Origin-Verify"
+    ]
+  ]))
+  sensitive = true
+}
+
 output "thumbnails_host" {
   description = "S3 host of the thumbnails bucket as it appears in the CSP img-src."
   value       = local.thumbnails_host

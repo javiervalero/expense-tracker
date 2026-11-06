@@ -33,3 +33,21 @@ output "policy" {
   description = "The inline policy attached to the worker role, as JSON."
   value       = module.function.policy
 }
+
+# The outputs below let the composition's test see what the worker was given, since a test cannot reach resources
+# inside a child module.
+output "timeout_seconds" {
+  description = "Timeout of the worker function in seconds (the queue's visibility timeout is 6 times it, D8)."
+  value       = module.function.timeout
+}
+
+output "environment_variable_keys" {
+  description = "The keys of the worker function's environment, sorted."
+  value       = nonsensitive(keys(module.function.environment_variables))
+}
+
+output "environment_variables" {
+  description = "Environment of the worker function. Sensitive because the function module's output is (the API's holds a secret); a caller's test compares single values and never prints the map."
+  value       = module.function.environment_variables
+  sensitive   = true
+}

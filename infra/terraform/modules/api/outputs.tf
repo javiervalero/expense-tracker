@@ -70,6 +70,13 @@ output "integration_timeout_milliseconds" {
   value       = local.integration_timeout_milliseconds
 }
 
+# Sensitive: it holds ORIGIN_VERIFY_SECRETS. A caller's test compares single values as booleans and never prints the map.
+output "environment_variables" {
+  description = "Environment of the API function. Sensitive: it holds the origin-verify secrets."
+  value       = module.function.environment_variables
+  sensitive   = true
+}
+
 output "cloudfront_origin_read_timeout_seconds" {
   description = "The origin_read_timeout the CloudFront API origin must use, in seconds (longer than the integration timeout)."
   value       = local.cloudfront_origin_read_timeout_seconds
