@@ -37,14 +37,14 @@ reachable only from other containers on the Compose network.
 | SQS and its DLQ | ElasticMQ (`sqs`) | `softwaremill/elasticmq-native:1.7.1` | `9324` (9324) | Queues `receipts` and `receipts-dlq` from `docker/elasticmq/elasticmq.conf`; redrive after 3 receives |
 | S3 | pgsty/silo (`s3`) | `pgsty/silo:RELEASE.2026-09-16T00-00-00Z` | `9000` (9000) | Buckets, CORS and notification rules are created by `local-aws-init`. Presigned URLs need `localhost:9000`, hence the fixed port |
 | S3 event notifications to SQS | Emulator webhook to the relay (`s3-events-relay`) | `expense-tracker-local-aws:dev` (built here) | none (8080 internal) | Bearer token required |
-| Lambda (receipt worker) | Bref PHP 8.5 image under the Runtime Interface Emulator (`worker`) | `expense-tracker-worker:dev` (built here) | none (8080 internal) | No AWS access or credentials; Phase 0 only logs what it receives |
+| Lambda (receipt worker) | Bref PHP 8.5 image under the Runtime Interface Emulator (`worker`) | `expense-tracker-worker:dev` (built here) | none (8080 internal) | Talks only to the local stand-ins, never to AWS; processes the receipt events (see "Receipt pipeline (local)") |
 | SQS event source mapping | Local runner (`worker-runner`) | `expense-tracker-local-aws:dev` | none | Polls `receipts`, invokes the worker, deletes only the messages that succeeded |
 | API Gateway + Lambda (API) | nginx (`api`) in front of php-fpm (`api-php`) | `nginxinc/nginx-unprivileged:1.30.5-alpine`, `expense-tracker-php:fpm` | `8080` (8080) for nginx; php-fpm on 9000, internal only | Same PHP code as Lambda. php-fpm is on the internal network `api-internal` only: FastCGI has no authentication. Every request needs the `X-Origin-Verify` header (see "Calling the API directly") |
 | CloudFront (one origin for app and API) | Vite dev server (`frontend`) | `node:24.21.0-alpine` | `5173` (5173) | Proxies `/api` to nginx, adds `X-Origin-Verify` and `CloudFront-Viewer-Address`, as CloudFront will |
 | S3 static site (front-end) | Vite dev server (`frontend`) | same | `5173` | Hot reload from the mounted `frontend/` |
 
 Open the app at http://localhost:5173. The API also answers directly on http://localhost:8080, but see
-[Calling the API directly](#calling-the-api-directly). The Phase 0 page shows "API: ok" when the chain Vite, nginx and
+[Calling the API directly](#calling-the-api-directly). The page footer shows "API: ok" when the chain Vite, nginx and
 php-fpm works.
 
 ## Calling the API directly
@@ -401,7 +401,7 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 
 | Target | What it does |
 |---|---|
-| `make lint` | All static checks and audits, in order: `lint-php`, `lint-local-aws`, `frontend-lint`, `contract`, `tf-check`, `check-platform`, `check-php-ini`, `check-image-pins`, `lint-workflows`, `check-fixtures`, `audit`, `audit-local-aws`, `contract-audit`, `frontend-audit` (not `fmt`, `frontend-build`, `check-bundle-secrets` or `check-bundle-csp`) |
+| `make lint` | All static checks and audits, in order: `lint-php`, `lint-local-aws`, `frontend-lint`, `contract`, `tf-check`, `tf-unit`, `tf-fn-test`, `tf-layers-check`, `check-platform`, `check-php-ini`, `check-image-pins`, `lint-workflows`, `check-fixtures`, `audit`, `audit-local-aws`, `contract-audit`, `frontend-audit` (not `fmt`, `frontend-build`, `check-bundle-secrets` or `check-bundle-csp`) |
 | `make lint-php` | Backend: `composer validate`, PHP-CS-Fixer (dry run), PHPStan |
 | `make lint-local-aws` | The same for `docker/local-aws` |
 | `make frontend-lint` | Front-end: ESLint, Prettier check, `vue-tsc` |
@@ -424,14 +424,20 @@ Run `make help` for the full list with one-line descriptions. Grouped:
 | `make secrets-scan-worktree` | gitleaks over uncommitted work: the staged version of each file (what the next commit holds) and the version on disk, including untracked files that are not ignored |
 | `make check-php-ini` | The Lambda PHP ini (`backend/php/conf.d`) is loaded by the pinned `bref/php-85` image with the hardened values |
 
-**Terraform (Phase 0 has no AWS resources; these need no credentials)**
+**Terraform (offline: nothing is applied to AWS; these need no credentials)**
 
 | Target | What it does |
 |---|---|
 | `make tf-fmt` | Rewrites the `.tf` files to the canonical format |
 | `make tf-check` | Format check, then `init -backend=false` (read-only lock files) and `validate` of each root |
+| `make tf-unit` | Offline `terraform test` (mock AWS provider) of `bootstrap` and `envs/dev`, after the guard scripts (mock provider present, state bucket `prevent_destroy`, alarm messages, outputs) |
+| `make tf-fn-test` | Tests of the CloudFront Function `spa-rewrite.js` (`node:test` in the pinned node image) |
 | `make tf-test` | Tests of `tf-check` (needs Docker) |
 | `make tf-lock` | Regenerates `.terraform.lock.hcl` hashes for linux and darwin, amd64 and arm64 |
+| `make tf-layers` | Regenerates `infra/terraform/envs/dev/bref-layers.auto.tfvars.json` from the installed Bref `layers.json` files (needs `make php-install`) |
+| `make tf-layers-check` | Fails when `bref-layers.auto.tfvars.json` differs from the installed `layers.json` files (needs `make php-install`) |
+| `make lambda-build` | Builds the reproducible `build/lambda/backend.zip` and `envs/dev/package.auto.tfvars.json` |
+| `make lambda-check` | Checks the zip (required files, nothing dev, under 50 MB) and that its `vendor/` loads in the pinned `bref/php-85` image |
 
 **Other:** `make contract-lint`, `contract-bundle`, `contract-gen` (rewrites the committed front-end types after a
 spec change), `contract-check-types`, `frontend-audit`.
