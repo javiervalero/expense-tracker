@@ -160,7 +160,7 @@ services:
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       RECEIPTS_BUCKET: receipts
       THUMBNAILS_BUCKET: receipt-thumbnails
-      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
       AWS_EC2_METADATA_DISABLED: "true"
@@ -278,7 +278,7 @@ services:
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:-http://localhost:9000}
       RECEIPTS_BUCKET: receipts
       THUMBNAILS_BUCKET: receipt-thumbnails
-      AWS_REGION: ${AWS_REGION:-eu-west-1}
+      AWS_REGION: ${AWS_REGION:-us-east-1}
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:?not set - run make up, which creates .env from .env.example}
       AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:?not set - run make up, which creates .env from .env.example}
       AWS_EC2_METADATA_DISABLED: "true"

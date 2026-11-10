@@ -300,7 +300,7 @@ The emulator (`s3`, port 9000, only on `127.0.0.1`) has two buckets: `receipts` 
 with `brew install awscli`, or run it in a container as shown. Do this with `make up` running.
 
 ```bash
-export AWS_ACCESS_KEY_ID=localdev AWS_SECRET_ACCESS_KEY=localdevsecret AWS_DEFAULT_REGION=eu-west-1
+export AWS_ACCESS_KEY_ID=localdev AWS_SECRET_ACCESS_KEY=localdevsecret AWS_DEFAULT_REGION=us-east-1
 aws --endpoint-url http://localhost:9000 s3 ls s3://receipts/ --recursive
 aws --endpoint-url http://localhost:9000 s3 ls s3://receipt-thumbnails/ --recursive
 aws --endpoint-url http://localhost:9000 s3 cp s3://receipts/<key> ./receipt-copy   # download one object
@@ -312,7 +312,7 @@ host.docker.internal:host-gateway` to the command:
 
 ```bash
 docker run --rm -e AWS_ACCESS_KEY_ID=localdev -e AWS_SECRET_ACCESS_KEY=localdevsecret \
-  -e AWS_DEFAULT_REGION=eu-west-1 amazon/aws-cli --endpoint-url http://host.docker.internal:9000 s3 ls s3://receipts/ --recursive
+  -e AWS_DEFAULT_REGION=us-east-1 amazon/aws-cli --endpoint-url http://host.docker.internal:9000 s3 ls s3://receipts/ --recursive
 ```
 
 What to expect:
@@ -336,7 +336,7 @@ are read only by the tests, but keep the `.env.example` value unless you know wh
 <!-- AUTO-GENERATED from .env.example and docker-compose.yml (/update-docs, 2026-10-16) -->
 | Variable | Required | What it is | Example (`.env.example`) |
 |---|---|---|---|
-| `AWS_REGION` | No | Region label the SDK signs with; the emulators ignore it | `eu-west-1` |
+| `AWS_REGION` | No | Region label the SDK signs with; the emulators ignore it | `us-east-1` |
 | `AWS_ACCESS_KEY_ID` | Yes | Fake access key, accepted only by the emulators (also the S3 emulator's root user) | `localdev` |
 | `AWS_SECRET_ACCESS_KEY` | Yes | Fake secret key, the pair of the line above (also the S3 emulator's root password) | `localdevsecret` |
 | `AWS_EC2_METADATA_DISABLED` | No | Stops the SDK from asking the EC2 metadata service for credentials | `true` |
