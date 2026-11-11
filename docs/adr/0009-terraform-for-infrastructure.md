@@ -1,7 +1,7 @@
 # 0009. Terraform for infrastructure as code
 
 - Status: Accepted (2026-10-09)
-- Amended by: [0012](0012-runtime-platform.md) (x86_64, provided.al2023, handlers, BREF_RUNTIME, layer versions from composer.lock), [0013](0013-aws-region-us-east-1.md) (AWS region us-east-1)
+- Amended by: [0012](0012-runtime-platform.md) (x86_64, provided.al2023, handlers, BREF_RUNTIME, layer versions from composer.lock), [0013](0013-aws-region-us-east-1.md) (AWS region us-east-1), [0014](0014-slim-manual-first-deployment.md) (the bootstrap state stays local, backed up outside the repo)
 - Date: 2026-10-07
 
 ## Context
