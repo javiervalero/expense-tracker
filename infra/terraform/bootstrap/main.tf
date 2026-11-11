@@ -5,8 +5,9 @@
 #     in the backend configuration of envs/dev), so no DynamoDB lock table is needed.
 #   - The bucket and every bucket-configuration resource carry `prevent_destroy = true`; `terraform test` cannot assert
 #     it, so scripts/check-prevent-destroy.sh does (run by `make tf-unit`).
-# This root is applied by hand with the owner's explicit approval, never by CI. Its own state is local until Phase 8,
-# which migrates it into this bucket under its own key (`terraform init -migrate-state` with a backend block).
+# This root is applied by hand with the owner's explicit approval, never by CI. Its state stays local
+# (terraform.tfstate next to this root), is git-ignored, and the owner must back it up outside the repo: it is the
+# only record that the state bucket is managed. It is not migrated into the bucket (ADR 0014).
 
 locals {
   bucket_name = "expense-tracker-tfstate-${var.aws_account_id}-${var.aws_region}"

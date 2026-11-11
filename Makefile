@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke deploy-build deploy-init deploy-plan deploy-apply publish-site deploy-smoke
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -536,7 +536,7 @@ tf-check: ## Terraform: fmt check, then init (no backend, read-only lock files) 
 	  $(TERRAFORM) -chdir="$$root" validate; \
 	done
 
-tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstrap and envs/dev; refuses a test file without the mock, a state bucket without prevent_destroy, or an envs/dev output outside the seven of D26 / mentioning a secret
+tf-unit: ## Terraform: offline `terraform test` (mock_provider "aws") of bootstrap and envs/dev; refuses a test file without the mock, a state bucket without prevent_destroy, or an envs/dev output outside the eight of D26 / mentioning a secret
 	scripts/check-tftest-mocks.sh $(TF_DIR)
 	scripts/check-prevent-destroy.sh --require-bucket $(TF_DIR)/bootstrap
 	scripts/check-alarm-messages.sh
@@ -560,3 +560,50 @@ tf-lock: ## Terraform: regenerate the .terraform.lock.hcl hashes for linux and d
 	  echo "== $$root"; \
 	  $(TERRAFORM) -chdir="$$root" providers lock $(TF_LOCK_PLATFORMS); \
 	done
+
+# ---- Owner-run deployment (Phase 8, ADR 0014) -------------------------------------------------------------------------
+# These targets are NOT in LINT_TARGETS or any test target: they run in the OWNER'S terminal with temporary AWS
+# credentials exported (see docs/deploy.md). Agents never run them. deploy-build needs no credentials.
+TERRAFORM_AWS := scripts/terraform-aws.sh
+DEPLOY_TF = $(TERRAFORM_AWS) -chdir=infra/terraform/envs/dev
+# -out and the apply argument are relative to the envs/dev folder (-chdir). A destroy plan has its own file name, so
+# `deploy-apply` can never apply a destroy plan by mistake after a normal plan, or the other way round.
+DEPLOY_PLAN_FILE = dev.tfplan
+DEPLOY_DESTROY_PLAN_FILE = dev-destroy.tfplan
+DEPLOY_PLAN_DIR = infra/terraform/envs/dev
+
+# A recipe, not prerequisites, so the steps run in this order even under `make -j` (same style as `test`).
+deploy-build: ## OWNER TERMINAL: build the Lambda zip and front-end and run every pre-publish check (no AWS credentials needed)
+	$(MAKE) --no-print-directory lambda-build
+	$(MAKE) --no-print-directory lambda-check
+	$(MAKE) --no-print-directory tf-layers-check
+	$(MAKE) --no-print-directory frontend-build
+	$(MAKE) --no-print-directory check-bundle-secrets
+	$(MAKE) --no-print-directory check-bundle-csp
+	$(MAKE) --no-print-directory secrets-scan-worktree
+
+deploy-init: ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): terraform init of envs/dev against the S3 backend
+	$(DEPLOY_TF) init -input=false -lockfile=readonly -backend-config=backend.hcl
+
+deploy-plan: ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): save a plan of envs/dev (only DESTROY=1 plans a destroy); read it before deploy-apply
+	@set -e; \
+	if [ "$(DESTROY)" = 1 ]; then file=$(DEPLOY_DESTROY_PLAN_FILE); other=$(DEPLOY_PLAN_FILE); else file=$(DEPLOY_PLAN_FILE); other=$(DEPLOY_DESTROY_PLAN_FILE); fi; \
+	if [ -e "$(DEPLOY_PLAN_DIR)/$$other" ]; then echo "deploy-plan: $(DEPLOY_PLAN_DIR)/$$other exists; delete it first (never mix a normal and a destroy plan)" >&2; exit 1; fi; \
+	echo "deploy-plan: writing $(DEPLOY_PLAN_DIR)/$$file (holds generated secrets; deploy-apply deletes it)"; \
+	$(DEPLOY_TF) plan -input=false $(if $(filter 1,$(DESTROY)),-destroy) -out=$$file
+
+deploy-apply: ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): apply the saved plan file (never -auto-approve), then delete it
+	@set -e; \
+	n=$$(ls "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" "$(DEPLOY_PLAN_DIR)/$(DEPLOY_DESTROY_PLAN_FILE)" 2>/dev/null | wc -l); \
+	if [ "$$n" -gt 1 ]; then echo "deploy-apply: both a normal and a destroy plan exist; delete the wrong one" >&2; exit 1; fi; \
+	if [ "$$n" -eq 0 ]; then echo "deploy-apply: no plan file; run make deploy-plan first" >&2; exit 1; fi; \
+	if [ -e "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" ]; then file=$(DEPLOY_PLAN_FILE); else file=$(DEPLOY_DESTROY_PLAN_FILE); fi; \
+	status=0; $(DEPLOY_TF) apply -input=false $$file || status=$$?; \
+	rm -f "$(DEPLOY_PLAN_DIR)/$$file"; \
+	exit $$status
+
+publish-site: ## OWNER TERMINAL, needs temporary AWS credentials and the host AWS CLI v2 (agents never run it): upload frontend/dist (assets, other files, index.html last), then invalidate CloudFront
+	scripts/publish-site.sh
+
+deploy-smoke: ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): cross-user smoke test against the deployed CloudFront domain
+	@set -e; d=$$($(DEPLOY_TF) output -raw distribution_domain); test -n "$$d"; scripts/smoke.sh --cross-user "https://$$d"
