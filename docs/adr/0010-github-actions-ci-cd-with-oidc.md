@@ -1,6 +1,7 @@
 # 0010. GitHub Actions CI/CD with OIDC
 
 - Status: Accepted (2026-10-09)
+- Amended by: [0014](0014-slim-manual-first-deployment.md) (the manual, owner-run deploy path until L2)
 - Date: 2026-10-07
 - Revised: 2026-10-09 (PR #1 review comment #9: phasing)
 

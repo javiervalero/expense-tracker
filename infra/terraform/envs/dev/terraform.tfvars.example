@@ -17,6 +17,6 @@ alert_email = "you@example.com"
 # Account-wide monthly budget in US dollars. Optional; the default is 5.
 monthly_budget_usd = 5
 
-# Reserved concurrency per function; -1 leaves it unreserved. Optional; Phase 8 reads the account quota first.
+# Reserved concurrency per function; -1 leaves it unreserved. Optional; keep -1 for the first deployment (ADR 0014).
 api_reserved_concurrent_executions    = -1
 worker_reserved_concurrent_executions = -1

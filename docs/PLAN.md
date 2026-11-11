@@ -223,9 +223,10 @@ and thumbnail. A `pending` record that is never uploaded expires through TTL. Se
 | Infrastructure | `terraform fmt` / `validate` and a plan test for the receipt pipeline settings (Phase 0/7); tflint, checkov (Phase L3) |
 
 - **CI:** GitHub Actions runs all of the above on every pull request, as each check is introduced.
-- **CD:** the first deployment (Phase 8) uses `make deploy`, run by the owner with short-lived AWS SSO credentials.
+- **CD:** the first deployment (Phase 8) uses the `make deploy-*` targets and `make publish-site` (runbook: `docs/deploy.md`), run by
+  the owner with short-lived AWS SSO credentials (ADR 0014).
   Phase L2 adds a manually triggered GitHub Actions workflow, protected by an approval environment, that runs the same
-  script: Terraform plan, approval, apply, front-end upload, smoke test (valid and invalid receipt upload; asserts
+  targets: Terraform plan, approval, apply, front-end upload, smoke test (valid and invalid receipt upload; asserts
   `ready` and `failed` and an empty DLQ). It authenticates with **OIDC**, so no AWS keys are stored in GitHub.
 
 ## 11. Repository layout
@@ -241,7 +242,7 @@ infra/terraform/    bootstrap/ (state bucket), modules/, envs/dev/
 docs/               BRIEF.md, PLAN.md, adr/, architecture.md, local-dev.md, deploy.md
 .github/workflows/  ci.yml (deploy.yml in phase L2)
 docker-compose.yml
-Makefile            make up / make test / make lint / make deploy …
+Makefile            make up / make test / make lint / make deploy-* …
 ```
 
 ## 12. Phases
@@ -270,15 +271,15 @@ Phases are split into two tracks:
 | 5 | Receipts | Signed uploads, emulator → ElasticMQ → worker, thumbnails bucket, conditional status updates and cleanup, TTL on pending, status polling, preview (PDF icon) | L | Done |
 | 6 | Monthly summary | Report endpoint and summary **table** page; `scripts/smoke.sh` (curl) covering every feature against any base URL. Detailed plan: [plans/phase-6-monthly-summary.md](plans/phase-6-monthly-summary.md). | S | Done (PR #9) |
 | 7 | Infrastructure (Terraform) | State bootstrap; DynamoDB (table + `LSI1`, TTL on `expiresAt`); Lambdas (x86_64, `provided.al2023`, `BREF_RUNTIME`; Bref `php-85` layer, plus `gd-php-85` for the worker; layer versions from `composer.lock`, ADR 0012); API Gateway with throttling; **S3 ×3** (`site`, `receipts` with the only event notification, `receipt-thumbnails`); SQS (visibility timeout ≥ 6× worker timeout) + DLQ (`maxReceiveCount` 3) and event source mapping with `ReportBatchItemFailures`; CloudFront + security headers, origin request policy forwarding `CloudFront-Viewer-Address`, secret origin header (Terraform-generated, sensitive); per-function IAM (worker cannot write to `receipts`); explicit log groups with retention; **alarms: budget, DLQ depth, receipt-cleanup errors**; plan test for the pipeline settings. **Written and planned only, not applied.** Detailed plan: [plans/phase-7-infrastructure.md](plans/phase-7-infrastructure.md). | L | Done (written and tested offline, not applied; PR #11) |
-| 8 | First deployment | `make deploy` (Terraform apply + front-end upload) run by the owner with short-lived AWS SSO credentials; smoke test on AWS (also: a direct API Gateway call is rejected; a forged `CloudFront-Viewer-Address` is ignored); then one destroy → re-create → smoke test. **Every apply and destroy only with the owner's explicit go-ahead.** Detailed plan: [plans/phase-8-first-deployment.md](plans/phase-8-first-deployment.md). | M | In progress (plan merged in PR #12; work packages are offline, nothing applied) |
-| 9 | Essential documentation | README, `local-dev.md`, `deploy.md` (deploy and destroy runbook), `architecture.md` with the current diagram | S | Not started |
+| 8 | First deployment (slim, owner-run) | A short manual runbook, `docs/deploy.md`, with a few Make targets (`deploy-*`, `publish-site`) run by the owner with short-lived AWS SSO credentials; agents never hold credentials; smoke test on AWS (also: a direct API Gateway call is rejected); then one destroy. **Every apply and destroy only with the owner's explicit go-ahead.** Slimmed on 2026-11-11 by [ADR 0014](adr/0014-slim-manual-first-deployment.md). Detailed plan: [plans/phase-8-first-deployment.md](plans/phase-8-first-deployment.md). | S-M | In progress (slim plan written; code and runbook not started, nothing applied) |
+| 9 | Essential documentation | README, `local-dev.md`, `architecture.md` with the current diagram (`deploy.md` moved to Phase 8, ADR 0014) | S | Not started |
 
 ### Later: assurance, operations and polish
 
 | # | Phase | Delivers | Size | Status |
 |---|---|---|---|---|
 | L1 | Browser end-to-end tests | Playwright journeys on the Compose stack, including user A cannot see user B's data; required on PRs (completes the ECC testing rule) | M | Not started |
-| L2 | CD pipeline | GitHub OIDC role, `deploy.yml` with approval environment calling the same `make deploy` (ADR 0010) | M | Not started |
+| L2 | CD pipeline | GitHub OIDC role, `deploy.yml` with approval environment calling the same `make deploy-*` targets (ADR 0010, 0014) | M | Not started |
 | L3 | Infrastructure scanning | tflint and checkov in CI | S | Not started |
 | L4 | Operational alarms | Lambda errors and API 5xx alarms with email notification | S | Not started |
 | L5 | Feature polish | Chart.js summary chart, category colours, `make seed` | S | Not started |

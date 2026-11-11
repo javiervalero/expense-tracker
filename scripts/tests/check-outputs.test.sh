@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Tests for scripts/check-outputs.sh. Run: bash scripts/tests/check-outputs.test.sh
-# Exit codes asserted: 0 = outputs.tf holds exactly the seven D26 outputs and no secret, 1 = it does not, 2 = bad usage.
+# Exit codes asserted: 0 = outputs.tf holds exactly the eight D26 outputs and no secret, 1 = it does not, 2 = bad usage.
 # Fixtures are created at run time in one fresh directory under build/ (git-ignored), removed on exit. The removal is
 # guarded: only a non-empty path inside build/ whose name is outputs-test.* is ever deleted.
 set -euo pipefail
@@ -58,7 +58,7 @@ run_guard "$extra"
 expect_status 'extra output with a secret' 1
 grep -qF 'origin_verify_secret' <<<"$output" || fail "extra output: the output does not name it: $output"
 
-# An extra harmless output also fails (the list is exactly seven).
+# An extra harmless output also fails (the list is exactly eight).
 harmless="$TMP/harmless.tf"
 printf '%s\n\noutput "region" {\n  value = "us-east-1"\n}\n' "$content" >"$harmless"
 run_guard "$harmless"
@@ -86,6 +86,14 @@ grep -qF 'output "table"' "$renamed" || fail 'fixture: the rename did not happen
 run_guard "$renamed"
 expect_status 'renamed output' 1
 grep -qF 'unexpected output "table"' <<<"$output" || fail "renamed: the output does not name the new name: $output"
+
+# The eighth output, distribution_id, is required: dropping it (here, renaming it) fails and names it as missing.
+noid="$TMP/noid.tf"
+printf '%s\n' "${content//output \"distribution_id\"/output \"distribution_ident\"}" >"$noid"
+grep -qF 'output "distribution_ident"' "$noid" || fail 'fixture: the distribution_id rename did not happen'
+run_guard "$noid"
+expect_status 'distribution_id missing' 1
+grep -qF 'missing output "distribution_id"' <<<"$output" || fail "noid: the output does not name the missing output: $output"
 
 # A missing output fails.
 missing="$TMP/missing.tf"

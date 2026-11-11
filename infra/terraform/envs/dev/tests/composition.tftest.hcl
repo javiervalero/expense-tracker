@@ -542,6 +542,11 @@ run "the_outputs_exist_and_come_from_the_modules" {
   }
 
   assert {
+    condition     = output.distribution_id == module.edge.distribution_id && output.distribution_id != ""
+    error_message = "distribution_id must be the distribution's id (cache invalidation in Phase 8)."
+  }
+
+  assert {
     condition     = output.site_bucket == module.edge.site_bucket
     error_message = "site_bucket must be the site bucket."
   }
@@ -574,6 +579,7 @@ run "no_output_carries_an_origin_verify_secret" {
     condition = alltrue([
       for secret in [random_password.origin_verify_a.result, random_password.origin_verify_b.result] : (
         !strcontains(output.distribution_domain, secret)
+        && !strcontains(output.distribution_id, secret)
         && !strcontains(output.site_bucket, secret)
         && !strcontains(output.receipts_bucket, secret)
         && !strcontains(output.thumbnails_bucket, secret)

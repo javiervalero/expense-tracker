@@ -1,9 +1,15 @@
-# D26: what Phase 8 (`make deploy` and the smoke test) needs. The origin-verify secrets are NEVER an output: they stay in
-# the state and in the two resources that use them.
+# D26: what Phase 8 (`make deploy-*` and the smoke test) needs: eight outputs (distribution_id was added in Phase 8 for the
+# cache invalidation). The origin-verify secrets are NEVER an output: they stay in the state and in the two resources
+# that use them.
 
 output "distribution_domain" {
   description = "Domain of the CloudFront distribution, for example d111111abcdef8.cloudfront.net (the application's address)."
   value       = module.edge.domain_name
+}
+
+output "distribution_id" {
+  description = "Id of the CloudFront distribution (cache invalidation after a front-end upload)."
+  value       = module.edge.distribution_id
 }
 
 output "site_bucket" {

@@ -18,11 +18,12 @@ ADRs 0001–0011 were **Accepted** on 2026-10-09, when the plan in [`../PLAN.md`
 | [0006](0006-direct-to-s3-receipt-uploads-and-async-processing.md) | Direct-to-S3 receipt uploads and asynchronous processing | Accepted |
 | [0007](0007-local-development-with-docker-compose.md) | Local development with Docker Compose and emulators | Accepted (amended by 0012) |
 | [0008](0008-frontend-stack.md) | Front-end stack | Accepted |
-| [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Accepted (amended by 0012) |
-| [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Accepted |
+| [0009](0009-terraform-for-infrastructure.md) | Terraform for infrastructure as code | Accepted (amended by 0012, 0014) |
+| [0010](0010-github-actions-ci-cd-with-oidc.md) | GitHub Actions CI/CD with OIDC | Accepted (amended by 0014) |
 | [0011](0011-openapi-contract.md) | OpenAPI 3.1 contract as the source of truth for the API | Accepted |
 | [0012](0012-runtime-platform.md) | Runtime platform: PHP 8.5, x86_64, Bref 3 configuration and client IP | Accepted |
 | [0013](0013-aws-region-us-east-1.md) | AWS region: us-east-1 | Accepted |
+| [0014](0014-slim-manual-first-deployment.md) | Phase 8: a slim, owner-run manual deployment | Accepted |
 
 ## Template
 

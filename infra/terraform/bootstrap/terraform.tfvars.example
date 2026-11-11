@@ -1,0 +1,3 @@
+# Copy to terraform.tfvars (git-ignored) and replace the placeholder account id with your own.
+aws_region     = "us-east-1"
+aws_account_id = "123456789012"
