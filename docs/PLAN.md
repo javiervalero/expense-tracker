@@ -223,9 +223,10 @@ and thumbnail. A `pending` record that is never uploaded expires through TTL. Se
 | Infrastructure | `terraform fmt` / `validate` and a plan test for the receipt pipeline settings (Phase 0/7); tflint, checkov (Phase L3) |
 
 - **CI:** GitHub Actions runs all of the above on every pull request, as each check is introduced.
-- **CD:** the first deployment (Phase 8) uses `make deploy`, run by the owner with short-lived AWS SSO credentials.
+- **CD:** the first deployment (Phase 8) uses the `make deploy-*` targets and `make publish-site` (runbook: `docs/deploy.md`), run by
+  the owner with short-lived AWS SSO credentials (ADR 0014).
   Phase L2 adds a manually triggered GitHub Actions workflow, protected by an approval environment, that runs the same
-  script: Terraform plan, approval, apply, front-end upload, smoke test (valid and invalid receipt upload; asserts
+  targets: Terraform plan, approval, apply, front-end upload, smoke test (valid and invalid receipt upload; asserts
   `ready` and `failed` and an empty DLQ). It authenticates with **OIDC**, so no AWS keys are stored in GitHub.
 
 ## 11. Repository layout
@@ -241,7 +242,7 @@ infra/terraform/    bootstrap/ (state bucket), modules/, envs/dev/
 docs/               BRIEF.md, PLAN.md, adr/, architecture.md, local-dev.md, deploy.md
 .github/workflows/  ci.yml (deploy.yml in phase L2)
 docker-compose.yml
-Makefile            make up / make test / make lint / make deploy …
+Makefile            make up / make test / make lint / make deploy-* …
 ```
 
 ## 12. Phases
@@ -278,7 +279,7 @@ Phases are split into two tracks:
 | # | Phase | Delivers | Size | Status |
 |---|---|---|---|---|
 | L1 | Browser end-to-end tests | Playwright journeys on the Compose stack, including user A cannot see user B's data; required on PRs (completes the ECC testing rule) | M | Not started |
-| L2 | CD pipeline | GitHub OIDC role, `deploy.yml` with approval environment calling the same `make deploy` (ADR 0010) | M | Not started |
+| L2 | CD pipeline | GitHub OIDC role, `deploy.yml` with approval environment calling the same `make deploy-*` targets (ADR 0010, 0014) | M | Not started |
 | L3 | Infrastructure scanning | tflint and checkov in CI | S | Not started |
 | L4 | Operational alarms | Lambda errors and API 5xx alarms with email notification | S | Not started |
 | L5 | Feature polish | Chart.js summary chart, category colours, `make seed` | S | Not started |
