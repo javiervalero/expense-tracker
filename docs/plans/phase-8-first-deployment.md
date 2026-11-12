@@ -34,7 +34,8 @@ Complete when all of these hold and are recorded in `docs/plans/phase-8-results.
 ## 3. Rules
 
 - **Agents offline only.** No agent session while an SSO login is live (O1). Agents receive pass or fail summaries, never
-  raw state, plans or `terraform show` output.
+  raw state, plans or `terraform show` output. The one exception is `make deploy-plan-summary`, which prints only counts and
+  resource types (ADR 0014 amendment, 2026-11-12).
 - **Owner-read plans.** The owner reads the saved plan (`plan -out`) and applies that file. No `-auto-approve` on a fresh
   plan. Plan files are deleted after apply because they hold generated secrets.
 - **Short-lived credentials only.** `scripts/terraform-aws.sh` forwards the three SSO variables and refuses to start

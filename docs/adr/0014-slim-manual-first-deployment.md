@@ -62,3 +62,12 @@ $5/month.
   reserved concurrency stays at -1, no quota probe), 8, 9, 10, 14 (no 48-hour window) and 20. Decisions 1, 2, 5, 6, 11, 12,
   15, 16, 18, 19 and 21 are kept.
 - The old plan text stays in git history at `2840881`.
+
+## Amendment (2026-11-12): plan summary may be shared
+
+The rule "share no plan output with an agent" gets one narrow exception. `make deploy-plan-summary` reads the saved plan
+and prints only the action counts and the resource types (for example `create aws_s3_bucket x2`), with a WARNING for any
+delete or replace. It never prints resource names, attribute values or outputs, and its tests check that a planted
+sentinel value never appears. The owner may paste that output to an agent. Raw plans, state and `terraform show` output
+stay forbidden. Reason: the owner could not judge a raw plan, and counts by type are enough to spot an unexpected delete.
+This is not the dropped `review-plan.sh`: it approves nothing and blocks nothing; the owner still decides.

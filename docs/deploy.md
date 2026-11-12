@@ -29,7 +29,8 @@ Create these three git-ignored files from their examples. Your account id and al
 - **Never set `DOCKER_HOST` or `DOCKER_CONTEXT` to a remote daemon.** Your credentials would go to it.
 - **Read every plan before you apply it.** Apply only saved plan files.
 - **Plan files hold generated secrets.** `deploy-apply` deletes them. Delete any other plan file yourself.
-- **Share no raw output with an agent.** No state, plans or `terraform show` output. Pass/fail summaries only.
+- **Share no raw output with an agent.** No state, plans or `terraform show` output. Pass/fail summaries only. The one
+  exception is the output of `make deploy-plan-summary`: it prints only counts and resource types, never names or values.
 - **The bootstrap state is the only record of the state bucket.** Back it up outside the repo; never `git clean -fdx`.
 
 ## 3. First time only
@@ -97,7 +98,12 @@ Create these three git-ignored files from their examples. Your account id and al
 
    ```bash
    make deploy-plan
+   make deploy-plan-summary
    ```
+
+   The summary lists how many resources are created, updated, deleted or replaced, by type. Stop if it shows a
+   `WARNING` you did not expect. This first run should only create things. If you share the result with an agent, paste
+   only the summary lines (from the `plan summary` header to the last line), not Terraform's or make's other messages.
 
 3. Apply the saved plan. If your SSO login is old, log in and export credentials again (step 3.2) just before applying,
    so they do not expire mid-apply:
@@ -157,7 +163,8 @@ Destroy removes the `envs/dev` stack only. The bootstrap root and state bucket a
    make deploy-plan DESTROY=1
    ```
 
-2. Read it. It must touch only `expense-tracker-dev-*` resources in `envs/dev`. Stop if not.
+2. Read it. It must touch only `expense-tracker-dev-*` resources in `envs/dev`. Stop if not. Run
+   `make deploy-plan-summary`: it must show the `DESTROY` header and deletes only.
 
 3. Apply it: `make deploy-apply`
 
