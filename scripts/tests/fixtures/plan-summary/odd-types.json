@@ -1,0 +1,13 @@
+{"format_version":"1.2","terraform_version":"1.16.5","planned_values":{"root_module":{}},"resource_changes":[
+{"mode":"managed","type":"aws_s3_bucket\n","change":{"actions":["create"]}},
+{"mode":"managed","type":"aws\u001b[31m","change":{"actions":["create"]}},
+{"mode":"managed","type":"aws s3","change":{"actions":["create"]}},
+{"mode":"managed","type":"AWS_S3","change":{"actions":["create"]}},
+{"mode":"managed","type":"","change":{"actions":["create"]}},
+{"mode":"managed","type":5,"change":{"actions":["create"]}},
+{"mode":"managed","type":null,"change":{"actions":["create"]}},
+{"mode":"managed","type":{"a":"b"},"change":{"actions":["create"]}},
+{"mode":5,"type":"aws_s3_bucket","change":{"actions":["create"]}},
+{"mode":null,"type":"aws_s3_bucket","change":{"actions":["create"]}},
+{"mode":"managed","type":"x\ny","change":{"actions":["delete"]}}
+]}

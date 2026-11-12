@@ -84,6 +84,9 @@ if docker_called; then
     TF_PLUGIN_CACHE_DIR=/app/.terraform/plugin-cache "$REPO:/app" HOME=/tmp /app "$(id -u):$(id -g)"; do
     argv_has "$flag" || fail "hardening flag missing: $flag"
   done
+  # `terraform show -json` prints generated secrets: Docker must keep no log copy and no core dump may be written.
+  grep -A1 -xF -- '--log-driver' "$WORK/argv" | grep -qxF -- 'none' || fail "--log-driver none missing"
+  grep -A1 -xF -- '--ulimit' "$WORK/argv" | grep -qxF -- 'core=0' || fail "--ulimit core=0 missing"
   if grep -q '\.aws' "$WORK/argv"; then fail "~/.aws mounted"; fi
   # Arguments pass through unchanged, in order, at the end.
   [ "$(tail -n 3 "$WORK/argv" | paste -sd' ')" = "-chdir=infra/terraform/envs/dev plan -out=x" ] || fail "args not passed through"

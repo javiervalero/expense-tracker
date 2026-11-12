@@ -35,7 +35,7 @@ COMPOSE = env -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN
 PHP_IMAGE_DEP = $(if $(strip $(RUN_PHP)),php-image)
 
 .DEFAULT_GOAL := help
-.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke deploy-build deploy-init deploy-plan deploy-apply publish-site deploy-smoke
+.PHONY: help lint-workflows php-image php-install test-unit test-slow-unit test-contract lint-php audit fmt local-aws-install lint-local-aws test-local-aws audit-local-aws test-shell check-platform check-php-ini check-env up down ps logs test-conformance test-integration test-api-s3-path check-fixtures test-fast test lint secrets-scan secrets-scan-worktree check-image-pins contract-install contract-lint contract-bundle contract-ready contract-gen contract-check-types contract-audit contract frontend-install frontend-lint frontend-test frontend-build frontend-audit check-bundle-secrets check-bundle-csp tf-fmt tf-check tf-unit tf-fn-test tf-test tf-lock tf-layers tf-layers-check lambda-build lambda-check smoke deploy-build deploy-init deploy-plan deploy-apply deploy-plan-summary publish-site deploy-smoke
 
 help: ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -571,6 +571,14 @@ DEPLOY_TF = $(TERRAFORM_AWS) -chdir=infra/terraform/envs/dev
 DEPLOY_PLAN_FILE = dev.tfplan
 DEPLOY_DESTROY_PLAN_FILE = dev-destroy.tfplan
 DEPLOY_PLAN_DIR = infra/terraform/envs/dev
+# Shell snippet shared by deploy-apply and deploy-plan-summary: exactly one plan file must exist; sets $$file to its name.
+DEPLOY_PICK_PLAN = \
+	n=$$(ls "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" "$(DEPLOY_PLAN_DIR)/$(DEPLOY_DESTROY_PLAN_FILE)" 2>/dev/null | wc -l); \
+	if [ "$$n" -gt 1 ]; then echo "$@: both a normal and a destroy plan exist; delete the wrong one" >&2; exit 1; fi; \
+	if [ "$$n" -eq 0 ]; then echo "$@: no plan file; run make deploy-plan first" >&2; exit 1; fi; \
+	if [ -e "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" ]; then file=$(DEPLOY_PLAN_FILE); else file=$(DEPLOY_DESTROY_PLAN_FILE); fi;
+# The summary script only reads stdin: no network, no capabilities, read-only root, only that one file mounted.
+PLAN_SUMMARY_RUN = docker run --rm -i --network none --log-driver none --ulimit core=0 --cap-drop ALL --security-opt no-new-privileges --read-only -u $(shell id -u):$(shell id -g) --mount type=bind,src=$(CURDIR)/scripts/plan-summary.php,dst=/plan-summary.php,readonly $(PHP_IMAGE) php /plan-summary.php
 
 # A recipe, not prerequisites, so the steps run in this order even under `make -j` (same style as `test`).
 deploy-build: ## OWNER TERMINAL: build the Lambda zip and front-end and run every pre-publish check (no AWS credentials needed)
@@ -594,13 +602,16 @@ deploy-plan: ## OWNER TERMINAL, needs temporary AWS credentials (agents never ru
 
 deploy-apply: ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): apply the saved plan file (never -auto-approve), then delete it
 	@set -e; \
-	n=$$(ls "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" "$(DEPLOY_PLAN_DIR)/$(DEPLOY_DESTROY_PLAN_FILE)" 2>/dev/null | wc -l); \
-	if [ "$$n" -gt 1 ]; then echo "deploy-apply: both a normal and a destroy plan exist; delete the wrong one" >&2; exit 1; fi; \
-	if [ "$$n" -eq 0 ]; then echo "deploy-apply: no plan file; run make deploy-plan first" >&2; exit 1; fi; \
-	if [ -e "$(DEPLOY_PLAN_DIR)/$(DEPLOY_PLAN_FILE)" ]; then file=$(DEPLOY_PLAN_FILE); else file=$(DEPLOY_DESTROY_PLAN_FILE); fi; \
+	$(DEPLOY_PICK_PLAN) \
 	status=0; $(DEPLOY_TF) apply -input=false $$file || status=$$?; \
 	rm -f "$(DEPLOY_PLAN_DIR)/$$file"; \
 	exit $$status
+
+deploy-plan-summary: $(PHP_IMAGE_DEP) ## OWNER TERMINAL, needs temporary AWS credentials (agents never run it): print counts per action and type of the saved plan, with a WARNING for any delete or replace (reads the plan, writes nothing)
+	@set -e; \
+	$(DEPLOY_PICK_PLAN) \
+	header=NORMAL; if [ "$$file" = "$(DEPLOY_DESTROY_PLAN_FILE)" ]; then header=DESTROY; fi; \
+	$(DEPLOY_TF) show -json "$$file" | $(PLAN_SUMMARY_RUN) "$$header"
 
 publish-site: ## OWNER TERMINAL, needs temporary AWS credentials and the host AWS CLI v2 (agents never run it): upload frontend/dist (assets, other files, index.html last), then invalidate CloudFront
 	scripts/publish-site.sh
