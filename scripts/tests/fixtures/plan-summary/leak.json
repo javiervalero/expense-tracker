@@ -1,0 +1,11 @@
+{"format_version":"1.2","terraform_version":"1.0.0","variables":{"note":{"value":"planSentinel-7f3a9c2e"}},
+"planned_values":{"root_module":{"resources":[{"values":{"note":"planSentinel-7f3a9c2e"}}]}},
+"prior_state":{"values":{"note":"planSentinel-7f3a9c2e"}},
+"configuration":{"root_module":{"resources":[{"expressions":{"note":{"constant_value":"planSentinel-7f3a9c2e"}}}]}},
+"output_changes":{"out":{"actions":["create"],"after":"planSentinel-7f3a9c2e"}},
+"resource_changes":[
+{"address":"aws_s3_bucket.planSentinel-7f3a9c2e","module_address":"module.planSentinel-7f3a9c2e","mode":"managed","type":"aws_s3_bucket","name":"planSentinel-7f3a9c2e","index":"planSentinel-7f3a9c2e","provider_name":"registry.terraform.io/planSentinel-7f3a9c2e/aws","previous_address":"aws_s3_bucket.planSentinel-7f3a9c2e","deposed":"planSentinel-7f3a9c2e","action_reason":"planSentinel-7f3a9c2e",
+ "change":{"actions":["delete","create"],"before":{"note":"planSentinel-7f3a9c2e"},"after":{"note":"planSentinel-7f3a9c2e"},"after_unknown":{"note":"planSentinel-7f3a9c2e"},"before_sensitive":{"note":"planSentinel-7f3a9c2e"},"after_sensitive":{"note":"planSentinel-7f3a9c2e"},"replace_paths":[["planSentinel-7f3a9c2e"]]}},
+{"address":"x","mode":"managed","type":"planSentinel-7f3a9c2e","name":"n","change":{"actions":["create"]}},
+{"mode":"managed","type":"aws_iam_role","change":{"actions":["update"]}}
+]}

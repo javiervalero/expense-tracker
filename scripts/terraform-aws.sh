@@ -22,7 +22,10 @@ done
 
 mkdir -p "$REPO/.terraform/plugin-cache"
 
+# --log-driver none: `terraform show -json` prints every generated secret in plain text, and Docker's default log store
+# would keep a copy of the container output on disk. --ulimit core=0: a crash must not write memory (secrets) to a core file.
 exec docker run --rm \
+  --log-driver none --ulimit core=0 \
   --cap-drop=ALL --security-opt=no-new-privileges \
   -u "$(id -u):$(id -g)" \
   -v "$REPO":/app -w /app \

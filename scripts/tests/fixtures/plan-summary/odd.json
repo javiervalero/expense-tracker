@@ -1,0 +1,9 @@
+{"format_version":"1.2","terraform_version":"1.16.5","planned_values":{"root_module":{}},"resource_changes":[
+{"mode":"managed","type":"aws_a","change":{"actions":["delete","create"]}},
+{"mode":"managed","type":"aws_b","change":{"actions":["create","delete"]}},
+{"mode":"managed","type":"aws_c","change":{"actions":["forget"]}},
+{"mode":"managed","type":"aws_d","change":{"actions":["create"],"importing":{"id":"x"}}},
+{"mode":"managed","type":"aws_e","change":{"actions":["frobnicate"]}},
+{"mode":"managed","type":"aws_f","change":{"actions":{"a":"delete"}}},
+{"mode":"managed","type":"aws_g","change":{"actions":["update"],"importing":null}}
+]}
