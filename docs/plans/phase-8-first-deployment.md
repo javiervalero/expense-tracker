@@ -89,7 +89,7 @@ log groups and the next day's billing. Wait at least 60 seconds before any re-cr
 | G | After the owner's run: `phase-8-results.md`, PLAN rows, README lines | S | docs only (doc-updater, haiku/low; main session checks). |
 
 Old work packages: WP1 merged (PR #13); WP2, WP3, WP5, WP8 dropped; WP4 is C; WP6 is D; WP7 is E; WP9 is G.
-The unreviewed heavy WP2 code is kept, never merged, on the local branch `archive/phase-8-wp2-heavy`.
+The unreviewed heavy WP2 code was discarded (never merged or pushed); see ADR 0014.
 
 Order: A, then B to E in any order, then F, then the owner runs the runbook, then G. Each code package is test-first
 (tdd-guide, sonnet/medium); the diff gets one `ecc:code-reviewer` pass (sonnet/medium) and B gets a security review.

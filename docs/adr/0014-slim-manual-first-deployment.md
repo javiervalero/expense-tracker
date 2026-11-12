@@ -24,7 +24,8 @@ $5/month.
 
 - Deploy by hand from one runbook, `docs/deploy.md`, using a few Make targets and a small `scripts/terraform-aws.sh`
   (about 25 lines). That script is the existing pinned Terraform container plus the three AWS credential variables passed
-  through from the owner's shell. It refuses to start without a session token, so long-lived keys cannot be used.
+  through from the owner's shell. It refuses to start unless all three variables are set and non-empty, which rules out
+  plain long-lived keys (they have no session token) but does not check that the token is valid; AWS rejects a bad one.
 - Approval is the owner reading the saved plan (`plan -out`) and applying that plan file. Terraform refuses a stale plan.
   There are no typed hashes, plan manifests, plan-age limits or recovery tooling.
 - The host AWS CLI v2 (already needed for `aws sso login`) runs the few direct AWS calls: the S3 upload, the CloudFront
@@ -40,8 +41,8 @@ $5/month.
 ## Alternatives considered
 
 - **Finish the heavy WP2 tooling as planned.** Rejected: far more code, tests and review than a proof of concept
-  warrants, and more to maintain than the owner can repeat by hand. The unreviewed work is kept on the side branch
-  `archive/phase-8-wp2-heavy`, which is never merged.
+  warrants, and more to maintain than the owner can repeat by hand. The unreviewed work was discarded (it only
+  ever existed on a local branch, never merged or pushed); this ADR and the old plan text in git history describe it.
 - **Trim the wrapper but keep the typed approvals and plan review.** Rejected: the owner reading the plan already is the
   approval, and the remaining guardrails cover the real money and account risks.
 - **Automate the deployment in CI now.** Rejected for this phase: that is L2 (OIDC `deploy.yml`), which can later call
